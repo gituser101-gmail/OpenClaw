@@ -2502,9 +2502,7 @@ describe("gateway restart deferral preflight", () => {
     }
 
     expect(stopChannel).toHaveBeenCalledWith("discord", undefined, { manual: false });
-    expect(startChannel).toHaveBeenCalledWith("discord", undefined, {
-      includeKnownAccounts: true,
-    });
+    expect(startChannel).toHaveBeenCalledWith("discord");
     expect(runtimePublished).toBe(true);
     expect(setState).toHaveBeenCalledTimes(1);
   });
@@ -2594,9 +2592,7 @@ describe("gateway restart deferral preflight", () => {
     }
 
     expect(stopChannel).toHaveBeenCalledWith("discord", undefined, { manual: false });
-    expect(startChannel).toHaveBeenCalledWith("discord", undefined, {
-      includeKnownAccounts: true,
-    });
+    expect(startChannel).toHaveBeenCalledWith("discord");
     expect(logReload.warn).toHaveBeenCalledWith(
       expect.stringContaining("channel reload timeout after"),
     );
@@ -2653,9 +2649,7 @@ describe("gateway restart deferral preflight", () => {
     }
 
     expect(stopChannel).toHaveBeenCalledWith("telegram", undefined, { manual: false });
-    expect(startChannel).toHaveBeenCalledWith("telegram", undefined, {
-      includeKnownAccounts: true,
-    });
+    expect(startChannel).toHaveBeenCalledWith("telegram");
     expect(logReload.warn).toHaveBeenCalledWith(
       expect.stringContaining("channel reload timeout after"),
     );
@@ -2751,9 +2745,7 @@ describe("gateway restart deferral preflight", () => {
     }
 
     expect(stopChannel).toHaveBeenCalledWith("discord", undefined, { manual: false });
-    expect(startChannel).toHaveBeenCalledWith("discord", undefined, {
-      includeKnownAccounts: true,
-    });
+    expect(startChannel).toHaveBeenCalledWith("discord");
   });
 
   it("logs active task run ids before waiting and when forcing after timeout", async () => {
@@ -5670,7 +5662,7 @@ describe("gateway plugin hot reload handlers", () => {
     });
   });
 
-  it("restarts hot-reloaded channels with the known-account safety net", async () => {
+  it("restarts config hot-reloaded channels without the known-account safety net", async () => {
     const previousSkipChannels = process.env.OPENCLAW_SKIP_CHANNELS;
     const previousSkipProviders = process.env.OPENCLAW_SKIP_PROVIDERS;
     delete process.env.OPENCLAW_SKIP_CHANNELS;
@@ -5740,9 +5732,7 @@ describe("gateway plugin hot reload handlers", () => {
     }
 
     expect(stopChannel).toHaveBeenCalledWith("openclaw-weixin", undefined, { manual: false });
-    expect(startChannel).toHaveBeenCalledWith("openclaw-weixin", undefined, {
-      includeKnownAccounts: true,
-    });
+    expect(startChannel).toHaveBeenCalledWith("openclaw-weixin");
   });
 });
 

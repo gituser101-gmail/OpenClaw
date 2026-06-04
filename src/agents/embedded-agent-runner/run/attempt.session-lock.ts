@@ -481,6 +481,7 @@ export async function createEmbeddedAttemptSessionLockController(params: {
 
 type PromptReleaseStreamFn = ((...args: unknown[]) => Promise<unknown>) & {
   openclawSessionLockPromptReleaseInstalled?: true;
+  openclawEmbeddedPromptRetryDefaultInstalled?: true;
 };
 
 type SessionWithAgentPrompt = {
@@ -577,6 +578,12 @@ export function installPromptSubmissionLockRelease(params: {
     return promptResult;
   };
   wrappedStreamFn.openclawSessionLockPromptReleaseInstalled = true;
+  // Both installers wrap agent.streamFn and each is idempotent via its own marker.
+  // The outermost wrapper hides inner markers, so carry the retry-default marker
+  // forward; otherwise a later install pass would re-wrap an already-wrapped fn.
+  if (currentStreamFn.openclawEmbeddedPromptRetryDefaultInstalled === true) {
+    wrappedStreamFn.openclawEmbeddedPromptRetryDefaultInstalled = true;
+  }
   agent.streamFn = wrappedStreamFn;
 }
 
@@ -589,7 +596,11 @@ export function installEmbeddedPromptRetryDefault(session: unknown): void {
   if (typeof agent?.streamFn !== "function") {
     return;
   }
-  const innerStreamFn = agent.streamFn;
+  const currentStreamFn = agent.streamFn;
+  if (currentStreamFn.openclawEmbeddedPromptRetryDefaultInstalled === true) {
+    return;
+  }
+  const innerStreamFn = currentStreamFn;
   const wrappedStreamFn: PromptReleaseStreamFn = (...args: unknown[]) => {
     const [model, context, options] = args as [
       unknown,
@@ -598,5 +609,11 @@ export function installEmbeddedPromptRetryDefault(session: unknown): void {
     ];
     return innerStreamFn(model, context, { maxRetries: 0, ...options });
   };
+  wrappedStreamFn.openclawEmbeddedPromptRetryDefaultInstalled = true;
+  // The outermost wrapper hides inner markers, so carry the lock-release marker
+  // forward; otherwise a later install pass would re-wrap an already-wrapped fn.
+  if (currentStreamFn.openclawSessionLockPromptReleaseInstalled === true) {
+    wrappedStreamFn.openclawSessionLockPromptReleaseInstalled = true;
+  }
   agent.streamFn = wrappedStreamFn;
 }

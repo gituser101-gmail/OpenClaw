@@ -892,6 +892,7 @@ export function createImageGenerateTool(options?: {
   fsPolicy?: ToolFsPolicy;
   scheduleBackgroundWork?: MediaGenerateBackgroundScheduler;
   onAsyncTaskStarted?: MediaGenerateAsyncStartCallback;
+  availabilityResolved?: boolean;
 }): AnyAgentTool | null {
   const cfg = options?.config ?? getRuntimeConfig();
   const preparedProviders = options?.preparedModelRuntime?.mediaCapabilityProviders
@@ -899,6 +900,7 @@ export function createImageGenerateTool(options?: {
     ? [...options.preparedModelRuntime.mediaCapabilityProviders.imageGenerationProviders]
     : undefined;
   if (
+    options?.availabilityResolved !== true &&
     !hasGenerationToolAvailability({
       cfg,
       agentDir: options?.agentDir,

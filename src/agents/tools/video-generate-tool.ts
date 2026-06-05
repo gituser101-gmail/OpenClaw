@@ -932,6 +932,7 @@ export function createVideoGenerateTool(options?: {
   fsPolicy?: ToolFsPolicy;
   scheduleBackgroundWork?: MediaGenerateBackgroundScheduler;
   onAsyncTaskStarted?: MediaGenerateAsyncStartCallback;
+  availabilityResolved?: boolean;
 }): AnyAgentTool | null {
   const cfg: OpenClawConfig = options?.config ?? getRuntimeConfig();
   const preparedProviders = options?.preparedModelRuntime?.mediaCapabilityProviders
@@ -939,6 +940,7 @@ export function createVideoGenerateTool(options?: {
     ? [...options.preparedModelRuntime.mediaCapabilityProviders.videoGenerationProviders]
     : undefined;
   if (
+    options?.availabilityResolved !== true &&
     !hasGenerationToolAvailability({
       cfg,
       agentDir: options?.agentDir,

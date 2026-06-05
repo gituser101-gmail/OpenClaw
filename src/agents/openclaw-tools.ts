@@ -33,7 +33,6 @@ import { filterToolsByClientCaps } from "./openclaw-tools.client-caps.js";
 import {
   isToolExplicitlyAllowedByFactoryPolicy,
   mergeFactoryPolicyList,
-  resolveImageToolFactoryAvailable,
   resolveOptionalMediaToolFactoryPlan,
 } from "./openclaw-tools.media-factory-plan.js";
 import type { ModelAwareToolContext } from "./openclaw-tools.model-context.js";
@@ -266,8 +265,11 @@ export function createOpenClawTools(
     options?.sandboxRoot && options?.sandboxFsBridge
       ? { root: options.sandboxRoot, bridge: options.sandboxFsBridge }
       : undefined;
+  const mediaToolConfig = availabilityConfig ?? resolvedConfig;
   const optionalMediaTools = resolveOptionalMediaToolFactoryPlan({
-    config: availabilityConfig ?? resolvedConfig,
+    config: mediaToolConfig,
+    agentDir: options?.agentDir,
+    modelHasVision: options?.modelHasVision,
     workspaceDir,
     authStore: options?.authProfileStore,
     toolAllowlist: options?.pluginToolAllowlist,
@@ -296,32 +298,24 @@ export function createOpenClawTools(
         };
   const taskKey = normalizeOptionalString(options?.runSessionKey ?? options?.agentSessionKey);
   const { agentSessionKey: requesterSessionKey, runId: requesterTurnRunId } = options ?? {};
-  const imageTool =
-    options?.agentDir &&
-    resolveImageToolFactoryAvailable({
-      config: availabilityConfig ?? resolvedConfig,
-      agentDir: options.agentDir,
-      workspaceDir,
-      modelHasVision: options?.modelHasVision,
-      authStore: options?.authProfileStore,
-      preparedModelRuntime: options?.preparedModelRuntime,
-    })
-      ? createImageTool({
-          config: availabilityConfig ?? options?.config,
-          agentId: sessionAgentId,
-          agentDir: options.agentDir,
-          preparedModelRuntime: options?.preparedModelRuntime,
-          authProfileStore: options?.authProfileStore,
-          workspaceDir,
-          sandbox,
-          fsPolicy: options?.fsPolicy,
-          agentChannel: options?.agentChannel,
-          agentAccountId: options?.agentAccountId,
-          currentChannelId: options?.currentChannelId,
-          modelHasVision: options?.modelHasVision,
-          deferAutoModelResolution: true,
-        })
-      : null;
+  const imageToolAgentDir = options?.agentDir;
+  const imageTool = optionalMediaTools.image
+    ? createImageTool({
+        config: mediaToolConfig,
+        agentId: sessionAgentId,
+        agentDir: imageToolAgentDir!,
+        preparedModelRuntime: options?.preparedModelRuntime,
+        authProfileStore: options?.authProfileStore,
+        workspaceDir,
+        sandbox,
+        fsPolicy: options?.fsPolicy,
+        agentChannel: options?.agentChannel,
+        agentAccountId: options?.agentAccountId,
+        currentChannelId: options?.currentChannelId,
+        modelHasVision: options?.modelHasVision,
+        deferAutoModelResolution: true,
+      })
+    : null;
   options?.recordToolPrepStage?.("openclaw-tools:image-tool");
   const mediaGenerationToolOptions = {
     config: options?.config,
@@ -334,6 +328,7 @@ export function createOpenClawTools(
     sandbox,
     fsPolicy: options?.fsPolicy,
     onAsyncTaskStarted: mediaGenerationAsyncStartCallback,
+    availabilityResolved: true,
   };
   const imageGenerateTool = optionalMediaTools.imageGenerate
     ? createImageGenerateTool(mediaGenerationToolOptions)
@@ -350,7 +345,7 @@ export function createOpenClawTools(
   const pdfTool =
     optionalMediaTools.pdf && options?.agentDir?.trim()
       ? createPdfTool({
-          config: options?.config,
+          config: mediaToolConfig,
           agentId: sessionAgentId,
           agentDir: options.agentDir,
           preparedModelRuntime: options?.preparedModelRuntime,

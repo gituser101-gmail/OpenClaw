@@ -100,13 +100,15 @@ export function createSlackProgressRuntime(runtimeParams: {
   const useNativeProgressStreaming = useStreaming && slackStreaming.mode === "progress";
   const progressDraftActive = Boolean(draftStream) || useNativeProgressStreaming;
   const previewToolProgressEnabled =
-    progressDraftActive && resolveChannelStreamingPreviewToolProgress(account.config);
+    progressDraftActive &&
+    resolveChannelStreamingPreviewToolProgress(account.config, true, slackStreaming.mode);
   let shouldYieldDraftProgress: () => boolean = () => false;
   const suppressDefaultToolProgressMessages =
     resolveChannelStreamingSuppressDefaultToolProgressMessages(account.config, {
       draftStreamActive: Boolean(draftStream) || useNativeProgressStreaming,
       previewToolProgressEnabled,
       previewStreamingEnabled,
+      mode: slackStreaming.mode,
     });
   let previewToolProgressSuppressed = false;
   let legacyPreviewToolProgressLines: ChannelProgressDraftLine[] = [];

@@ -73,6 +73,7 @@ const SESSION_ENTRY_RESERVED_SLOT_KEY_LIST = [
   "thinkingLevel",
   "cronRunContinuation",
   "fastMode",
+  "streamingMode",
   "verboseLevel",
   "traceLevel",
   "reasoningLevel",

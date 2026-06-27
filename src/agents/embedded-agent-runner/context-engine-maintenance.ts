@@ -13,11 +13,13 @@ import type {
   ContextEngineRuntimeContext,
   ContextEngineRuntimeSettings,
   ContextEngineSessionTarget,
+  TranscriptRewriteResult,
 } from "../../context-engine/types.js";
 import { formatErrorMessage } from "../../infra/errors.js";
 import {
   enqueueCommandInLane,
   GatewayDrainingError,
+  isCommandLaneTaskTimeoutError,
   isGatewayDraining,
 } from "../../process/command-queue.js";
 import {
@@ -44,9 +46,32 @@ const TURN_MAINTENANCE_TASK_LABEL = "Context engine turn maintenance";
 const TURN_MAINTENANCE_TASK_TASK = "Deferred context-engine maintenance after turn.";
 const TURN_MAINTENANCE_LANE_PREFIX = "context-engine-turn-maintenance:";
 const TURN_MAINTENANCE_LONG_WAIT_MS = 10_000;
+// Bounds a single deferred maintenance run so a wedged worker (e.g. plugin lock
+// contention) releases its lane in seconds instead of blocking a queued user
+// message until the session-level abort fires. Overridable per deployment.
+const DEFERRED_TURN_MAINTENANCE_TASK_TIMEOUT_MS = 120_000;
 const DEFERRED_TURN_MAINTENANCE_ABORT_STATE_KEY = Symbol.for(
   "openclaw.contextEngineTurnMaintenanceAbortState",
 );
+
+/**
+ * Per-run safety fence shared between the queue timeout hook and the running
+ * worker. Once a deferred run times out the lane is released and a queued user
+ * turn can proceed, so a worker still unwinding must not perform late side
+ * effects (transcript rewrite, task complete/fail, progress) against state the
+ * foreground turn has already read.
+ */
+type DeferredTurnMaintenanceFence = { tripped: boolean };
+
+function fencedTranscriptRewriteResult(): TranscriptRewriteResult {
+  return {
+    changed: false,
+    bytesFreed: 0,
+    rewrittenEntries: 0,
+    reason: "maintenance fenced after timeout",
+  };
+}
+
 type DeferredTurnMaintenanceScheduleParams = {
   contextEngine: ContextEngine;
   sessionId: string;
@@ -119,6 +144,13 @@ function normalizeSessionKey(sessionKey?: string): string | undefined {
 
 function resolveDeferredTurnMaintenanceLane(sessionKey: string): string {
   return `${TURN_MAINTENANCE_LANE_PREFIX}${sessionKey}`;
+}
+
+function resolveDeferredTurnMaintenanceTaskTimeoutMs(config?: OpenClawConfig): number {
+  const configured = config?.agents?.defaults?.compaction?.turnMaintenanceTaskTimeoutMs;
+  return typeof configured === "number" && Number.isFinite(configured) && configured > 0
+    ? configured
+    : DEFERRED_TURN_MAINTENANCE_TASK_TIMEOUT_MS;
 }
 
 async function disposeDeferredMaintenanceContextEngine(
@@ -242,6 +274,23 @@ function markDeferredTurnMaintenanceTaskScheduleFailure(params: {
   });
 }
 
+function markDeferredTurnMaintenanceTaskTimeout(params: {
+  sessionKey: string;
+  taskId: string;
+  timeoutMs: number;
+}): void {
+  log.warn(
+    `deferred context engine maintenance timed out: sessionKey=${params.sessionKey} ` +
+      `taskId=${params.taskId} taskTimeoutMs=${params.timeoutMs}`,
+  );
+  cancelTaskByIdForOwner({
+    taskId: params.taskId,
+    callerOwnerKey: params.sessionKey,
+    endedAt: Date.now(),
+    terminalSummary: `Deferred maintenance timed out after ${params.timeoutMs}ms.`,
+  });
+}
+
 function buildTurnMaintenanceTaskDescriptor(params: {
   sessionKey: string;
   runId?: string;
@@ -299,6 +348,7 @@ function buildContextEngineMaintenanceRuntimeContext(params: {
   config?: OpenClawConfig;
   purpose?: string;
   contextEnginePluginId?: string;
+  maintenanceFence?: DeferredTurnMaintenanceFence;
 }): ContextEngineRuntimeContext {
   return {
     ...params.runtimeContext,
@@ -313,6 +363,12 @@ function buildContextEngineMaintenanceRuntimeContext(params: {
     ...(params.sessionTarget ? { sessionTarget: params.sessionTarget } : {}),
     ...(params.allowDeferredCompactionExecution ? { allowDeferredCompactionExecution: true } : {}),
     rewriteTranscriptEntries: async (request) => {
+      // A timed-out deferred run has already released its lane; skip the rewrite
+      // so a late maintenance pass does not start mutating the transcript the
+      // foreground turn is now reading.
+      if (params.maintenanceFence?.tripped) {
+        return fencedTranscriptRewriteResult();
+      }
       const runtimeAgentId = params.sessionTarget?.agentId ?? params.agentId;
       const runtimeStorePath =
         params.sessionTarget?.storePath ??
@@ -331,11 +387,18 @@ function buildContextEngineMaintenanceRuntimeContext(params: {
         });
         sessionManager = SessionManager.open(runtimeTarget);
       }
-      const rewriteSessionManagerEntries = () =>
-        rewriteTranscriptEntriesInSessionManager({
+      const rewriteSessionManagerEntries = () => {
+        // Re-check inside the lock: the timeout may have fired while we waited
+        // to acquire it, so a late run does not persist over the transcript the
+        // resumed foreground turn now owns.
+        if (params.maintenanceFence?.tripped) {
+          return fencedTranscriptRewriteResult();
+        }
+        return rewriteTranscriptEntriesInSessionManager({
           sessionManager,
           replacements: request.replacements,
         });
+      };
       const result = params.withSessionManagerRewriteLock
         ? await params.withSessionManagerRewriteLock(rewriteSessionManagerEntries)
         : rewriteSessionManagerEntries();
@@ -361,6 +424,7 @@ async function executeContextEngineMaintenance(params: {
   agentId?: string;
   executionMode: "foreground" | "background";
   config?: OpenClawConfig;
+  maintenanceFence?: DeferredTurnMaintenanceFence;
 }): Promise<ContextEngineMaintenanceResult | undefined> {
   if (typeof params.contextEngine.maintain !== "function") {
     return undefined;
@@ -385,6 +449,7 @@ async function executeContextEngineMaintenance(params: {
       config: params.config,
       purpose: `context-engine.${params.reason}.maintenance`,
       contextEnginePluginId: resolveContextEngineOwnerPluginId(params.contextEngine),
+      maintenanceFence: params.maintenanceFence,
     }),
   });
   if (result.changed) {
@@ -410,11 +475,17 @@ async function runDeferredTurnMaintenanceWorker(params: {
   runId: string;
   config?: OpenClawConfig;
   disposeContextEngineAfterMaintenance?: boolean;
+  maintenanceFence: DeferredTurnMaintenanceFence;
 }): Promise<void> {
   let surfacedUserNotice = false;
   let longRunningTimer: ReturnType<typeof setTimeout> | null = null;
   const shutdownAbort = createDeferredTurnMaintenanceAbortSignal();
   const surfaceMaintenanceUpdate = (summary: string, eventSummary: string) => {
+    // A timed-out run was already cancelled by the scheduler; do not emit late
+    // progress that would resurrect the descriptor as active.
+    if (params.maintenanceFence.tripped) {
+      return;
+    }
     promoteTurnMaintenanceTaskVisibility({
       sessionKey: params.sessionKey,
       runId: params.runId,
@@ -466,10 +537,17 @@ async function runDeferredTurnMaintenanceWorker(params: {
       agentId: params.agentId,
       config: params.config,
       executionMode: "background",
+      maintenanceFence: params.maintenanceFence,
     });
     if (longRunningTimer) {
       clearTimeout(longRunningTimer);
       longRunningTimer = null;
+    }
+
+    // The lane timeout fires the fence and cancels the descriptor; a worker that
+    // finishes afterward must not flip the cancelled task to succeeded.
+    if (params.maintenanceFence.tripped) {
+      return;
     }
 
     const endedAt = Date.now();
@@ -509,6 +587,10 @@ async function runDeferredTurnMaintenanceWorker(params: {
     if (longRunningTimer) {
       clearTimeout(longRunningTimer);
       longRunningTimer = null;
+    }
+    // A timed-out run is already cancelled; do not flip it to failed.
+    if (params.maintenanceFence.tripped) {
+      return;
     }
     const endedAt = Date.now();
     const reason = formatErrorMessage(err);
@@ -598,23 +680,43 @@ function scheduleDeferredTurnMaintenance(
   );
 
   const schedulerAbort = createDeferredTurnMaintenanceAbortSignal();
+  const taskTimeoutMs = resolveDeferredTurnMaintenanceTaskTimeoutMs(params.config);
+  // Tripped by the queue timeout hook (and defensively in the timeout catch
+  // below). The worker and its transcript-rewrite helper read it to suppress
+  // late side effects once the lane has been released to a queued user turn.
+  const maintenanceFence: DeferredTurnMaintenanceFence = { tripped: false };
   let runPromise: Promise<void>;
   try {
-    runPromise = enqueueCommandInLane(resolveDeferredTurnMaintenanceLane(sessionKey), async () =>
-      runDeferredTurnMaintenanceWorker({
-        contextEngine: params.contextEngine,
-        sessionId: params.sessionId,
-        sessionKey,
-        sessionTarget: params.sessionTarget,
-        sessionFile: params.sessionFile,
-        sessionManager: params.sessionManager,
-        runtimeContext: params.runtimeContext,
-        runtimeSettings: params.runtimeSettings,
-        agentId: params.agentId,
-        config: params.config,
-        runId: task.runId!,
-        disposeContextEngineAfterMaintenance: params.disposeContextEngineAfterMaintenance,
-      }),
+    runPromise = enqueueCommandInLane(
+      resolveDeferredTurnMaintenanceLane(sessionKey),
+      async () =>
+        runDeferredTurnMaintenanceWorker({
+          contextEngine: params.contextEngine,
+          sessionId: params.sessionId,
+          sessionKey,
+          sessionTarget: params.sessionTarget,
+          sessionFile: params.sessionFile,
+          sessionManager: params.sessionManager,
+          runtimeContext: params.runtimeContext,
+          runtimeSettings: params.runtimeSettings,
+          agentId: params.agentId,
+          config: params.config,
+          runId: task.runId!,
+          disposeContextEngineAfterMaintenance: params.disposeContextEngineAfterMaintenance,
+          maintenanceFence,
+        }),
+      // Bound a wedged maintenance run: on timeout the lane is released and the
+      // enqueue promise rejects with CommandLaneTaskTimeoutError. The
+      // onTaskTimeout hook flips the fence synchronously at that moment so the
+      // still-running worker suppresses its remaining transcript/task side
+      // effects (a rewrite already mid-persist is serialized by the session
+      // write lock).
+      {
+        taskTimeoutMs,
+        onTaskTimeout: () => {
+          maintenanceFence.tripped = true;
+        },
+      },
     );
   } catch (err) {
     schedulerAbort.dispose();
@@ -646,6 +748,21 @@ function scheduleDeferredTurnMaintenance(
   const trackedPromise = runPromise
     .catch((err: unknown) => {
       params.onScheduleFailure?.(err);
+      // A wedged worker that blew past taskTimeoutMs surfaces here as a lane
+      // timeout. The worker may still be unwinding in the background, but the
+      // lane is already free; release the task descriptor so the session no
+      // longer treats maintenance as active and the queued turn can proceed.
+      if (isCommandLaneTaskTimeoutError(err)) {
+        // Defensive: the onTaskTimeout hook already flipped this, but keep the
+        // fence authoritative even if the hook path changes.
+        maintenanceFence.tripped = true;
+        markDeferredTurnMaintenanceTaskTimeout({
+          sessionKey,
+          taskId: task.taskId,
+          timeoutMs: taskTimeoutMs,
+        });
+        return;
+      }
       markDeferredTurnMaintenanceTaskScheduleFailure({
         sessionKey,
         taskId: task.taskId,

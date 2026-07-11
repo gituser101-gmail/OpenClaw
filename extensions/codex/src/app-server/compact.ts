@@ -7,8 +7,8 @@ import {
   type CompactEmbeddedAgentSessionParams,
   type EmbeddedAgentCompactResult,
 } from "openclaw/plugin-sdk/agent-harness-runtime";
-import { createDedupeCache } from "openclaw/plugin-sdk/dedupe-runtime";
 import { resolveAgentDir, resolveDefaultAgentId } from "openclaw/plugin-sdk/agent-runtime";
+import { createDedupeCache } from "openclaw/plugin-sdk/dedupe-runtime";
 import { readCodexNotificationItem } from "./attempt-notifications.js";
 import { resolveCodexBindingAppServerConnection } from "./binding-connection.js";
 import { CodexAppServerRpcError, type CodexAppServerClient } from "./client.js";

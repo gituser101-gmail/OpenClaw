@@ -4445,6 +4445,8 @@ export const es: TranslationMap = {
       modelLockedLabel: "Selección de modelo controlada para esta sesión",
       lockedSessionModel: "Modelo de sesión",
       nativeCodexModel: "Modelo controlado por Codex",
+      replaceModeHint: "Replace mode shows only models explicitly listed in Settings.",
+      manageModels: "Manage models",
       thinkingLevel: "Chat thinking level",
     },
     toolCards: {

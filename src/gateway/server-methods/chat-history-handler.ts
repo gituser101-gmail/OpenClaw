@@ -77,6 +77,7 @@ type ChatMetadataResult = {
   commands?: unknown[];
   models?: unknown[];
   swarmEnabled: boolean;
+  catalogMode?: "replace";
 };
 
 function runtimeConfigsMatch(left: OpenClawConfig, right: OpenClawConfig): boolean {

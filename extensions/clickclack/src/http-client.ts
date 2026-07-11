@@ -2,7 +2,9 @@
  * Thin ClickClack REST/websocket client used by gateway, resolver, and outbound
  * delivery code.
  */
+import { buildTimeoutAbortSignal } from "openclaw/plugin-sdk/extension-shared";
 import { redactToolPayloadText } from "openclaw/plugin-sdk/logging-core";
+import { resolveTimerTimeoutMs } from "openclaw/plugin-sdk/number-runtime";
 import {
   readProviderJsonResponse,
   readResponseTextLimited,
@@ -56,8 +58,10 @@ type ClientOptions = {
   token: string;
   correlationId?: string;
   fetch?: typeof fetch;
+  requestTimeoutMs?: number;
 };
 
+const CLICKCLACK_REST_REQUEST_TIMEOUT_MS = 30_000;
 const CLICKCLACK_ERROR_BODY_LIMIT_BYTES = 8 * 1024;
 const CLICKCLACK_CORRELATION_ID_MAX_LENGTH = 128;
 const CLICKCLACK_CORRELATION_ID_PATTERN = /^[A-Za-z0-9._:-]+$/u;
@@ -134,12 +138,17 @@ export function createClickClackClient(options: ClientOptions) {
   const baseUrl = options.baseUrl.replace(/\/$/, "");
   const fetcher = options.fetch ?? fetch;
   const correlationId = normalizeClickClackCorrelationId(options.correlationId);
+  const requestTimeoutMs = resolveTimerTimeoutMs(
+    options.requestTimeoutMs,
+    CLICKCLACK_REST_REQUEST_TIMEOUT_MS,
+  );
   const headers = {
     Authorization: `Bearer ${options.token}`,
     Accept: "application/json",
   };
 
   async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+    const url = `${baseUrl}${path}`;
     const requestHeaders = new Headers(init.headers);
     for (const [key, value] of Object.entries(headers)) {
       requestHeaders.set(key, value);
@@ -150,20 +159,34 @@ export function createClickClackClient(options: ClientOptions) {
     if (init.body && !(init.body instanceof FormData)) {
       requestHeaders.set("Content-Type", "application/json");
     }
-    const response = await fetcher(`${baseUrl}${path}`, { ...init, headers: requestHeaders });
-    if (!response.ok) {
-      const detail = await readResponseTextLimited(response, CLICKCLACK_ERROR_BODY_LIMIT_BYTES);
-      // Remote error bodies are untrusted output; redact them even when the
-      // operator disables log redaction or overrides log-only patterns.
-      throw new ClickClackHttpError(
-        response.status,
-        redactToolPayloadText(detail),
-        new Headers(response.headers),
-      );
-    }
-    return await readProviderJsonResponse<T>(response, "ClickClack response", {
-      maxBytes: CLICKCLACK_INBOUND_JSON_LIMIT_BYTES,
+    const { signal: timeoutSignal, cleanup } = buildTimeoutAbortSignal({
+      timeoutMs: requestTimeoutMs,
+      operation: "clickclack-rest",
+      url,
     });
+    const callerSignal = init.signal ?? undefined;
+    const signal =
+      callerSignal && timeoutSignal
+        ? AbortSignal.any([callerSignal, timeoutSignal])
+        : (callerSignal ?? timeoutSignal);
+    try {
+      const response = await fetcher(url, { ...init, headers: requestHeaders, signal });
+      if (!response.ok) {
+        const detail = await readResponseTextLimited(response, CLICKCLACK_ERROR_BODY_LIMIT_BYTES);
+        // Remote error bodies are untrusted output; redact them even when the
+        // operator disables log redaction or overrides log-only patterns.
+        throw new ClickClackHttpError(
+          response.status,
+          redactToolPayloadText(detail),
+          new Headers(response.headers),
+        );
+      }
+      return await readProviderJsonResponse<T>(response, "ClickClack response", {
+        maxBytes: CLICKCLACK_INBOUND_JSON_LIMIT_BYTES,
+      });
+    } finally {
+      cleanup();
+    }
   }
 
   async function fetchEventPage(

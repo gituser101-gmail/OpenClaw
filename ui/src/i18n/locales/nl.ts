@@ -4415,8 +4415,6 @@ export const nl: TranslationMap = {
       modelLockedLabel: "Modelselectie wordt voor deze sessie beheerd",
       lockedSessionModel: "Sessiemodel",
       nativeCodexModel: "Door Codex beheerd model",
-      replaceModeHint: "Replace mode shows only models explicitly listed in Settings.",
-      manageModels: "Manage models",
       thinkingLevel: "Chat thinking level",
     },
     toolCards: {

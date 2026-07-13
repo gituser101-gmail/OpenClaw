@@ -31,12 +31,7 @@ import {
   type CodexAppServerClientFactory,
 } from "./shared-client.js";
 
-const MAX_WARNED_IGNORED_COMPACTION_OVERRIDE_KEYS = 4096;
-// Zero TTL preserves warning suppression until LRU eviction, after which a key can re-warn.
-const warnedIgnoredCompactionOverrides = createDedupeCache({
-  ttlMs: 0,
-  maxSize: MAX_WARNED_IGNORED_COMPACTION_OVERRIDE_KEYS,
-});
+const warnedIgnoredCompactionOverrides = createDedupeCache({ ttlMs: 0, maxSize: 4096 });
 const codexNativeCompactionQueues = new Map<string, Promise<void>>();
 const CODEX_NATIVE_COMPACTION_INTERRUPT_GRACE_MS = 30_000;
 const CODEX_NO_ACTIVE_TURN_ERROR_CODE = -32_600;

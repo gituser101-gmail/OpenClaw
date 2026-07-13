@@ -42,8 +42,6 @@ import type {
   SessionCompactionCheckpointEntryBuilder,
   BranchSessionFromCompactionCheckpointParams,
   RestoreSessionFromCompactionCheckpointParams,
-  SessionArchivedTranscriptFileCleanupParams,
-  SessionArchivedTranscriptFileCleanupResult,
   TemporarySessionMappingPreservationResult,
   SessionPatchProjectionSnapshot,
   SessionPatchProjectionTarget,
@@ -52,6 +50,10 @@ import type {
   SessionPatchProjectionResult,
   DeleteSessionEntryLifecycleParams,
 } from "./session-accessor.types.js";
+import type {
+  SessionArchivedTranscriptFileCleanupParams,
+  SessionArchivedTranscriptFileCleanupResult,
+} from "./session-archive-accessor.js";
 import { resolveProjectionExistingEntry } from "./session-entry-selection.js";
 import type { ResolvedSessionMaintenanceConfig } from "./store-maintenance.js";
 import type { SessionCompactionCheckpoint, SessionEntry } from "./types.js";

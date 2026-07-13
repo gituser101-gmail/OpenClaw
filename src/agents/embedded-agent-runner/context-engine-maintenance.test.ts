@@ -1681,7 +1681,7 @@ describe("runContextEngineMaintenance", () => {
         await waitForAssertion(() => expect(events).toContain("persist-start"));
         expect(deferredPromises).toHaveLength(1);
         let barrierSettled = false;
-        const firstDeferred = expectDefined(deferredPromises[0]);
+        const firstDeferred = expectDefined(deferredPromises[0], "deferredPromises[0] test invariant");
         const tracked = firstDeferred.then(() => {
           barrierSettled = true;
         });
@@ -1708,7 +1708,7 @@ describe("runContextEngineMaintenance", () => {
           (task) => task.taskKind === TURN_MAINTENANCE_TASK_KIND,
         );
         expect(tasks).toHaveLength(1);
-        const firstTask = expectDefined(tasks[0]);
+        const firstTask = expectDefined(tasks[0], "tasks[0] test invariant");
         const task = requireRecord(getTaskById(firstTask.taskId), "timed-out task");
         expect(task.status).toBe("cancelled");
       } finally {

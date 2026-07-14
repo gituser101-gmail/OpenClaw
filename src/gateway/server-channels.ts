@@ -222,7 +222,7 @@ type ChannelManagerOptions = {
   ambientAutostartSuppressedChannelIds?: ReadonlySet<string>;
 };
 
-export type StopChannelOptions = {
+type StopChannelOptions = {
   manual?: boolean;
 };
 

@@ -53,6 +53,8 @@ export type PendingFinalDeliveryPayload = {
   frozenResultText?: string | null;
   fallbackFrozenResultText?: string | null;
   wakeOnDescendantSettle?: boolean;
+  pendingRequesterConsumedDescendantRunIds?: string[];
+  pendingRequesterConsumedRunStartedAt?: number;
 };
 
 export type SubagentExecutionState = {
@@ -112,6 +114,7 @@ export type SubagentCompletionDeliveryState = {
   enqueuedAt?: number;
   deliveredAt?: number;
   announcedAt?: number;
+  requesterConsumedAt?: number;
   lastAttemptAt?: number;
   attemptCount?: number;
   lastError?: string | null;

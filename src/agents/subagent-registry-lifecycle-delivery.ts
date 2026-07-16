@@ -441,6 +441,10 @@ export function createSubagentRegistryLifecycleDelivery(
         entry.delivery?.payload?.fallbackFrozenResultText ?? entry.completion?.fallbackResultText,
       wakeOnDescendantSettle:
         entry.delivery?.payload?.wakeOnDescendantSettle ?? entry.wakeOnDescendantSettle,
+      pendingRequesterConsumedDescendantRunIds:
+        entry.delivery?.payload?.pendingRequesterConsumedDescendantRunIds,
+      pendingRequesterConsumedRunStartedAt:
+        entry.delivery?.payload?.pendingRequesterConsumedRunStartedAt,
     };
   };
 

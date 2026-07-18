@@ -3143,6 +3143,10 @@ describe("gateway channel hot reload handlers", () => {
     });
 
     expect(events).toEqual(["stop:discord:alpha"]);
+    expect(channels.stop).toHaveBeenCalledWith("discord", "alpha", {
+      manual: false,
+      restartPending: false,
+    });
   });
 
   it("rechecks agent work admitted after plugin reload leaves the channel running", async () => {

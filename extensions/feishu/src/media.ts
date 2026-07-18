@@ -22,6 +22,7 @@ import {
 } from "openclaw/plugin-sdk/temp-path";
 import type { ClawdbotConfig } from "../runtime-api.js";
 import { resolveFeishuRuntimeAccount } from "./accounts.js";
+import { raceWithTimeoutAndAbort } from "./async.js";
 import { createFeishuClient } from "./client.js";
 import { requestFeishuApi } from "./comment-shared.js";
 import { normalizeFeishuExternalKey } from "./external-keys.js";
@@ -41,6 +42,7 @@ const FEISHU_VOICE_SAMPLE_RATE_HZ = 48_000;
 const FEISHU_VOICE_BITRATE = "64k";
 const FEISHU_VIDEO_PREVIEW_FILE_NAME = "preview.jpg";
 const FEISHU_VIDEO_PREVIEW_SEEK_SECONDS = "0.5";
+const FEISHU_VIDEO_PREVIEW_TIMEOUT_MS = 5_000;
 
 const FEISHU_TRANSCODABLE_AUDIO_EXTS = new Set([
   ".aac",
@@ -903,25 +905,28 @@ async function renderFeishuVideoPreviewFrame(params: {
           rootDir: workspace.dir,
           path: FEISHU_VIDEO_PREVIEW_FILE_NAME,
           write: async (outputPath) => {
-            await runFfmpeg([
-              "-hide_banner",
-              "-loglevel",
-              "error",
-              "-y",
-              "-ss",
-              FEISHU_VIDEO_PREVIEW_SEEK_SECONDS,
-              "-i",
-              inputPath,
-              "-frames:v",
-              "1",
-              "-c:v",
-              "mjpeg",
-              "-q:v",
-              "3",
-              "-f",
-              "image2",
-              outputPath,
-            ]);
+            await runFfmpeg(
+              [
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-y",
+                "-ss",
+                FEISHU_VIDEO_PREVIEW_SEEK_SECONDS,
+                "-i",
+                inputPath,
+                "-frames:v",
+                "1",
+                "-c:v",
+                "mjpeg",
+                "-q:v",
+                "3",
+                "-f",
+                "image2",
+                outputPath,
+              ],
+              { timeoutMs: FEISHU_VIDEO_PREVIEW_TIMEOUT_MS },
+            );
           },
         });
         return await workspace.read(FEISHU_VIDEO_PREVIEW_FILE_NAME);
@@ -951,12 +956,19 @@ async function maybeUploadVideoPreviewImageKey(params: {
   }
 
   try {
-    const { imageKey } = await uploadImageFeishu({
-      cfg: params.cfg,
-      image: preview,
-      accountId: params.accountId,
-    });
-    return imageKey;
+    const result = await raceWithTimeoutAndAbort(
+      uploadImageFeishu({
+        cfg: params.cfg,
+        image: preview,
+        accountId: params.accountId,
+      }),
+      { timeoutMs: FEISHU_VIDEO_PREVIEW_TIMEOUT_MS },
+    );
+    if (result.status !== "resolved") {
+      console.warn("[feishu] video preview upload timed out; sending video without cover");
+      return undefined;
+    }
+    return result.value.imageKey;
   } catch (err) {
     console.warn("[feishu] failed to upload video preview; sending video without cover:", err);
     return undefined;
@@ -1090,9 +1102,10 @@ export async function sendMediaFeishu(params: {
   contentType = prepared.contentType;
 
   const routing = resolveFeishuOutboundMediaKind({ fileName: name, contentType });
-  const voiceIntentDegradedToFile = audioAsVoice === true && routing.msgType !== "audio";
+  const msgType = routing.msgType;
+  const voiceIntentDegradedToFile = audioAsVoice === true && msgType !== "audio";
 
-  if (routing.msgType === "image") {
+  if (msgType === "image") {
     const { imageKey } = await runBeforeFeishuMessageDispatch(() =>
       uploadImageFeishu({ cfg, image: buffer, accountId }),
     );
@@ -1114,7 +1127,7 @@ export async function sendMediaFeishu(params: {
     buffer,
     fileName: name,
     contentType,
-    msgType: routing.msgType,
+    msgType,
   });
   const { fileKey } = await runBeforeFeishuMessageDispatch(() =>
     uploadFileFeishu({
@@ -1132,7 +1145,7 @@ export async function sendMediaFeishu(params: {
       buffer,
       fileName: name,
       contentType,
-      msgType: routing.msgType,
+      msgType,
       accountId,
     }),
   );
@@ -1141,7 +1154,7 @@ export async function sendMediaFeishu(params: {
     to,
     fileKey,
     imageKey,
-    msgType: routing.msgType,
+    msgType,
     replyToMessageId,
     replyInThread,
     allowTopLevelReplyFallback,

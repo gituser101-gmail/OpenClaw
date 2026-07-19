@@ -5321,6 +5321,7 @@ describe("gateway plugin hot reload handlers", () => {
     expect(stopChannel).toHaveBeenCalledWith("discord", undefined, {
       manual: false,
       restartPending: false,
+      preserveKnownAccount: true,
     });
     expect(startChannel).not.toHaveBeenCalled();
     expect(events).toEqual(["reload:start", "stop", "registry:replace"]);
@@ -5400,6 +5401,7 @@ describe("gateway plugin hot reload handlers", () => {
     expect(stopChannel).toHaveBeenCalledWith("discord", undefined, {
       manual: false,
       restartPending: false,
+      preserveKnownAccount: true,
     });
     expect(startChannel).not.toHaveBeenCalled();
     expect(events).toEqual(["reload:start", "stop:discord", "registry:replace"]);
@@ -5571,6 +5573,7 @@ describe("gateway plugin hot reload handlers", () => {
     expect(stopChannel).toHaveBeenCalledWith("openclaw-weixin", undefined, {
       manual: false,
       restartPending: false,
+      preserveKnownAccount: true,
     });
     expect(startChannel).toHaveBeenCalledWith("openclaw-weixin", undefined, {
       includeKnownAccounts: true,
@@ -5665,6 +5668,7 @@ describe("gateway plugin hot reload handlers", () => {
     expect(stopChannel).toHaveBeenCalledWith("openclaw-weixin", undefined, {
       manual: false,
       restartPending: false,
+      preserveKnownAccount: true,
     });
     expect(startChannel).toHaveBeenCalledWith("openclaw-weixin");
     expect(startChannel).not.toHaveBeenCalledWith("openclaw-weixin", undefined, {
@@ -6089,6 +6093,7 @@ describe("deferred channel reload abort generation", () => {
     expect(channels.stop).toHaveBeenCalledWith("whatsapp", undefined, {
       manual: false,
       restartPending: false,
+      preserveKnownAccount: true,
     });
     expect(channels.start).not.toHaveBeenCalled();
   });
@@ -6119,6 +6124,7 @@ describe("deferred channel reload abort generation", () => {
     expect(channels.stop).toHaveBeenCalledWith("whatsapp", undefined, {
       manual: false,
       restartPending: false,
+      preserveKnownAccount: true,
     });
     expect(channels.start).toHaveBeenCalledWith("whatsapp", undefined, {
       includeKnownAccounts: true,
@@ -6152,6 +6158,7 @@ describe("deferred channel reload abort generation", () => {
     expect(channels.stop).toHaveBeenCalledWith("whatsapp", undefined, {
       manual: false,
       restartPending: false,
+      preserveKnownAccount: true,
     });
     expect(channels.start).toHaveBeenCalledWith("whatsapp", undefined, {
       includeKnownAccounts: true,
@@ -6188,6 +6195,7 @@ describe("deferred channel reload abort generation", () => {
     expect(channels.stop).toHaveBeenCalledWith("whatsapp", undefined, {
       manual: false,
       restartPending: false,
+      preserveKnownAccount: true,
     });
     expect(channels.start).not.toHaveBeenCalled();
     expect(requestRecoveryRestart).not.toHaveBeenCalled();

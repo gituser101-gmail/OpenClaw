@@ -52,6 +52,7 @@ import {
   readSkillProposalDraftDirectory,
   readSkillProposalDraftFile,
   rejectSkillProposal,
+  reviewSkillProposal,
   reviseSkillProposal,
 } from "../skills/workshop/service.js";
 import type {
@@ -59,6 +60,7 @@ import type {
   SkillProposalEvaluateResult,
   SkillProposalManifest,
   SkillProposalReadResult,
+  SkillProposalReviewResult,
   SkillProposalSupportFileInput,
 } from "../skills/workshop/types.js";
 import { CONFIG_DIR } from "../utils.js";
@@ -343,6 +345,28 @@ function formatSkillProposalEvaluation(result: SkillProposalEvaluateResult): str
   return `${lines.join("\n")}\n`;
 }
 
+function formatSkillProposalReview(review: SkillProposalReviewResult): string {
+  const header = [
+    `Proposal: ${review.record.id}`,
+    `Version: ${review.record.proposedVersion}`,
+    `Revision hash: ${review.revisionHash}`,
+    `Review: ${review.mode}`,
+    "",
+  ];
+  if (review.mode === "diff") {
+    return [...header, review.diff || "No changes would be applied."].join("\n");
+  }
+  if (review.mode === "unavailable") {
+    return [...header, `Review unavailable: ${review.reason}`].join("\n");
+  }
+  return [
+    ...header,
+    "--- SKILL.md ---",
+    review.content,
+    ...review.supportFiles.flatMap((file) => ["", `--- ${file.path} ---`, file.content]),
+  ].join("\n");
+}
+
 function formatSkillCuratorStatus(status: SkillCuratorStatus): string {
   const timestamp = (value: number | null) =>
     value === null ? "never" : new Date(value).toISOString();
@@ -431,6 +455,7 @@ async function runSkillCuratorMutation(method: "pin" | "restore" | "unpin", skil
 async function runSkillProposalApply(
   resolved: ResolvedSkillsWorkspace,
   proposalId: string,
+  expectedRevisionHash?: string,
 ): Promise<SkillProposalApplyResult> {
   const { callGateway, isGatewayTransportError } = await import("../gateway/call.js");
   try {
@@ -460,13 +485,14 @@ async function runSkillProposalApply(
       workspaceDir: resolved.workspaceDir,
       config: resolved.config,
       proposalId,
+      expectedRevisionHash,
     });
   }
 
   return await callGateway<SkillProposalApplyResult>({
     config: resolved.config,
     method: "skills.proposals.apply",
-    params: { agentId: resolved.agentId, proposalId },
+    params: { agentId: resolved.agentId, proposalId, expectedRevisionHash },
     timeoutMs: GATEWAY_SKILLS_APPLY_TIMEOUT_MS,
     clientName: GATEWAY_CLIENT_NAMES.CLI,
     mode: GATEWAY_CLIENT_MODES.CLI,
@@ -967,6 +993,26 @@ export function registerSkillsCli(program: Command) {
     });
 
   workshop
+    .command("review")
+    .description("Show the exact content or diff a proposal would apply")
+    .argument("<proposal-id>", "Skill proposal id")
+    .option("--json", "Output as JSON", false)
+    .action(async (proposalId: string, opts: { json?: boolean; agent?: string }) => {
+      try {
+        const { config, workspaceDir, agentId } = resolveSkillsWorkspaceForCommand(workshop, opts);
+        const review = await reviewSkillProposal({ workspaceDir, agentId, config, proposalId });
+        if (opts.json) {
+          defaultRuntime.writeJson(review);
+          return;
+        }
+        defaultRuntime.writeStdout(formatSkillProposalReview(review));
+      } catch (err) {
+        defaultRuntime.error(String(err));
+        defaultRuntime.exit(1);
+      }
+    });
+
+  workshop
     .command("propose-create")
     .description("Create a pending proposal for a new workspace skill")
     .requiredOption("--name <name>", "Skill name")
@@ -1176,12 +1222,21 @@ export function registerSkillsCli(program: Command) {
     .command("apply")
     .description("Apply a pending skill proposal")
     .argument("<proposal-id>", "Skill proposal id")
+    .option("--expected-revision-hash <hash>", "Exact revision hash returned by review")
     .option("--json", "Output as JSON", false)
     .action(
-      async (proposalId: string, opts: { json?: boolean; agent?: string }, command: Command) => {
+      async (
+        proposalId: string,
+        opts: { expectedRevisionHash?: string; json?: boolean; agent?: string },
+        command: Command,
+      ) => {
         try {
           const resolved = resolveSkillsWorkspaceForCommand(command.parent, opts);
-          const applied = await runSkillProposalApply(resolved, proposalId);
+          const applied = await runSkillProposalApply(
+            resolved,
+            proposalId,
+            opts.expectedRevisionHash,
+          );
           if (opts.json) {
             defaultRuntime.writeJson(applied);
             return;
@@ -1200,12 +1255,18 @@ export function registerSkillsCli(program: Command) {
     .command("reject")
     .description("Reject a pending skill proposal")
     .argument("<proposal-id>", "Skill proposal id")
+    .option("--expected-revision-hash <hash>", "Exact revision hash returned by review")
     .option("--reason <text>", "Reason for rejection")
     .option("--json", "Output as JSON", false)
     .action(
       async (
         proposalId: string,
-        opts: { reason?: string; json?: boolean; agent?: string },
+        opts: {
+          expectedRevisionHash?: string;
+          reason?: string;
+          json?: boolean;
+          agent?: string;
+        },
         command: Command,
       ) => {
         try {
@@ -1215,6 +1276,7 @@ export function registerSkillsCli(program: Command) {
             eventActor: { type: "system", id: "cli" },
             workspaceDir,
             proposalId,
+            expectedRevisionHash: opts.expectedRevisionHash,
             reason: opts.reason,
           });
           if (opts.json) {
@@ -1233,12 +1295,18 @@ export function registerSkillsCli(program: Command) {
     .command("quarantine")
     .description("Quarantine a skill proposal")
     .argument("<proposal-id>", "Skill proposal id")
+    .option("--expected-revision-hash <hash>", "Exact revision hash returned by review")
     .option("--reason <text>", "Reason for quarantine")
     .option("--json", "Output as JSON", false)
     .action(
       async (
         proposalId: string,
-        opts: { reason?: string; json?: boolean; agent?: string },
+        opts: {
+          expectedRevisionHash?: string;
+          reason?: string;
+          json?: boolean;
+          agent?: string;
+        },
         command: Command,
       ) => {
         try {
@@ -1248,6 +1316,7 @@ export function registerSkillsCli(program: Command) {
             eventActor: { type: "system", id: "cli" },
             workspaceDir,
             proposalId,
+            expectedRevisionHash: opts.expectedRevisionHash,
             reason: opts.reason,
           });
           if (opts.json) {

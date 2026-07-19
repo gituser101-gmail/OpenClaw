@@ -105,6 +105,7 @@ export class CodexAppServerEventProjector {
   private promptErrorSource: AttemptFailureSource | null = null;
   private synthesizedMissingToolResultError: string | null = null;
   private aborted = false;
+  terminalReleaseInterruptClosed = false;
   private tokenUsage: ReturnType<typeof normalizeCodexThreadTokenUsage>;
   private responseUsage: ReturnType<typeof normalizeCodexResponseTokenUsage>;
   private completedCompactionCount = 0;
@@ -341,11 +342,11 @@ export class CodexAppServerEventProjector {
     const hasDeliverableAssistantOnCompletedTurn =
       this.completedTurn?.status === "completed" &&
       assistantTexts.some((text) => text.trim().length > 0);
+    const delivered = hasDeliverableAssistantOnCompletedTurn || this.terminalReleaseInterruptClosed;
     const synthesizedMissingToolResultError =
       this.toolTranscriptProjection.synthesizeMissingToolResults({
         synthesize: legacyFailClosed,
-        recordPromptError:
-          legacyFailClosed && !hasDeliverableAssistantOnCompletedTurn && !this.aborted,
+        recordPromptError: legacyFailClosed && !delivered && !this.aborted,
       });
     if (synthesizedMissingToolResultError) {
       this.synthesizedMissingToolResultError = synthesizedMissingToolResultError;

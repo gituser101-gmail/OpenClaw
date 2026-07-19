@@ -330,12 +330,18 @@ export function createGatewayReloadHandlers(params: GatewayReloadHandlerParams) 
       }
     };
     if (plan.reloadPlugins) {
-      const restartStoppedPluginChannels = async (reason: string) =>
+      const restartStoppedPluginChannels = async (
+        reason: string,
+        options: { includeKnownAccounts?: boolean } = {},
+      ) =>
         await collectChannelOperationFailures({
           channels: [...channelsStoppedBeforePluginReload],
           run: async (channel) => {
             params.logChannels.info(`restarting ${channel} channel after ${reason}`);
-            if (shouldIncludeKnownAccountsForPluginReload(plan.changedPaths, channel)) {
+            const includeKnownAccounts =
+              options.includeKnownAccounts === true ||
+              shouldIncludeKnownAccountsForPluginReload(plan.changedPaths, channel);
+            if (includeKnownAccounts) {
               await runOutsideGatewayRootWorkAdmission(() =>
                 params.startChannel(channel, undefined, { includeKnownAccounts: true }),
               );
@@ -407,6 +413,7 @@ export function createGatewayReloadHandlers(params: GatewayReloadHandlerParams) 
           }
           const rollbackFailures = await restartStoppedPluginChannels(
             "cancelled plugin reload pre-stop",
+            { includeKnownAccounts: true },
           );
           if (rollbackFailures.length > 0) {
             failPluginChannelRollback("cancelled plugin reload pre-stop", rollbackFailures);
@@ -416,6 +423,7 @@ export function createGatewayReloadHandlers(params: GatewayReloadHandlerParams) 
         if (stopFailures.length > 0) {
           const rollbackFailures = await restartStoppedPluginChannels(
             "failed plugin reload pre-stop",
+            { includeKnownAccounts: true },
           );
           if (rollbackFailures.length > 0) {
             failPluginChannelRollback("failed plugin reload pre-stop", rollbackFailures);
@@ -440,6 +448,7 @@ export function createGatewayReloadHandlers(params: GatewayReloadHandlerParams) 
           if (!runtimeCommitted) {
             const rollbackFailures = await restartStoppedPluginChannels(
               "failed plugin runtime publication",
+              { includeKnownAccounts: true },
             );
             if (rollbackFailures.length > 0) {
               failPluginChannelRollback("failed plugin runtime publication", rollbackFailures);
@@ -454,6 +463,7 @@ export function createGatewayReloadHandlers(params: GatewayReloadHandlerParams) 
           if (!isLifecycleReloadAborted()) {
             const rollbackFailures = await restartStoppedPluginChannels(
               "cancelled plugin runtime publication",
+              { includeKnownAccounts: true },
             );
             if (rollbackFailures.length > 0) {
               failPluginChannelRollback("cancelled plugin runtime publication", rollbackFailures);

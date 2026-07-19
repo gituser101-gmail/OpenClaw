@@ -530,6 +530,12 @@ export function createChannelManager(opts: ChannelManagerOptions): ChannelManage
         `channel autostart suppressed by crash-loop breaker; refusing automatic start for ${channelId}${suffix}. ${formatGatewayCrashLoopManualChannelStartHint({ channelId, ...(accountId ? { accountId } : {}) })}`,
       );
       for (const id of accountIds) {
+        const rKey = restartKey(channelId, id);
+        restartDeferredToCaller.delete(rKey);
+        knownAccountDeferredToCaller.delete(rKey);
+        recoveryStopTimedOut.delete(rKey);
+        recoveryStartRequested.delete(rKey);
+        restarts.delete(rKey);
         setStoppedRuntime(channelId, id, {
           restartPending: false,
           lastError: autostartSuppression.message,
@@ -593,7 +599,9 @@ export function createChannelManager(opts: ChannelManagerOptions): ChannelManage
         const existingStart = store.starting.get(id);
         if (existingStart) {
           const shouldRetryAfterDeferredStart =
-            includeKnownAccounts && getRuntime(channelId, id).restartPending === true;
+            includeKnownAccounts &&
+            (getRuntime(channelId, id).restartPending === true ||
+              knownAccountDeferredToCaller.has(rKey));
           await existingStart;
           if (
             !shouldRetryAfterDeferredStart ||
@@ -744,6 +752,14 @@ export function createChannelManager(opts: ChannelManagerOptions): ChannelManage
             }),
           );
           channelRuntimeForTask = scopedChannelRuntime.channelRuntime;
+
+          if (abort.signal.aborted || manuallyStopped.has(rKey)) {
+            setStoppedRuntime(channelId, id, {
+              restartPending: shouldPreserveCallerDeferredRestart(),
+              lastStopAt: Date.now(),
+            });
+            return;
+          }
 
           if (!preserveRestartAttempts) {
             restarts.delete(rKey);
@@ -908,6 +924,8 @@ export function createChannelManager(opts: ChannelManagerOptions): ChannelManage
                 // Leaving recovery state behind would restart a channel that needs user action.
                 recoveryStopTimedOut.delete(rKey);
                 recoveryStartRequested.delete(rKey);
+                restartDeferredToCaller.delete(rKey);
+                knownAccountDeferredToCaller.delete(rKey);
                 restarts.delete(rKey);
                 setRuntime(channelId, id, {
                   accountId: id,
@@ -920,6 +938,8 @@ export function createChannelManager(opts: ChannelManagerOptions): ChannelManage
               if (recoveryStopTimedOut.has(rKey)) {
                 recoveryStopTimedOut.delete(rKey);
                 if (!recoveryStartRequested.delete(rKey)) {
+                  restartDeferredToCaller.delete(rKey);
+                  knownAccountDeferredToCaller.delete(rKey);
                   setRuntime(channelId, id, {
                     accountId: id,
                     restartPending: false,
@@ -1214,7 +1234,7 @@ export function createChannelManager(opts: ChannelManagerOptions): ChannelManage
             } else {
               setStoppedRuntime(channelId, id, stoppedPatch);
             }
-            if (!manual && accountRestartPending) {
+            if (!manual && (accountRestartPending || preserveKnownAccount)) {
               restartDeferredToCaller.delete(rKey);
               recoveryStopTimedOut.add(rKey);
             }

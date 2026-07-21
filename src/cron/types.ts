@@ -6,7 +6,7 @@ import type { HookExternalContentSource } from "../security/external-content.js"
 import type { CronScheduledToolPolicy } from "./scheduled-tool-policy.js";
 import type { CronJobBase, CronPacing } from "./types-shared.js";
 
-export type { CronPacing, CronJobPrecheck } from "./types-shared.js";
+export type { CronPacing } from "./types-shared.js";
 
 /** Supported schedule forms persisted in cron job specs. */
 export type CronSchedule =

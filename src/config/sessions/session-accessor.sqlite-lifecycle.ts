@@ -127,7 +127,9 @@ export async function cleanupSqliteSessionLifecycleArtifacts(
       orphanTranscriptMinAgeMs: params.orphanTranscriptMinAgeMs,
       nowMs: params.nowMs ?? Date.now(),
     });
-    const materializedPlans = materializeSqliteSessionStateDeletePlans(cleanupPlan.deletePlans);
+    const materializedPlans = await materializeSqliteSessionStateDeletePlans(
+      cleanupPlan.deletePlans,
+    );
     let removedEntries = 0;
     let archivedTranscripts: SessionLifecycleArchivedTranscript[] = [];
     runOpenClawAgentWriteTransaction((transactionDb) => {
@@ -338,8 +340,8 @@ async function deleteSqliteSessionEntryLifecycleLocked(
         )
       : [];
     const entryPlanIds = new Set(entryPlans.map((plan) => plan.sessionId));
-    // Ids only — planning (which loads full transcript content) happens
-    // lazily one generation at a time after the main transaction.
+    // Ids only — archive extraction happens lazily one generation at a time
+    // outside the SQLite write transaction.
     const historicalGenerationIds = deleteTranscriptState
       ? readSqliteSessionGenerationIdsForKeys(database, [
           params.target.canonicalKey,
@@ -396,7 +398,7 @@ async function deleteSqliteSessionEntryLifecycleLocked(
       if (!plan) {
         continue;
       }
-      const materializedGeneration = materializeSqliteSessionStateDeletePlans([plan]);
+      const materializedGeneration = await materializeSqliteSessionStateDeletePlans([plan]);
       const archivedGeneration: SessionLifecycleArchivedTranscript[] = [];
       runOpenClawAgentWriteTransaction((transactionDb) => {
         // Authoritative fence: admissions are process-local sync state and this
@@ -423,7 +425,7 @@ async function deleteSqliteSessionEntryLifecycleLocked(
       emitArchivedSqliteTranscriptUpdates(archivedGeneration);
       historicalArchivedTranscripts.push(...archivedGeneration);
     }
-    const materializedPlans = materializeSqliteSessionStateDeletePlans(entryPlans);
+    const materializedPlans = await materializeSqliteSessionStateDeletePlans(entryPlans);
     runOpenClawAgentWriteTransaction((transactionDb) => {
       const transactionSnapshot = readSqliteLifecycleTargetSnapshot(transactionDb, params.target);
       assertSqliteLifecycleTargetSnapshotUnchanged(

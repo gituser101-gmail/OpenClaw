@@ -51,7 +51,10 @@ import {
 import { resolveMaxTokensParam } from "./model-max-tokens-params.js";
 import { emitModelTransportDebug } from "./model-transport-debug.js";
 import { hasOpenAICompatibleConversationTurn } from "./openai-compatible-conversation-turn.js";
-import { detectOpenAICompletionsCompat } from "./openai-completions-compat.js";
+import {
+  detectOpenAICompletionsCompat,
+  isAzureOpenAICompatibleHostname,
+} from "./openai-completions-compat.js";
 import {
   flattenCompletionMessagesToStringContent,
   stripCompletionMessagesToRoleContent,
@@ -180,14 +183,6 @@ function createOpenAICompletionsClient(
   });
 }
 
-function isAzureOpenAICompatibleHost(hostname: string): boolean {
-  return (
-    hostname.endsWith(".openai.azure.com") ||
-    hostname.endsWith(".services.ai.azure.com") ||
-    hostname.endsWith(".cognitiveservices.azure.com")
-  );
-}
-
 function isKnownOpenAICompletionsEndpoint(model: Pick<Model, "baseUrl">): boolean {
   if (!model.baseUrl.trim()) {
     return true;
@@ -197,7 +192,7 @@ function isKnownOpenAICompletionsEndpoint(model: Pick<Model, "baseUrl">): boolea
     return true;
   }
   try {
-    return isAzureOpenAICompatibleHost(new URL(model.baseUrl).hostname.toLowerCase());
+    return isAzureOpenAICompatibleHostname(new URL(model.baseUrl).hostname.toLowerCase());
   } catch {
     return false;
   }
@@ -219,7 +214,7 @@ function buildOpenAICompletionsClientConfig(
 
   try {
     const parsed = new URL(model.baseUrl);
-    isAzureHost = isAzureOpenAICompatibleHost(parsed.hostname.toLowerCase());
+    isAzureHost = isAzureOpenAICompatibleHostname(parsed.hostname.toLowerCase());
     parsed.searchParams.forEach((value, key) => {
       if (value) {
         defaultQuery[key] = value;

@@ -451,7 +451,7 @@ describe("optional media tool factory planning", () => {
     try {
       await fs.mkdir(workspaceDir, { recursive: true });
       await fs.mkdir(stateDir, { recursive: true });
-      setBundledPluginsDirOverrideForTest(path.join(process.cwd(), "extensions"));
+      vi.stubEnv("OPENCLAW_BUNDLED_PLUGINS_DIR", path.join(process.cwd(), "extensions"));
       vi.stubEnv("OPENCLAW_STATE_DIR", stateDir);
 
       expect(
@@ -534,7 +534,7 @@ describe("optional media tool factory planning", () => {
         }),
         "utf8",
       );
-      setBundledPluginsDirOverrideForTest(bundledDir);
+      vi.stubEnv("OPENCLAW_BUNDLED_PLUGINS_DIR", bundledDir);
       vi.stubEnv("OPENCLAW_STATE_DIR", stateDir);
 
       expect(
@@ -566,7 +566,7 @@ describe("optional media tool factory planning", () => {
       await fs.mkdir(pluginDir, { recursive: true });
       await fs.mkdir(bundledDir, { recursive: true });
       await fs.mkdir(stateDir, { recursive: true });
-      setBundledPluginsDirOverrideForTest(bundledDir);
+      vi.stubEnv("OPENCLAW_BUNDLED_PLUGINS_DIR", bundledDir);
       vi.stubEnv("OPENCLAW_STATE_DIR", stateDir);
       installSnapshot(config, [
         createPlugin({

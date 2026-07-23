@@ -190,7 +190,7 @@ import {
   logMessageProcessed,
   runWithDiagnosticTraceContext,
 } from "openclaw/plugin-sdk/plugin-test-runtime";
-import { emitDiagnosticEvent } from "../api.js";
+import { emitDiagnosticEvent, type DiagnosticEventPayload } from "../api.js";
 import { createDiagnosticsOtelService } from "./service.js";
 import {
   CHILD_SPAN_ID,
@@ -218,6 +218,7 @@ function numberedSpanId(index: number) {
 }
 const PROTO_KEY = "__proto__";
 const MAX_TEST_OTEL_CONTENT_ATTRIBUTE_CHARS = 128 * 1024;
+type TelemetryExporterEvent = Extract<DiagnosticEventPayload, { type: "telemetry.exporter" }>;
 const OTEL_TRUNCATED_SUFFIX_MAX_CHARS = 20;
 const ORIGINAL_OPENCLAW_OTEL_PRELOADED = process.env.OPENCLAW_OTEL_PRELOADED;
 const ORIGINAL_OTEL_EXPORTER_OTLP_PROTOCOL = process.env.OTEL_EXPORTER_OTLP_PROTOCOL;
@@ -1050,7 +1051,7 @@ describe("diagnostics-otel service", () => {
   });
 
   test("emits and records bounded telemetry exporter health events", async () => {
-    const events: Array<Parameters<Parameters<typeof onInternalDiagnosticEvent>[0]>[0]> = [];
+    const events: TelemetryExporterEvent[] = [];
     const unsubscribe = onInternalDiagnosticEvent((event) => {
       if (event.type === "telemetry.exporter") {
         events.push(event);
@@ -1178,13 +1179,53 @@ describe("diagnostics-otel service", () => {
     expect(logEmit).not.toHaveBeenCalled();
   });
 
-  test("starts stdout-only logs when OTLP protocol is unsupported", async () => {
+  test("rejects unsupported protocol env override before exporter startup", async () => {
+    const events: TelemetryExporterEvent[] = [];
+    const unsubscribe = onInternalDiagnosticEvent((event) => {
+      if (event.type === "telemetry.exporter") {
+        events.push(event);
+      }
+    });
+    process.env.OTEL_EXPORTER_OTLP_PROTOCOL = "grpc";
+    const { ctx } = await startOtelService({
+      traces: true,
+      metrics: true,
+      logs: true,
+      configure: (context) => {
+        delete context.config.diagnostics?.otel?.protocol;
+      },
+    });
+
+    expect(
+      events.map((event) => ({
+        signal: event.signal,
+        status: event.status,
+        reason: event.reason,
+      })),
+    ).toEqual([
+      { signal: "traces", status: "failure", reason: "unsupported_protocol" },
+      { signal: "metrics", status: "failure", reason: "unsupported_protocol" },
+      { signal: "logs", status: "failure", reason: "unsupported_protocol" },
+    ]);
+    expect(ctx.logger.warn).toHaveBeenCalledWith("diagnostics-otel: unsupported protocol grpc");
+    expect(traceExporterCtor).not.toHaveBeenCalled();
+    expect(metricExporterCtor).not.toHaveBeenCalled();
+    expect(logExporterCtor).not.toHaveBeenCalled();
+    expect(sdkStart).not.toHaveBeenCalled();
+
+    unsubscribe();
+  });
+
+  test("starts stdout-only logs when OTLP protocol env override is unsupported", async () => {
+    process.env.OTEL_EXPORTER_OTLP_PROTOCOL = "grpc";
     const { ctx } = await startOtelService({
       traces: false,
       metrics: false,
       logs: true,
-      protocol: "grpc",
       logsExporter: "stdout",
+      configure: (context) => {
+        delete context.config.diagnostics?.otel?.protocol;
+      },
     });
     const capture = captureStdoutWrites();
     try {
@@ -1365,7 +1406,7 @@ describe("diagnostics-otel service", () => {
   });
 
   test("reports log exporter emit failures without exporting raw error text", async () => {
-    const events: Array<Parameters<Parameters<typeof onInternalDiagnosticEvent>[0]>[0]> = [];
+    const events: TelemetryExporterEvent[] = [];
     const unsubscribe = onInternalDiagnosticEvent((event) => {
       if (event.type === "telemetry.exporter") {
         events.push(event);

@@ -7,9 +7,9 @@ import { describe, expect, it, vi } from "vitest";
 describe("createPluginRuntimeMock", () => {
   it("includes the Talk activity watcher", () => {
     const runtime = createPluginRuntimeMock();
-    const stop = runtime.talk.watchActivity(vi.fn());
+    const stop = runtime.talk.watch(vi.fn());
 
-    expect(vi.isMockFunction(runtime.talk.watchActivity)).toBe(true);
+    expect(vi.isMockFunction(runtime.talk.watch)).toBe(true);
     expect(stop).toBeTypeOf("function");
   });
 

@@ -350,7 +350,7 @@ export type PluginRuntimeCore = {
     formatNativeDependencyHint: typeof import("./native-deps.js").formatNativeDependencyHint;
   };
   talk: {
-    watchActivity: typeof import("../../talk/activity.js").watchTalkActivity;
+    watch: typeof import("../../talk/activity.js").watchTalkActivity;
   };
   media: {
     loadWebMedia: typeof import("../../media/web-media.js").loadWebMedia;

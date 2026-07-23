@@ -662,7 +662,7 @@ two-party event loops that do not go through the shared inbound reply runner.
     session details. This is intended for ambient UI such as speaking avatars.
 
     ```typescript
-    const stop = api.runtime.talk.watchActivity((event) => {
+    const stop = api.runtime.talk.watch((event) => {
       if (event.type === "speech") {
         avatar.pulse();
       }

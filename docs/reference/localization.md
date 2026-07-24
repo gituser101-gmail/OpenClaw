@@ -63,8 +63,10 @@ not create a per-surface copy of them.
 2. Add one area to `localization/catalogs.json` with its semantic namespace,
    source, target locales, target paths, and protected literals.
 3. Import the declared source and generated targets only at the surface's
-   rendering boundary. Keep structured output and operational values outside
-   the catalog.
+   rendering boundary. Require the reviewed English family, but let generated
+   adapters tolerate that new family being absent while the source PR awaits
+   trusted refresh; runtime must use reviewed English fallback during that
+   interval. Keep structured output and operational values outside the catalog.
 4. Add focused renderer and registry tests, then run
    `pnpm localization:catalogs:gate`. Missing targets, English drift, and
    malformed current output fail without provider credentials.

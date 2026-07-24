@@ -6,6 +6,8 @@ import {
 import type { CommandLaneTaskMarker } from "../../process/command-queue.js";
 import { type CronActiveJobMarker, isCronActiveJobMarkerCurrent } from "../active-jobs.js";
 import { isHeartbeatTaskCronJob } from "../heartbeat-task.js";
+/** Executes a cron job without mutating persisted job state. */
+import { cronRunOutcomeFromPrecheck, runCronJobPrecheck } from "../job-precheck.js";
 import { createCronRunDiagnosticsFromError } from "../run-diagnostics.js";
 import { appendCronPayloadText, cronStreamScheduleKey } from "../stream-schedule.js";
 import type {
@@ -29,9 +31,6 @@ import {
   removeQueuedSystemEventHandle,
 } from "./timer-trigger.js";
 import { enqueueCronSystemEvent, requestCronHeartbeat } from "./wake.js";
-
-/** Executes a cron job without mutating persisted job state. */
-import { cronRunOutcomeFromPrecheck, runCronJobPrecheck } from "../job-precheck.js";
 
 export async function executeJobCore(
   state: CronServiceState,

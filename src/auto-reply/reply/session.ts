@@ -1152,6 +1152,11 @@ async function initSessionStateAttemptLocked(
     sessionStore,
   });
   const previousSessionTranscript = committed.previousSessionTranscript;
+  const resetToken =
+    previousSessionEntry?.sessionId &&
+    (previousSessionEndReason === "new" || previousSessionEndReason === "reset")
+      ? crypto.randomUUID()
+      : undefined;
 
   if (previousSessionEntry?.sessionId) {
     await retireSessionMcpRuntime({
@@ -1169,6 +1174,7 @@ async function initSessionStateAttemptLocked(
       sessionKey,
       sessionFile: sessionKey,
       reason: previousSessionEndReason ?? "unknown",
+      resetToken,
     });
     // Direct-message browser tabs use a peer-scoped runtime identity even when
     // their transcript aliases main; cleanup must carry both exact keys.
@@ -1214,6 +1220,7 @@ async function initSessionStateAttemptLocked(
           sessionFile: previousSessionTranscript.sessionFile,
           transcriptArchived: previousSessionTranscript.transcriptArchived,
           nextSessionId: effectiveSessionId,
+          resetToken,
         });
         void runWithGatewayIndependentRootWorkContinuation(async () => {
           await hookRunner.runSessionEnd(payload.event, payload.context);

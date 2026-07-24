@@ -69,6 +69,10 @@ import { wakeSessionForGeneratedMediaDirectDelivery } from "./generated-media-di
 import { hasGeneratedMediaCompletionEvent } from "./internal-event-contract.js";
 import { formatAgentInternalEventsForPrompt, type AgentInternalEvent } from "./internal-events.js";
 import { isSessionWriteLockAcquireError } from "./session-write-lock-error.js";
+import type {
+  DeliverSubagentAnnouncementParams,
+  SendSubagentAnnounceDirectlyParams,
+} from "./subagent-announce-delivery-params.js";
 import {
   callGateway,
   createBoundDeliveryRouter,
@@ -1592,25 +1596,9 @@ function resolveGeneratedMediaSessionDeliveryRoute(params: {
   };
 }
 
-async function sendSubagentAnnounceDirectly(params: {
-  requesterSessionKey: string;
-  targetRequesterSessionKey: string;
-  triggerMessage: string;
-  internalEvents?: AgentInternalEvent[];
-  expectsCompletionMessage: boolean;
-  bestEffortDeliver?: boolean;
-  durableGeneratedMediaHandoff?: boolean;
-  directIdempotencyKey: string;
-  completionDirectOrigin?: DeliveryContext;
-  directOrigin?: DeliveryContext;
-  requesterSessionOrigin?: DeliveryContext;
-  sourceSessionKey?: string;
-  sourceChannel?: string;
-  sourceTool?: string;
-  requesterIsSubagent: boolean;
-  allowGeneratedMediaDirectFallback: boolean;
-  signal?: AbortSignal;
-}): Promise<SubagentAnnounceDeliveryResult> {
+async function sendSubagentAnnounceDirectly(
+  params: SendSubagentAnnounceDirectlyParams,
+): Promise<SubagentAnnounceDeliveryResult> {
   if (params.signal?.aborted) {
     return {
       delivered: false,
@@ -1636,14 +1624,16 @@ async function sendSubagentAnnounceDirectly(params: {
     const requesterEntry = subagentAnnounceDeliveryDeps.loadRequesterSessionEntry(
       params.targetRequesterSessionKey,
     ).entry;
-    const deliveryTarget = !params.requesterIsSubagent
-      ? resolveExternalBestEffortDeliveryTarget({
-          channel: effectiveDirectOrigin?.channel,
-          to: effectiveDirectOrigin?.to,
-          accountId: effectiveDirectOrigin?.accountId,
-          threadId: effectiveDirectOrigin?.threadId,
-        })
-      : { deliver: false };
+    const parentOnly = params.announceTarget === "parent";
+    const deliveryTarget =
+      !parentOnly && !params.requesterIsSubagent
+        ? resolveExternalBestEffortDeliveryTarget({
+            channel: effectiveDirectOrigin?.channel,
+            to: effectiveDirectOrigin?.to,
+            accountId: effectiveDirectOrigin?.accountId,
+            threadId: effectiveDirectOrigin?.threadId,
+          })
+        : { deliver: false };
     const normalizedSessionOnlyOriginChannel = !params.requesterIsSubagent
       ? normalizeMessageChannel(sessionOnlyOrigin?.channel)
       : undefined;
@@ -1662,6 +1652,7 @@ async function sendSubagentAnnounceDirectly(params: {
     });
     const expectedMediaUrls = collectExpectedMediaFromInternalEvents(params.internalEvents);
     const completionRouteRequiresMessageToolDelivery =
+      !parentOnly &&
       params.expectsCompletionMessage &&
       completionRequiresMessageToolDelivery({
         cfg,
@@ -1672,6 +1663,7 @@ async function sendSubagentAnnounceDirectly(params: {
         requesterSessionOrigin,
       });
     const subagentDirectMessageCompletionRequiresMessageTool =
+      !parentOnly &&
       params.expectsCompletionMessage &&
       isSubagentCompletion &&
       deliveryTarget.deliver &&
@@ -1782,7 +1774,8 @@ async function sendSubagentAnnounceDirectly(params: {
     const completionSourceReplyDeliveryMode = requiresMessageToolDelivery
       ? "message_tool_only"
       : undefined;
-    const shouldDeliverAgentFinal = deliveryTarget.deliver && !requiresMessageToolDelivery;
+    const shouldDeliverAgentFinal =
+      !parentOnly && deliveryTarget.deliver && !requiresMessageToolDelivery;
     const requesterQueueSettings = resolveQueueSettings({
       cfg,
       channel:
@@ -1834,6 +1827,7 @@ async function sendSubagentAnnounceDirectly(params: {
     }
     if (
       params.expectsCompletionMessage &&
+      !parentOnly &&
       isCronRunSessionKey(canonicalRequesterSessionKey) &&
       !resolveRequesterSessionActivity(canonicalRequesterSessionKey).isActive &&
       !agentMediatedCompletion
@@ -1987,6 +1981,7 @@ async function sendSubagentAnnounceDirectly(params: {
     const shouldRequireGeneratedMediaDelivery =
       agentMediatedCompletion &&
       expectedMediaUrls.length > 0 &&
+      !parentOnly &&
       (params.requesterIsSubagent || shouldDeliverAgentFinal || requiresMessageToolDelivery);
     const missingExpectedMediaUrls = shouldRequireGeneratedMediaDelivery
       ? resolveGeneratedMediaDirectFallbackUrls({
@@ -2054,6 +2049,7 @@ async function sendSubagentAnnounceDirectly(params: {
     }
     if (
       params.expectsCompletionMessage &&
+      !parentOnly &&
       shouldDeliverAgentFinal &&
       isSubagentCompletion &&
       !hasVisibleGatewayAgentPayload(directAnnounceResponse) &&
@@ -2080,6 +2076,7 @@ async function sendSubagentAnnounceDirectly(params: {
     }
     if (
       params.expectsCompletionMessage &&
+      !parentOnly &&
       requiresMessageToolDelivery &&
       !hasGatewayAgentMessagingToolDeliveryEvidence(directAnnounceResponse) &&
       (!hasIntentionalSilentGatewayAgentPayload(directAnnounceResponse) ||
@@ -2122,6 +2119,7 @@ async function sendSubagentAnnounceDirectly(params: {
       hasIntentionalSilentCompletionReply && !isSubagentCompletion;
     if (
       params.expectsCompletionMessage &&
+      !parentOnly &&
       !shouldDeliverAgentFinal &&
       !requiresMessageToolDelivery &&
       !hasVisibleCompletionReply &&
@@ -2173,28 +2171,9 @@ async function sendSubagentAnnounceDirectly(params: {
   }
 }
 
-export async function deliverSubagentAnnouncement(params: {
-  requesterSessionKey: string;
-  announceId?: string;
-  triggerMessage: string;
-  steerMessage: string;
-  internalEvents?: AgentInternalEvent[];
-  summaryLine?: string;
-  requesterSessionOrigin?: DeliveryContext;
-  requesterOrigin?: DeliveryContext;
-  completionDirectOrigin?: DeliveryContext;
-  directOrigin?: DeliveryContext;
-  sourceSessionKey?: string;
-  sourceChannel?: string;
-  sourceTool?: string;
-  targetRequesterSessionKey: string;
-  requesterIsSubagent: boolean;
-  expectsCompletionMessage: boolean;
-  bestEffortDeliver?: boolean;
-  durableGeneratedMediaHandoff?: boolean;
-  directIdempotencyKey: string;
-  signal?: AbortSignal;
-}): Promise<SubagentAnnounceDeliveryResult> {
+export async function deliverSubagentAnnouncement(
+  params: DeliverSubagentAnnouncementParams,
+): Promise<SubagentAnnounceDeliveryResult> {
   const durableGeneratedMediaHandoff =
     params.durableGeneratedMediaHandoff === true &&
     params.expectsCompletionMessage &&
@@ -2336,6 +2315,7 @@ export async function deliverSubagentAnnouncement(params: {
         sourceChannel: params.sourceChannel,
         sourceTool: params.sourceTool,
         requesterIsSubagent: params.requesterIsSubagent,
+        announceTarget: params.announceTarget,
         expectsCompletionMessage: params.expectsCompletionMessage,
         allowGeneratedMediaDirectFallback: true,
         signal: params.signal,

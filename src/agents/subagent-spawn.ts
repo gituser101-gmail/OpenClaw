@@ -76,6 +76,8 @@ import {
   normalizeSpawnedRunMetadata,
   resolveSpawnedWorkspaceInheritance,
 } from "./spawned-context.js";
+import { shouldAnnounceCompletionForInitialChildRun } from "./subagent-announce-target.js";
+import type { SubagentAnnounceTarget } from "./subagent-announce-target.types.js";
 import {
   materializeSubagentAttachments,
   type SubagentAttachmentReceiptFile,
@@ -192,6 +194,7 @@ type SpawnSubagentParams = {
   cleanup?: "delete" | "keep";
   sandbox?: SpawnSubagentSandboxMode;
   context?: SpawnSubagentContextMode;
+  announceTarget?: SubagentAnnounceTarget;
   lightContext?: boolean;
   expectsCompletionMessage?: boolean;
   attachments?: Array<{
@@ -1122,6 +1125,7 @@ export async function spawnSubagentDirect(
   const requesterAgentId = normalizeAgentId(
     ctx.requesterAgentIdOverride ?? parseAgentSessionKey(requesterInternalKey)?.agentId,
   );
+  const announceTarget = params.announceTarget;
   const swarmConfig = resolveSwarmConfig(cfg, requesterAgentId);
   const hasSwarmParams =
     params.collect !== undefined ||
@@ -1596,9 +1600,11 @@ export async function spawnSubagentDirect(
     });
     const deliverInitialChildRunDirectly =
       requestThreadBinding && spawnMode === "session" && hasBoundThreadDeliveryOrigin;
-    const shouldAnnounceCompletion = deliverInitialChildRunDirectly
-      ? false
-      : expectsCompletionMessage;
+    const shouldAnnounceCompletion = shouldAnnounceCompletionForInitialChildRun({
+      deliverInitialChildRunDirectly,
+      announceTarget,
+      expectsCompletionMessage,
+    });
     const progressOrigin = {
       channel: requesterOrigin?.channel,
       accountId: requesterOrigin?.accountId,
@@ -1830,6 +1836,7 @@ export async function spawnSubagentDirect(
           workspaceDir: spawnedMetadata.workspaceDir,
           runTimeoutSeconds,
           expectsCompletionMessage: shouldAnnounceCompletion,
+          announceTarget,
           spawnMode,
           collect: params.collect === true,
           swarmRequesterSessionKey: params.collect ? requesterInternalKey : undefined,

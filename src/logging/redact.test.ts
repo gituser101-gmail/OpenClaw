@@ -1518,6 +1518,24 @@ describe("redactSensitiveText", () => {
     }
   });
 
+  it("masks Shopify access tokens that cross bounded-replacement chunk boundaries", () => {
+    const chunkSize = 16_384;
+    const prefix = `${"x".repeat(chunkSize - 2)} `;
+    const suffix = "y".repeat(chunkSize);
+    const tokens = [
+      `shpat_${"a".repeat(32)}`,
+      `shpca_${"b".repeat(32)}`,
+      `shppa_${"c".repeat(32)}`,
+      `shpss_${"d".repeat(32)}`,
+    ];
+
+    for (const token of tokens) {
+      expect(redactSensitiveText(`${prefix}${token}${suffix}`, { mode: "tools" })).not.toContain(
+        token,
+      );
+    }
+  });
+
   it("masks Telegram bot tokens that cross bounded-replacement chunk boundaries", () => {
     const chunkSize = 16_384;
     const credential = `123456:${"A".repeat(28)}WXYZ`;

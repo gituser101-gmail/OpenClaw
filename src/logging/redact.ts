@@ -159,6 +159,9 @@ const AWS_SECRET_ACCESS_KEY_VALUE_PATTERN = String.raw`(?=[A-Za-z0-9/+=]{40}(?![
 const AWS_SECRET_ACCESS_KEY_VALUE_REDACT_PATTERN = String.raw`/${AWS_SECRET_ACCESS_KEY_VALUE_BOUNDARY}(${AWS_SECRET_ACCESS_KEY_VALUE_PATTERN})(?!_)/g`;
 const TELEGRAM_BOT_TOKEN_REDACT_PATTERN = String.raw`\bbot(\d{6,}:[A-Za-z0-9_-]{20,})\b`;
 const TELEGRAM_TOKEN_REDACT_PATTERN = String.raw`\b(\d{6,}:[A-Za-z0-9_-]{20,})\b`;
+// Shopify access tokens are a fixed 38-char whole token (prefix + 32 hex) with no left boundary,
+// so they must run against the full string; a chunk slice can split the token and leak it.
+const SHOPIFY_ACCESS_TOKEN_REDACT_PATTERN = String.raw`(shp(?:at|ca|pa|ss)_[A-Fa-f0-9]{32})`;
 const HTTP_AUTH_HEADER_REDACT_PATTERNS = [
   String.raw`${HTTP_AUTH_HEADER_BOUNDARY_PATTERN}Proxy-Authorization${HTTP_AUTH_SERIALIZED_QUOTE_PATTERN}[ \t]*[:=]${HTTP_AUTH_OPTIONAL_VALUE_WHITESPACE_PATTERN}${HTTP_AUTH_SERIALIZED_QUOTE_PATTERN}${HTTP_AUTH_SCHEME_PATTERN}${HTTP_AUTH_REQUIRED_VALUE_WHITESPACE_PATTERN}(${HTTP_AUTH_OPAQUE_CREDENTIAL_PATTERN})`,
   String.raw`${HTTP_AUTH_HEADER_BOUNDARY_PATTERN}Proxy-Authorization${HTTP_AUTH_SERIALIZED_QUOTE_PATTERN}[ \t]*[:=]${HTTP_AUTH_OPTIONAL_VALUE_WHITESPACE_PATTERN}${HTTP_AUTH_SERIALIZED_QUOTE_PATTERN}(${HTTP_AUTH_OPAQUE_CREDENTIAL_PATTERN})[ \t]*(?=${HTTP_AUTH_SERIALIZED_QUOTE_PATTERN}(?:$|[,;)}\]]|\r?\n(?![ \t])))`,
@@ -184,6 +187,7 @@ const CHUNK_UNSAFE_PATTERN_SOURCES = new Set([
   AUTHORIZATION_BOT_REDACT_PATTERN,
   STANDALONE_BEARER_REDACT_PATTERN,
   AWS_SECRET_ACCESS_KEY_VALUE_REDACT_PATTERN,
+  SHOPIFY_ACCESS_TOKEN_REDACT_PATTERN,
   ...HTTP_AUTH_HEADER_REDACT_PATTERNS,
 ]);
 const shellReferencePreservingPatterns = new WeakSet<RegExp>();
@@ -280,7 +284,7 @@ const DEFAULT_REDACT_PATTERNS: string[] = [
   String.raw`(SG\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,})`,
   String.raw`(npm_[A-Za-z0-9]{10,})`,
   String.raw`(pypi-[A-Za-z0-9_-]{10,})`,
-  String.raw`(shp(?:at|ca|pa|ss)_[A-Fa-f0-9]{32})`,
+  SHOPIFY_ACCESS_TOKEN_REDACT_PATTERN,
   String.raw`(dop_v1_[A-Za-z0-9]{10,})`,
   String.raw`(doo_v1_[A-Za-z0-9]{10,})`,
   String.raw`(dor_v1_[A-Za-z0-9]{10,})`,

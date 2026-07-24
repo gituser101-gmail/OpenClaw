@@ -23,17 +23,15 @@ import {
   ensureAuthProfileStore,
   saveAuthProfileStore,
 } from "./store.js";
-import type { AuthProfileStore, OAuthCredential } from "./types.js";
+import type { AuthProfileStore, OAuthCredential, OAuthCredentials } from "./types.js";
 let resolveApiKeyForProfile: typeof import("./oauth.js").resolveApiKeyForProfile;
 let resolveApiKeyForProvider: typeof import("../model-auth.js").resolveApiKeyForProvider;
 let hasAvailableAuthForProvider: typeof import("../model-auth.js").hasAvailableAuthForProvider;
 let markAuthProfileSuccess: typeof import("./profiles.js").markAuthProfileSuccess;
-type GetOAuthApiKey = typeof import("../../llm/oauth.js").getOAuthApiKey;
-
-const { getOAuthApiKeyMock } = vi.hoisted(() => {
+const { refreshTokenMock } = vi.hoisted(() => {
   vi.resetModules();
   return {
-    getOAuthApiKeyMock: vi.fn<GetOAuthApiKey>(async () => {
+    refreshTokenMock: vi.fn(async (_credential: OAuthCredential): Promise<OAuthCredentials> => {
       throw new Error("Failed to extract accountId from token");
     }),
   };
@@ -65,10 +63,9 @@ vi.mock("../cli-credentials.js", () => ({
 }));
 
 vi.mock("../../llm/oauth.js", () => ({
-  getOAuthApiKey: getOAuthApiKeyMock,
   getOAuthProviders: () => [
-    { id: "openai", envApiKey: "OPENAI_API_KEY", oauthTokenEnv: "OPENAI_OAUTH_TOKEN" }, // pragma: allowlist secret
-    { id: "anthropic", envApiKey: "ANTHROPIC_API_KEY", oauthTokenEnv: "ANTHROPIC_OAUTH_TOKEN" }, // pragma: allowlist secret
+    { id: "openai", refreshToken: refreshTokenMock },
+    { id: "anthropic", refreshToken: refreshTokenMock },
   ],
 }));
 
@@ -161,8 +158,8 @@ describe("resolveApiKeyForProfile openai refresh fallback", () => {
 
   beforeEach(async () => {
     resetFileLockStateForTest();
-    getOAuthApiKeyMock.mockReset();
-    getOAuthApiKeyMock.mockImplementation(async () => {
+    refreshTokenMock.mockReset();
+    refreshTokenMock.mockImplementation(async () => {
       throw new Error("Failed to extract accountId from token");
     });
     readCodexCliCredentialsCachedMock.mockReset();
@@ -965,7 +962,7 @@ describe("resolveApiKeyForProfile openai refresh fallback", () => {
       }),
       agentDir,
     );
-    getOAuthApiKeyMock.mockImplementationOnce(async () => {
+    refreshTokenMock.mockImplementationOnce(async () => {
       saveAuthProfileStore(
         {
           version: 1,
@@ -998,7 +995,7 @@ describe("resolveApiKeyForProfile openai refresh fallback", () => {
       email: undefined,
     });
 
-    expect(getOAuthApiKeyMock).toHaveBeenCalledTimes(1);
+    expect(refreshTokenMock).toHaveBeenCalledTimes(1);
   });
 
   it("clears stale lastGood before selecting an alternate Codex OAuth profile", async () => {
@@ -1028,7 +1025,7 @@ describe("resolveApiKeyForProfile openai refresh fallback", () => {
       },
       agentDir,
     );
-    getOAuthApiKeyMock.mockImplementationOnce(async () => {
+    refreshTokenMock.mockImplementationOnce(async () => {
       throw new Error(
         '401 {"error":{"message":"Your refresh token has already been used to generate a new access token.","code":"refresh_token_reused"}}',
       );
@@ -1046,7 +1043,7 @@ describe("resolveApiKeyForProfile openai refresh fallback", () => {
       email: "user@example.test",
     });
 
-    expect(getOAuthApiKeyMock).toHaveBeenCalledTimes(1);
+    expect(refreshTokenMock).toHaveBeenCalledTimes(1);
     expect((await readPersistedStore(agentDir)).lastGood).toBeUndefined();
   });
 
@@ -1077,7 +1074,7 @@ describe("resolveApiKeyForProfile openai refresh fallback", () => {
       },
       agentDir,
     );
-    getOAuthApiKeyMock.mockImplementationOnce(async () => {
+    refreshTokenMock.mockImplementationOnce(async () => {
       throw new Error(
         '401 {"error":{"message":"Your refresh token has already been used to generate a new access token.","code":"refresh_token_reused"}}',
       );
@@ -1114,9 +1111,9 @@ describe("resolveApiKeyForProfile openai refresh fallback", () => {
       }),
       agentDir,
     );
-    getOAuthApiKeyMock
-      .mockImplementationOnce(async (_provider, creds) => {
-        expect(creds["openai"]?.refresh).toBe("refresh-token");
+    refreshTokenMock
+      .mockImplementationOnce(async (credential) => {
+        expect(credential.refresh).toBe("refresh-token");
         saveAuthProfileStore(
           {
             version: 1,
@@ -1136,15 +1133,12 @@ describe("resolveApiKeyForProfile openai refresh fallback", () => {
           '401 {"error":{"message":"Your refresh token has already been used to generate a new access token.","code":"refresh_token_reused"}}',
         );
       })
-      .mockImplementationOnce(async (_provider, creds) => {
-        expect(creds["openai"]?.refresh).toBe("rotated-refresh-token");
+      .mockImplementationOnce(async (credential) => {
+        expect(credential.refresh).toBe("rotated-refresh-token");
         return {
-          apiKey: "retried-access-token",
-          newCredentials: {
-            access: "retried-access-token",
-            refresh: "retried-refresh-token",
-            expires: Date.now() + 10 * 60_000,
-          },
+          access: "retried-access-token",
+          refresh: "retried-refresh-token",
+          expires: Date.now() + 10 * 60_000,
         };
       });
 
@@ -1160,7 +1154,7 @@ describe("resolveApiKeyForProfile openai refresh fallback", () => {
       email: undefined,
     });
 
-    expect(getOAuthApiKeyMock).toHaveBeenCalledTimes(2);
+    expect(refreshTokenMock).toHaveBeenCalledTimes(2);
     const persisted = await readPersistedStore(agentDir);
     expectPersistedOpenAICodexProfile(
       expectDefined(persisted.profiles[profileId], "persisted.profiles[profileId] test invariant"),

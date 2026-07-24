@@ -40,13 +40,17 @@ provider names, or user-authored data.
 
 The adopted-catalog path is the reusable end-to-end exemplar. Add the area to
 `localization/catalogs.json`, keep English in its declared source file, and do
-not hand-edit its generated targets. Pull requests run the credential-free
-`pnpm localization:catalogs:detect` path: English-only drift is reported, while
-malformed current catalogs still fail. After English lands, the trusted
-Localization Catalog Refresh workflow generates and validates target catalogs
-and opens a generated pull request with auto-merge disabled. Generated changes
-and manual/release validation run the strict
-`pnpm localization:catalogs:check` path.
+not hand-edit its generated targets. Draft PRs do not run the lane. Once ready,
+fork and non-default-base PRs run the credential-free
+`pnpm localization:catalogs:detect` path. A same-repository PR targeting the
+default branch runs
+`pnpm localization:catalogs:gate` and fails on missing or stale targets. A
+maintainer then runs **Localization Catalog Refresh** with that PR number. The
+workflow executes protected-`main` tooling, resolves the exact PR head,
+generates all affected targets as one batch, and commits them back under an
+exact-head lease. Strict checks rerun on the same PR; automation never approves
+or merges it. Fork and cross-repository sources use one generated follow-up PR
+after the reviewed English change lands.
 
 ### Adopt another catalog family
 
@@ -62,10 +66,13 @@ not create a per-surface copy of them.
    rendering boundary. Keep structured output and operational values outside
    the catalog.
 4. Add focused renderer and registry tests, then run
-   `pnpm localization:catalogs:detect`. Missing targets and English drift are
-   reported without credentials; malformed current output fails.
-5. After the English source lands, confirm that Localization Catalog Refresh
-   opens or updates the generated PR and that its strict catalog check passes.
+   `pnpm localization:catalogs:gate`. Missing targets, English drift, and
+   malformed current output fail without provider credentials.
+5. Mark the same-repository PR ready and ask a maintainer to dispatch
+   Localization Catalog Refresh with its PR number. Confirm that the bot adds
+   one generated commit and `pnpm localization:catalogs:check` turns green. For
+   a fork, confirm the trusted post-merge workflow opens one generated follow-up
+   PR instead.
 
 The registry supplies the workflow's owned source and publication paths, while
 the shared source-path convention supplies its trigger. A surface with

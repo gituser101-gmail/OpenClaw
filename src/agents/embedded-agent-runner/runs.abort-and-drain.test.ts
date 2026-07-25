@@ -39,6 +39,7 @@ describe("abortAndDrainEmbeddedAgentRun", () => {
     setActiveEmbeddedRun("session-replaced-during-recovery", staleHandle, "agent:main");
     staleAbort.mockImplementation(() => {
       setActiveEmbeddedRun("session-replaced-during-recovery", replacementHandle, "agent:main");
+      clearActiveEmbeddedRun("session-replaced-during-recovery", staleHandle, "agent:main");
     });
 
     const resultPromise = abortAndDrainEmbeddedAgentRun({
@@ -58,6 +59,33 @@ describe("abortAndDrainEmbeddedAgentRun", () => {
     expect(staleAbort).toHaveBeenCalledOnce();
     expect(replacementAbort).not.toHaveBeenCalled();
     expect(isEmbeddedAgentRunHandleActive("session-replaced-during-recovery")).toBe(true);
+  });
+
+  it("does not report a replaced handle drained before its owner clears", async () => {
+    vi.useFakeTimers();
+    const sessionId = "session-replaced-before-old-owner-clears";
+    const sessionKey = "agent:replaced-before-old-owner-clears";
+    const replacementHandle = createRunHandle(vi.fn());
+    const staleHandle = createRunHandle(() => {
+      setActiveEmbeddedRun(sessionId, replacementHandle, sessionKey);
+    });
+    setActiveEmbeddedRun(sessionId, staleHandle, sessionKey);
+
+    const resultPromise = abortAndDrainEmbeddedAgentRun({
+      sessionId,
+      sessionKey,
+      settleMs: 100,
+      forceClear: true,
+      reason: "stuck_recovery",
+    });
+    await vi.advanceTimersByTimeAsync(100);
+
+    await expect(resultPromise).resolves.toEqual({
+      aborted: true,
+      drained: false,
+      forceCleared: false,
+    });
+    expect(isEmbeddedAgentRunHandleActive(sessionId)).toBe(true);
   });
 
   it("waits for the captured reply operation after its embedded handle clears", async () => {

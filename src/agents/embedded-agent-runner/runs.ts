@@ -48,6 +48,7 @@ import {
   ABANDONED_EMBEDDED_RUN_SESSION_IDS_BY_FILE,
   ABANDONED_EMBEDDED_RUN_SESSION_IDS_BY_KEY,
   EMBEDDED_RUN_WAITERS,
+  ENDED_EMBEDDED_RUN_HANDLES,
   getActiveEmbeddedRunCount,
   RETAINED_EMBEDDED_RUN_ABORTABILITY_RUN_IDS,
   setActiveEmbeddedRunLifecycleGeneration,
@@ -815,14 +816,13 @@ export async function waitForEmbeddedAgentRunEnd(
 }
 
 async function waitForEmbeddedAgentRunHandleEnd(
-  sessionId: string,
   handle: EmbeddedAgentQueueHandle | undefined,
   replyOperation: ReplyOperation | undefined,
   timeoutMs: number,
 ): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
   while (true) {
-    const handleActive = handle !== undefined && ACTIVE_EMBEDDED_RUNS.get(sessionId) === handle;
+    const handleActive = handle !== undefined && !ENDED_EMBEDDED_RUN_HANDLES.has(handle);
     const replyOperationActive =
       replyOperation !== undefined && isReplyOperationActive(replyOperation);
     if (!handleActive && !replyOperationActive) {
@@ -870,7 +870,6 @@ export async function abortAndDrainEmbeddedAgentRun(params: {
       setImmediate(resolve);
     });
     const drained = await waitForEmbeddedAgentRunHandleEnd(
-      params.sessionId,
       capturedHandle,
       capturedReplyOperation,
       settleMs,
@@ -887,12 +886,7 @@ export async function abortAndDrainEmbeddedAgentRun(params: {
       capturedReplyOperation.abortByUser()) ||
     expiredReplyRun;
   const drained = aborted
-    ? await waitForEmbeddedAgentRunHandleEnd(
-        params.sessionId,
-        capturedHandle,
-        capturedReplyOperation,
-        settleMs,
-      )
+    ? await waitForEmbeddedAgentRunHandleEnd(capturedHandle, capturedReplyOperation, settleMs)
     : false;
   const forceCleared =
     params.forceClear === true && (!aborted || !drained)
@@ -950,6 +944,7 @@ export function setActiveEmbeddedRun(
     clearEmbeddedRunAbortability(previousHandle, { retainFinalizing: true });
   }
   clearEmbeddedRunAbandonment({ sessionId, sessionKey, sessionFile });
+  ENDED_EMBEDDED_RUN_HANDLES.delete(handle);
   ACTIVE_EMBEDDED_RUNS.set(sessionId, handle);
   if (handle.runId) {
     ACTIVE_EMBEDDED_RUNS_BY_RUN_ID.set(handle.runId, handle);
@@ -1006,6 +1001,7 @@ export function clearActiveEmbeddedRun(
   sessionFile?: string,
   reason = "run_completed",
 ) {
+  ENDED_EMBEDDED_RUN_HANDLES.add(handle);
   const activeHandle = ACTIVE_EMBEDDED_RUNS.get(sessionId);
   if (activeHandle === undefined) {
     return;
@@ -1044,6 +1040,7 @@ function forceClearEmbeddedAgentRun(
   const handle = ACTIVE_EMBEDDED_RUNS.get(sessionId);
   if (handle && handle === expectedHandle) {
     ACTIVE_EMBEDDED_RUNS.delete(sessionId);
+    ENDED_EMBEDDED_RUN_HANDLES.add(handle);
     clearEmbeddedRunAbortability(handle);
     ACTIVE_EMBEDDED_RUN_SNAPSHOTS.delete(sessionId);
     clearActiveRunSessionKeys(sessionId, sessionKey);

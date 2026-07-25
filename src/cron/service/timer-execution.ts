@@ -83,7 +83,26 @@ export async function executeJobCore(
   }
   // Optional shell precheck #112371 runs first — cheapest gate, no code-mode
   // executor and no trigger evaluation cost when there is no work.
+  //
+  // A precheck is unattended Gateway-host shell execution, so it is gated by
+  // the SAME execution-policy boundary as script payloads: it only runs when
+  // `cron.triggers.enabled === true`. This ensures that the ability to create
+  // or patch a cron job never implicitly grants host-command execution — the
+  // operator must explicitly enable unattended scripts first (#112375 review).
   if (job.precheck?.command) {
+    if (state.deps.cronConfig?.triggers?.enabled !== true) {
+      const error =
+        "cron precheck is a host-shell command and is disabled; set cron.triggers.enabled=true to allow unattended precheck scripts";
+      state.deps.log.warn({ jobId: job.id }, `cron: ${error}`);
+      return {
+        status: "error",
+        error,
+        diagnostics: createCronRunDiagnosticsFromError("cron-preflight", error, {
+          severity: "error",
+          nowMs: state.deps.nowMs,
+        }),
+      };
+    }
     const precheckResult = await runCronJobPrecheck(job.precheck, { abortSignal });
     if (precheckResult.decision !== "run") {
       state.deps.log.debug(

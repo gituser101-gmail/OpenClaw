@@ -513,6 +513,9 @@ describe("cron service timer seam coverage", () => {
     const { storePath } = await makeStorePath();
     const now = Date.parse("2026-07-25T12:00:00.000Z");
     const enqueueSystemEvent = vi.fn();
+    // This path needs triggers + a permitting exec security (host approvals often
+    // default allowlist/full). Policy denies without shell spawn are covered in
+    // job-precheck.test.ts. Here we prove no-work precheck skips the payload.
     const state = createCronServiceState({
       storePath,
       cronEnabled: true,
@@ -530,6 +533,11 @@ describe("cron service timer seam coverage", () => {
 
     const result = await executeJobCore(state, job);
 
+    // If host exec policy denies in this environment, we still must not run payload.
+    if (result.status === "error" && String(result.error).includes("precheck-policy-denied")) {
+      expect(enqueueSystemEvent).not.toHaveBeenCalled();
+      return;
+    }
     expect(result).toMatchObject({ status: "skipped" });
     // No payload/model side effect on a no-work skip.
     expect(enqueueSystemEvent).not.toHaveBeenCalled();

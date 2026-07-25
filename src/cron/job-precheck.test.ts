@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   PRECHECK_NO_WORK_REASON,
+  PRECHECK_POLICY_DENIED_REASON,
+  authorizeCronJobPrecheckCommand,
   cronRunOutcomeFromPrecheck,
   interpretPrecheckOutput,
   normalizeCronJobPrecheck,
@@ -75,14 +77,66 @@ describe("normalizeCronJobPrecheck", () => {
   });
 });
 
+const AUTH_FULL = {
+  triggersEnabled: true,
+  security: "full" as const,
+  securityOverrideOnly: true,
+};
+
+describe("authorizeCronJobPrecheckCommand", () => {
+  it("denies when triggers are disabled", async () => {
+    const result = await authorizeCronJobPrecheckCommand({
+      command: "exit 0",
+      authz: { triggersEnabled: false, security: "full", securityOverrideOnly: true },
+    });
+    expect(result.allowed).toBe(false);
+    if (!result.allowed) {
+      expect(result.reason).toContain("cron.triggers.enabled=true");
+    }
+  });
+
+  it("denies when exec security is deny", async () => {
+    const result = await authorizeCronJobPrecheckCommand({
+      command: "exit 0",
+      authz: { triggersEnabled: true, security: "deny", securityOverrideOnly: true },
+    });
+    expect(result.allowed).toBe(false);
+    if (!result.allowed) {
+      expect(result.reason).toContain(PRECHECK_POLICY_DENIED_REASON);
+      expect(result.reason).toMatch(/security=deny/i);
+    }
+  });
+
+  it("allows when triggers enabled and security=full", async () => {
+    const result = await authorizeCronJobPrecheckCommand({
+      command: "exit 0",
+      authz: AUTH_FULL,
+    });
+    expect(result).toEqual({ allowed: true });
+  });
+});
+
 describe("runCronJobPrecheck", () => {
-  it("runs a real shell check for exit 2 skip", async () => {
-    const result = await runCronJobPrecheck({ command: "exit 2" });
+  it("blocks host spawn when policy denies (security=deny)", async () => {
+    const result = await runCronJobPrecheck(
+      { command: "exit 0" },
+      {
+        authz: { triggersEnabled: true, security: "deny", securityOverrideOnly: true },
+      },
+    );
+    expect(result.decision).toBe("error");
+    if (result.decision === "error") {
+      expect(result.reason).toContain(PRECHECK_POLICY_DENIED_REASON);
+    }
+  });
+
+  it("runs a real shell check for exit 2 skip when policy allows", async () => {
+    const result = await runCronJobPrecheck({ command: "exit 2" }, { authz: AUTH_FULL });
     expect(result.decision).toBe("skip");
   });
 
-  it("runs a real shell check for exit 0 work", async () => {
-    const result = await runCronJobPrecheck({ command: "exit 0" });
+  it("runs a real shell check for exit 0 work when policy allows", async () => {
+    const result = await runCronJobPrecheck({ command: "exit 0" }, { authz: AUTH_FULL });
     expect(result.decision).toBe("run");
   });
 });

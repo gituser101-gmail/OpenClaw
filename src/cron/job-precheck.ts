@@ -1,5 +1,12 @@
 import { spawn } from "node:child_process";
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
+import {
+  evaluateShellAllowlistWithAuthorization,
+  resolveExecApprovalsLocked,
+  type ExecSecurity,
+} from "../infra/exec-approvals.js";
+import { resolveExecSafeBinRuntimePolicy } from "../infra/exec-safe-bin-runtime-policy.js";
+import { evaluateSystemRunPolicy } from "../node-host/exec-policy.js";
 import { createCronRunDiagnosticsFromError } from "./run-diagnostics.js";
 import type { CronJobPrecheck } from "./types-shared.js";
 import type { CronRunDiagnostics, CronRunOutcome } from "./types.js";
@@ -9,9 +16,12 @@ const DEFAULT_SHELL = process.env.SHELL?.trim() || "/bin/sh";
 
 /** Stable skip / error reason codes for run logs and operators. */
 export const PRECHECK_NO_WORK_REASON = "precheck-no-work";
+export const PRECHECK_POLICY_DENIED_REASON = "precheck-policy-denied";
 const PRECHECK_ERROR_REASON = "precheck-error";
 const PRECHECK_TIMEOUT_REASON = "precheck-timeout";
 const PRECHECK_INVALID_REASON = "precheck-invalid";
+const PRECHECK_TRIGGERS_DISABLED =
+  "cron precheck is a host-shell command and is disabled; set cron.triggers.enabled=true to allow unattended precheck scripts";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 const MAX_TIMEOUT_MS = 5 * 60_000;
@@ -142,10 +152,157 @@ export function interpretPrecheckOutput(params: {
   };
 }
 
+export type CronJobPrecheckAuthz = {
+  /** Operator must enable unattended cron scripts/triggers (same gate as script payloads). */
+  triggersEnabled: boolean;
+  /** Optional agent id for exec-approvals agent scope. */
+  agentId?: string;
+  /**
+   * Caller's requested exec security contract (tools.exec.security). Host approvals
+   * file may only tighten further via minSecurity inside resolve. Defaults to the
+   * resolved approvals agent security when omitted.
+   */
+  security?: ExecSecurity;
+  /**
+   * When true, skip live approvals resolution and use `security` (or deny) only.
+   * Tests inject this to assert policy denial without host file side effects.
+   */
+  securityOverrideOnly?: boolean;
+};
+
+/** Normalize security strings; invalid values fail closed to deny. */
+function normalizeExecSecurity(value: unknown): ExecSecurity | undefined {
+  if (value === "deny" || value === "allowlist" || value === "full") {
+    return value;
+  }
+  return undefined;
+}
+
+/**
+ * Authorize a cron precheck command under the same host-shell policy surface as
+ * the gateway exec tool: `cron.triggers.enabled` plus exec security
+ * deny|allowlist|full (allowlist analysis via evaluateShellAllowlist*).
+ * Unattended cron never prompts for approvals — ask paths deny.
+ */
+export async function authorizeCronJobPrecheckCommand(params: {
+  command: string;
+  cwd?: string;
+  authz: CronJobPrecheckAuthz;
+  env?: NodeJS.ProcessEnv;
+}): Promise<{ allowed: true } | { allowed: false; reason: string }> {
+  if (params.authz.triggersEnabled !== true) {
+    return { allowed: false, reason: PRECHECK_TRIGGERS_DISABLED };
+  }
+
+  const requested = normalizeExecSecurity(params.authz.security);
+
+  if (params.authz.securityOverrideOnly) {
+    const security = requested ?? "deny";
+    if (security === "deny") {
+      return {
+        allowed: false,
+        reason: `${PRECHECK_POLICY_DENIED_REASON}: exec denied host=gateway security=deny`,
+      };
+    }
+    if (security === "full") {
+      return { allowed: true };
+    }
+    // allowlist without live file → evaluate command against empty allowlist
+    const safeBinPolicy = resolveExecSafeBinRuntimePolicy({});
+    const allowlistEval = await evaluateShellAllowlistWithAuthorization({
+      command: params.command,
+      allowlist: [],
+      safeBins: safeBinPolicy.safeBins,
+      safeBinProfiles: safeBinPolicy.safeBinProfiles,
+      trustedSafeBinDirs: safeBinPolicy.trustedSafeBinDirs,
+      cwd: params.cwd,
+      env: params.env ?? process.env,
+      platform: process.platform,
+    });
+    const decision = evaluateSystemRunPolicy({
+      security: "allowlist",
+      ask: "off",
+      analysisOk: allowlistEval.analysisOk,
+      allowlistSatisfied: allowlistEval.allowlistSatisfied,
+      approvalDecision: null,
+      isWindows: process.platform === "win32",
+      cmdInvocation: false,
+      shellWrapperInvocation: false,
+    });
+    if (!decision.allowed) {
+      return {
+        allowed: false,
+        reason: `${PRECHECK_POLICY_DENIED_REASON}: ${decision.errorMessage}`,
+      };
+    }
+    return { allowed: true };
+  }
+
+  // Mirror resolveExecHostApprovalContext: caller security is a ceiling;
+  // approvals file can only tighten. Unattended → ask=off (no interactive path).
+  const approvals = await resolveExecApprovalsLocked(params.authz.agentId, {
+    security: requested,
+    ask: "off",
+  });
+  const approvalsSecurity = normalizeExecSecurity(approvals.agent.security) ?? "deny";
+  const hostSecurity =
+    requested === undefined
+      ? approvalsSecurity
+      : requested === "deny" || approvalsSecurity === "deny"
+        ? "deny"
+        : requested === "allowlist" || approvalsSecurity === "allowlist"
+          ? "allowlist"
+          : "full";
+
+  if (hostSecurity === "deny") {
+    return {
+      allowed: false,
+      reason: `${PRECHECK_POLICY_DENIED_REASON}: exec denied host=gateway security=deny`,
+    };
+  }
+
+  const safeBinPolicy = resolveExecSafeBinRuntimePolicy({});
+  const allowlistEval = await evaluateShellAllowlistWithAuthorization({
+    command: params.command,
+    allowlist: approvals.allowlist,
+    safeBins: safeBinPolicy.safeBins,
+    safeBinProfiles: safeBinPolicy.safeBinProfiles,
+    trustedSafeBinDirs: safeBinPolicy.trustedSafeBinDirs,
+    cwd: params.cwd,
+    env: params.env ?? process.env,
+    platform: process.platform,
+  });
+
+  const decision = evaluateSystemRunPolicy({
+    security: hostSecurity,
+    ask: "off",
+    analysisOk: allowlistEval.analysisOk,
+    allowlistSatisfied: hostSecurity === "allowlist" ? allowlistEval.allowlistSatisfied : true,
+    durableApprovalSatisfied: false,
+    approvalDecision: null,
+    isWindows: process.platform === "win32",
+    cmdInvocation: false,
+    shellWrapperInvocation: false,
+  });
+
+  if (!decision.allowed) {
+    return {
+      allowed: false,
+      reason: `${PRECHECK_POLICY_DENIED_REASON}: ${decision.errorMessage}`,
+    };
+  }
+  return { allowed: true };
+}
+
 /** Run the precheck shell command and map protocol → run | skip | error. */
 export async function runCronJobPrecheck(
   precheck: CronJobPrecheck,
-  opts?: { abortSignal?: AbortSignal; spawnImpl?: typeof spawn },
+  opts?: {
+    abortSignal?: AbortSignal;
+    spawnImpl?: typeof spawn;
+    /** Required for host execution: triggers + exec security policy. */
+    authz?: CronJobPrecheckAuthz;
+  },
 ): Promise<CronJobPrecheckResult> {
   const command = normalizeOptionalString(precheck.command) ?? "";
   if (!command) {
@@ -168,9 +325,32 @@ export async function runCronJobPrecheck(
     };
   }
 
+  const cwd = normalizeOptionalString(precheck.cwd) || undefined;
+
+  // Fail closed: without authz (or explicitly allow via tests spawn only),
+  // production timer path always passes authz. Direct API callers must pass it.
+  const authz: CronJobPrecheckAuthz = opts?.authz ?? {
+    triggersEnabled: false,
+    security: "deny",
+    securityOverrideOnly: true,
+  };
+  const auth = await authorizeCronJobPrecheckCommand({
+    command,
+    cwd,
+    authz,
+  });
+  if (!auth.allowed) {
+    return {
+      decision: "error",
+      reason: auth.reason,
+      exitCode: null,
+      stdout: "",
+      stderr: auth.reason,
+    };
+  }
+
   const timeoutMs = resolveTimeoutMs(precheck);
   const spawnFn = opts?.spawnImpl ?? spawn;
-  const cwd = normalizeOptionalString(precheck.cwd) || undefined;
   const shell = DEFAULT_SHELL;
 
   return await new Promise<CronJobPrecheckResult>((resolve) => {

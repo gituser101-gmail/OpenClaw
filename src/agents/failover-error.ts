@@ -17,6 +17,7 @@ import {
 import { isTimeoutErrorMessage } from "./embedded-agent-helpers/errors.js";
 import type { FailoverReason } from "./embedded-agent-helpers/types.js";
 import { AgentHarnessSessionSupersededError } from "./harness/errors.js";
+import { isSandboxProvisioningError } from "./sandbox/errors.js";
 import { isSessionWriteLockAcquireError } from "./session-write-lock-error.js";
 
 const ABORT_TIMEOUT_RE = /request was aborted|request aborted/i;
@@ -500,7 +501,8 @@ function hasMissingToolResultFailure(err: unknown): boolean {
  * True when the error is a local runtime coordination/tool-execution error
  * rather than a provider/model failure. The model fallback chain must abort on
  * these instead of consuming candidate slots — retrying any model would hit the
- * same local condition. See #83510 and #95474.
+ * same local condition. Sandbox provisioning failures join this class because
+ * every candidate shares the same sandbox. See #83510, #95474 and #106516.
  */
 export function isNonProviderRuntimeCoordinationError(err: unknown): boolean {
   return resolveModelFallbackError(err).kind === "coordination";
@@ -627,7 +629,8 @@ function resolveFailoverClassificationFromErrorInternal(
   depth: number,
   providerHint?: string,
 ): FailoverClassification | null {
-  if (depth > MAX_FAILOVER_CAUSE_DEPTH) {
+  // Provisioning text can resemble provider errors; keep it out of signal parsing. See #106516.
+  if (depth > MAX_FAILOVER_CAUSE_DEPTH || isSandboxProvisioningError(err)) {
     return null;
   }
   if (err && typeof err === "object") {
@@ -641,6 +644,22 @@ function resolveFailoverClassificationFromErrorInternal(
       kind: "reason",
       reason: err.reason,
     };
+  }
+  const hasProvisioningCause =
+    findErrorProperty(err, (candidate) => isSandboxProvisioningError(candidate) || undefined) !==
+    undefined;
+  const directSignal = normalizeDirectErrorSignal(err);
+  const directCodeReason = directSignal.code
+    ? failoverReasonFromClassification(classifyFailoverSignal({ code: directSignal.code }))
+    : null;
+  const hasDirectFailoverMetadata =
+    directSignal.status !== undefined ||
+    (directCodeReason !== null && directCodeReason !== "timeout");
+  // Wrapper prose is not stronger evidence than a typed local provisioning
+  // cause. Keep explicit provider status/code precedence, but do not let copied
+  // timeout or rate-limit wording consume model fallbacks. See #106516.
+  if (hasProvisioningCause && !hasDirectFailoverMetadata) {
+    return null;
   }
   const signal = normalizeErrorSignal(err, providerHint);
   const codeReason = signal.code
@@ -910,6 +929,7 @@ export function resolveModelFallbackError(
     return { kind: "failover", error: failoverError };
   }
   if (
+    findErrorProperty(err, (candidate) => isSandboxProvisioningError(candidate) || undefined) ||
     hasSessionWriteLockContention(err) ||
     hasEmbeddedAttemptSessionTakeover(err) ||
     hasMissingToolResultFailure(err)

@@ -75,7 +75,6 @@ describe("maybeCreateDynamicAgent", () => {
           dynamicAgentCreation: createDynamicConfig(),
         },
       },
-      agents: { list: [] },
       bindings: [],
     } as OpenClawConfig;
     const { runtime, mutateConfigFile } = createRuntime(cfg);
@@ -98,7 +97,6 @@ describe("maybeCreateDynamicAgent", () => {
   it("persists a sender agent and direct binding when config writes are allowed", async () => {
     const cfg = {
       channels: { feishu: { dynamicAgentCreation: createDynamicConfig() } },
-      agents: { list: [] },
       bindings: [],
     } as OpenClawConfig;
     const { runtime, mutateConfigFile } = createRuntime(cfg);
@@ -144,7 +142,6 @@ describe("maybeCreateDynamicAgent", () => {
   it("does not create persistent state when current ingress denies the sender", async () => {
     const cfg = {
       channels: { feishu: { dynamicAgentCreation: createDynamicConfig() } },
-      agents: { list: [] },
       bindings: [],
     } as OpenClawConfig;
     const { runtime, mutateConfigFile } = createRuntime(cfg);
@@ -167,7 +164,6 @@ describe("maybeCreateDynamicAgent", () => {
   it("rechecks current ingress inside the config mutation lock", async () => {
     const cfg = {
       channels: { feishu: { dynamicAgentCreation: createDynamicConfig() } },
-      agents: { list: [] },
       bindings: [],
     } as OpenClawConfig;
     const { runtime, commitConfig, mutateConfigFile } = createRuntime(cfg);
@@ -189,7 +185,7 @@ describe("maybeCreateDynamicAgent", () => {
     expect(canCreateForConfig).toHaveBeenCalledTimes(2);
     expect(mutateConfigFile).toHaveBeenCalledTimes(1);
     expect(commitConfig).not.toHaveBeenCalled();
-    expect(result.updatedCfg.agents?.list).toEqual([]);
+    expect(result.updatedCfg.agents?.list ?? []).toEqual([]);
     expect(result.updatedCfg.bindings).toEqual([]);
     expect(await pathExists(path.join(tempRoot, "workspace-feishu-ou_sender"))).toBe(false);
     expect(await pathExists(path.join(tempRoot, "agent-feishu-ou_sender"))).toBe(false);
@@ -198,7 +194,6 @@ describe("maybeCreateDynamicAgent", () => {
   it("preserves a non-peer route added before the config mutation lock", async () => {
     const cfg = {
       channels: { feishu: { dynamicAgentCreation: createDynamicConfig() } },
-      agents: { list: [] },
       bindings: [],
     } as OpenClawConfig;
     const mutationCfg = {
@@ -230,7 +225,6 @@ describe("maybeCreateDynamicAgent", () => {
   it("scopes bindings to the normalized account id", async () => {
     const cfg = {
       channels: { feishu: { dynamicAgentCreation: createDynamicConfig() } },
-      agents: { list: [] },
       bindings: [],
     } as OpenClawConfig;
     const { runtime } = createRuntime(cfg);
@@ -262,7 +256,6 @@ describe("maybeCreateDynamicAgent", () => {
     const accountId = "a".repeat(64);
     const cfg = {
       channels: { feishu: { dynamicAgentCreation: createDynamicConfig() } },
-      agents: { list: [] },
       bindings: [],
     } as OpenClawConfig;
     const { runtime } = createRuntime(cfg);
@@ -365,7 +358,7 @@ describe("maybeCreateDynamicAgent", () => {
     const { runtime, mutateConfigFile } = createRuntime(currentCfg);
 
     const result = await maybeCreateDynamicAgent({
-      cfg: { agents: { list: [] }, bindings: [] } as OpenClawConfig,
+      cfg: { bindings: [] } as OpenClawConfig,
       runtime,
       accountId: "default",
       senderOpenId: "ou_sender",
@@ -407,7 +400,6 @@ describe("maybeCreateDynamicAgent", () => {
           dynamicAgentCreation: createDynamicConfig(),
         },
       },
-      agents: { list: [] },
       bindings: [],
     } as OpenClawConfig;
     const persistedCfg = {
@@ -417,7 +409,6 @@ describe("maybeCreateDynamicAgent", () => {
           dynamicAgentCreation: createDynamicConfig(),
         },
       },
-      agents: { list: [] },
       bindings: [],
     } as OpenClawConfig;
     const { runtime } = createRuntime(currentCfg, persistedCfg);
@@ -461,7 +452,6 @@ describe("maybeCreateDynamicAgent", () => {
 
     const result = await maybeCreateDynamicAgent({
       cfg: {
-        agents: { list: [] },
         bindings: [],
       } as OpenClawConfig,
       runtime,

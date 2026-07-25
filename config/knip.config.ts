@@ -379,6 +379,10 @@ const config = {
     // asserted by the focused Beam mirror tests; production wires only the service.
     "extensions/beam/src/mirror.ts": ["exports", "types"],
     "src/infra/heartbeat-wake.ts": ["exports"],
+    // resolveImageToolFactoryAvailable and OptionalMediaToolFactoryPlan are
+    // consumed by the image-tool auth regression tests; production now resolves
+    // image availability through resolveOptionalMediaToolFactoryPlan's plan.
+    "src/agents/openclaw-tools.media-factory-plan.ts": ["exports", "types"],
   },
   workspaces: {
     ".": {

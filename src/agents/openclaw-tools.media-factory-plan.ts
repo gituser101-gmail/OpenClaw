@@ -286,6 +286,7 @@ export function resolveOptionalMediaToolFactoryPlan(params: {
   });
   return {
     image,
+    imageGenerate:
       allowImageGenerate &&
       preparedFamilyAvailable(preparedProviders?.imageGenerationProviders) &&
       (explicitImageGeneration ||

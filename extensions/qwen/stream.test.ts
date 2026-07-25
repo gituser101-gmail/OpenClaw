@@ -201,6 +201,49 @@ describe("wrapQwenProviderStream", () => {
     expect(captured).toStrictEqual({ enable_thinking: true });
   });
 
+  it.each([
+    ["off", "low"],
+    ["minimal", "low"],
+    ["low", "low"],
+    ["medium", "medium"],
+    ["high", "high"],
+    ["xhigh", "xhigh"],
+    ["max", "xhigh"],
+  ])(
+    "keeps qwen3.8-max-preview thinking on and maps level %s to effort %s",
+    (thinkingLevel, expectedEffort) => {
+      let captured: Record<string, unknown> = {};
+      const baseStreamFn: StreamFn = (_model, _context, options) => {
+        const payload: Record<string, unknown> = {};
+        options?.onPayload?.(payload, _model);
+        captured = payload;
+        return {} as ReturnType<StreamFn>;
+      };
+      const model = {
+        api: "openai-completions",
+        provider: "qwen-token-plan",
+        id: "qwen3.8-max-preview",
+        reasoning: true,
+      } as Model<"openai-completions">;
+      const wrapped = wrapQwenProviderStream({
+        provider: "qwen-token-plan",
+        modelId: model.id,
+        model,
+        streamFn: baseStreamFn,
+        thinkingLevel,
+      } as never);
+
+      void wrapped?.(model, { messages: [] } as Context, {} as never);
+
+      // The gateway rejects enable_thinking:false on this model, but honours the
+      // documented low/high/xhigh effort enum, so the effort must survive.
+      expect(captured).toStrictEqual({
+        enable_thinking: true,
+        reasoning_effort: expectedEffort,
+      });
+    },
+  );
+
   it.each(["kimi-k2.7-code", "MiniMax-M2.5"])(
     "forces thinking for %s when configured catalog metadata disables reasoning",
     (modelId) => {

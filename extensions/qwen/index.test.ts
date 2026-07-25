@@ -115,7 +115,7 @@ describe("qwen provider plugin", () => {
     } as never);
     const catalogProvider = requireCatalogProvider(result);
     expect(catalogProvider.baseUrl).toBe(QWEN_TOKEN_PLAN_GLOBAL_BASE_URL);
-    expect(catalogProvider.models).toHaveLength(14);
+    expect(catalogProvider.models).toHaveLength(15);
 
     const legacy = requireRegisteredProvider(providers, QWEN_TOKEN_PLAN_LEGACY_PROVIDER_ID);
     expect(legacy.auth).toEqual([]);
@@ -196,7 +196,7 @@ describe("qwen provider plugin", () => {
       apiKey: "canonical-key",
       baseUrl: QWEN_TOKEN_PLAN_CN_BASE_URL,
     });
-    expect(catalogProvider.models).toHaveLength(14);
+    expect(catalogProvider.models).toHaveLength(15);
     expect(catalogProvider.models?.map((model) => model.id)).not.toContain("legacy-only");
     expect(resolveProviderApiKey).toHaveBeenCalledTimes(1);
     expect(resolveProviderApiKey).toHaveBeenCalledWith(QWEN_TOKEN_PLAN_PROVIDER_ID);
@@ -221,6 +221,11 @@ describe("qwen provider plugin", () => {
     expect(provider.resolveThinkingProfile?.({ modelId: "MiniMax-M2.5" } as never)).toEqual(
       expected,
     );
+    expect(provider.resolveThinkingProfile?.({ modelId: "qwen3.8-max-preview" } as never)).toEqual({
+      levels: ["low", "medium", "high", "xhigh"].map((id) => ({ id })),
+      defaultLevel: "xhigh",
+      preserveWhenCatalogReasoningFalse: true,
+    });
     expect(provider.resolveThinkingProfile?.({ modelId: "qwen3.7-plus" } as never)).toBeUndefined();
     expect(provider.resolveThinkingProfile?.({ modelId: "deepseek-v4-pro" } as never)).toEqual({
       levels: ["off", "minimal", "low", "medium", "high", "xhigh", "max"].map((id) => ({ id })),

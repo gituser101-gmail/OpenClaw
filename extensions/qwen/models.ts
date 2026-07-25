@@ -26,6 +26,7 @@ export const QWEN_36_FLASH_MODEL_ID = "qwen3.6-flash";
 export const QWEN_36_PLUS_MODEL_ID = "qwen3.6-plus";
 export const QWEN_37_MAX_MODEL_ID = "qwen3.7-max";
 export const QWEN_37_PLUS_MODEL_ID = "qwen3.7-plus";
+const QWEN_38_MAX_PREVIEW_MODEL_ID = "qwen3.8-max-preview";
 export const QWEN_DEFAULT_COST = {
   input: 0,
   output: 0,
@@ -37,12 +38,19 @@ export const QWEN_TOKEN_PLAN_DEFAULT_MODEL_ID = QWEN_37_PLUS_MODEL_ID;
 export const QWEN_TOKEN_PLAN_DEFAULT_MODEL_REF = `${QWEN_TOKEN_PLAN_PROVIDER_ID}/${QWEN_TOKEN_PLAN_DEFAULT_MODEL_ID}`;
 
 const QWEN_TOKEN_PLAN_THINKING_ONLY_MODEL_IDS = new Set(["kimi-k2.7-code", "minimax-m2.5"]);
+// Rejects `enable_thinking: false` like the thinking-only models, but unlike them it
+// still honours `reasoning_effort`, so it keeps a full set of thinking levels.
+const QWEN_TOKEN_PLAN_ALWAYS_THINKING_EFFORT_MODEL_IDS = new Set([QWEN_38_MAX_PREVIEW_MODEL_ID]);
 const QWEN_TOKEN_PLAN_DEEPSEEK_V4_MODEL_IDS = new Set(["deepseek-v4-pro", "deepseek-v4-flash"]);
 const QWEN_TOKEN_PLAN_KIMI_MODEL_IDS = new Set(["kimi-k2.7-code", "kimi-k2.6", "kimi-k2.5"]);
 const QWEN_TOKEN_PLAN_GLM_MODEL_IDS = new Set(["glm-5.2", "glm-5.1", "glm-5"]);
 
 export function isQwenTokenPlanThinkingOnlyModelId(modelId: string): boolean {
   return QWEN_TOKEN_PLAN_THINKING_ONLY_MODEL_IDS.has(modelId.trim().toLowerCase());
+}
+
+export function isQwenTokenPlanAlwaysThinkingEffortModelId(modelId: string): boolean {
+  return QWEN_TOKEN_PLAN_ALWAYS_THINKING_EFFORT_MODEL_IDS.has(modelId.trim().toLowerCase());
 }
 
 export function isQwenTokenPlanDeepSeekV4ModelId(modelId: string): boolean {
@@ -75,6 +83,15 @@ export function resolveQwenTokenPlanBaseUrl(region: QwenTokenPlanRegion): string
 // Token Plan is credit-based, so per-token prices do not map to its billing model.
 // This is the exact chat allowlist; image-generation-only models use separate APIs.
 export const QWEN_TOKEN_PLAN_MODEL_CATALOG: ReadonlyArray<ModelDefinitionConfig> = [
+  {
+    id: QWEN_38_MAX_PREVIEW_MODEL_ID,
+    name: QWEN_38_MAX_PREVIEW_MODEL_ID,
+    reasoning: true,
+    input: ["text", "image", "video"],
+    cost: QWEN_DEFAULT_COST,
+    contextWindow: 1_000_000,
+    maxTokens: 131_072,
+  },
   {
     id: QWEN_37_MAX_MODEL_ID,
     name: QWEN_37_MAX_MODEL_ID,

@@ -518,6 +518,29 @@ function prepareEmbeddedAgentQueueMessage(
  * - With a sessionId, aborts that single run.
  * - With no sessionId, supports targeted abort modes (for example, compacting runs only).
  */
+function abortEmbeddedAgentRunHandle(
+  sessionId: string,
+  handle: EmbeddedAgentQueueHandle,
+  reason?: "restart",
+): boolean {
+  if (ACTIVE_EMBEDDED_RUNS.get(sessionId) !== handle) {
+    diag.debug(`abort failed: sessionId=${sessionId} reason=handle_mismatch`);
+    return false;
+  }
+  if (!isEmbeddedRunHandleAbortable(sessionId, handle)) {
+    diag.debug(`abort failed: sessionId=${sessionId} reason=not_abortable`);
+    return false;
+  }
+  diag.debug(`aborting run: sessionId=${sessionId}`);
+  try {
+    handle.abort(reason);
+  } catch (err) {
+    diag.warn(`abort failed: sessionId=${sessionId} err=${String(err)}`);
+    return false;
+  }
+  return true;
+}
+
 export function abortEmbeddedAgentRun(sessionId: string): boolean;
 export function abortEmbeddedAgentRun(
   sessionId: undefined,
@@ -536,18 +559,7 @@ export function abortEmbeddedAgentRun(
       diag.debug(`abort failed: sessionId=${sessionId} reason=no_active_run`);
       return false;
     }
-    if (!isEmbeddedRunHandleAbortable(sessionId, handle)) {
-      diag.debug(`abort failed: sessionId=${sessionId} reason=not_abortable`);
-      return false;
-    }
-    diag.debug(`aborting run: sessionId=${sessionId}`);
-    try {
-      handle.abort(opts?.reason);
-    } catch (err) {
-      diag.warn(`abort failed: sessionId=${sessionId} err=${String(err)}`);
-      return false;
-    }
-    return true;
+    return abortEmbeddedAgentRunHandle(sessionId, handle, opts?.reason);
   }
 
   const abortActiveEmbeddedRunHandles = (params: {
@@ -863,8 +875,7 @@ export async function abortAndDrainEmbeddedAgentRun(params: {
   }
   const aborted =
     (capturedHandle !== undefined &&
-      ACTIVE_EMBEDDED_RUNS.get(params.sessionId) === capturedHandle &&
-      abortEmbeddedAgentRun(params.sessionId)) ||
+      abortEmbeddedAgentRunHandle(params.sessionId, capturedHandle)) ||
     expiredReplyRun;
   const drained =
     aborted && capturedHandle !== undefined

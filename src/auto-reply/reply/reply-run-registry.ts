@@ -313,7 +313,7 @@ function notifyReplyRunEnded(sessionKey: string): void {
   }
 }
 
-function resolveReplyRunForCurrentSessionId(sessionId: string): ReplyOperation | undefined {
+export function resolveReplyRunForCurrentSessionId(sessionId: string): ReplyOperation | undefined {
   const normalizedSessionId = normalizeOptionalString(sessionId);
   if (!normalizedSessionId) {
     return undefined;
@@ -1225,6 +1225,10 @@ export function queueReplyRunMessage(
   return true;
 }
 
+export function isReplyOperationActive(operation: ReplyOperation): boolean {
+  return replyRunState.activeRunsByKey.get(operation.key) === operation;
+}
+
 export function abortReplyRunBySessionId(sessionId: string): boolean {
   const operation = resolveReplyRunForCurrentSessionId(sessionId);
   if (!operation) {
@@ -1233,14 +1237,18 @@ export function abortReplyRunBySessionId(sessionId: string): boolean {
   return operation.abortByUser();
 }
 
-export function forceClearReplyRunBySessionId(sessionId: string, cause?: unknown): boolean {
-  const operation = resolveReplyRunForCurrentSessionId(sessionId);
-  if (!operation) {
+export function forceClearReplyOperation(operation: ReplyOperation, cause?: unknown): boolean {
+  if (!isReplyOperationActive(operation)) {
     return false;
   }
   operation.fail("run_failed", cause);
   operation.complete();
   return true;
+}
+
+export function forceClearReplyRunBySessionId(sessionId: string, cause?: unknown): boolean {
+  const operation = resolveReplyRunForCurrentSessionId(sessionId);
+  return operation ? forceClearReplyOperation(operation, cause) : false;
 }
 
 export function clearReplyRunForResetBySessionId(sessionId: string): void {

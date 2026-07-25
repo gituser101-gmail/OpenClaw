@@ -4,8 +4,9 @@
 import {
   abortActiveReplyRuns,
   abortReplyRunBySessionId,
-  expireStaleReplyRunBySessionId,
-  forceClearReplyRunBySessionId,
+  expireStaleReplyOperation,
+  forceClearReplyOperation,
+  isReplyOperationActive,
   isReplyRunEvidenceStaleBySessionId,
   isReplyRunActiveForSessionId,
   isReplyRunAbortableForCompaction,
@@ -13,8 +14,10 @@ import {
   listActiveReplyRunSessionIds,
   queueReplyRunMessage,
   resolveReplyBackendQueueMessageMismatch,
+  resolveReplyRunForCurrentSessionId,
   resolveReplyRunPhaseForSessionId,
   type ReplyOperationPhase,
+  type ReplyOperation,
   waitForReplyRunEndBySessionId,
 } from "../../auto-reply/reply/reply-run-registry.js";
 import {
@@ -518,29 +521,6 @@ function prepareEmbeddedAgentQueueMessage(
  * - With a sessionId, aborts that single run.
  * - With no sessionId, supports targeted abort modes (for example, compacting runs only).
  */
-function abortEmbeddedAgentRunHandle(
-  sessionId: string,
-  handle: EmbeddedAgentQueueHandle,
-  reason?: "restart",
-): boolean {
-  if (ACTIVE_EMBEDDED_RUNS.get(sessionId) !== handle) {
-    diag.debug(`abort failed: sessionId=${sessionId} reason=handle_mismatch`);
-    return false;
-  }
-  if (!isEmbeddedRunHandleAbortable(sessionId, handle)) {
-    diag.debug(`abort failed: sessionId=${sessionId} reason=not_abortable`);
-    return false;
-  }
-  diag.debug(`aborting run: sessionId=${sessionId}`);
-  try {
-    handle.abort(reason);
-  } catch (err) {
-    diag.warn(`abort failed: sessionId=${sessionId} err=${String(err)}`);
-    return false;
-  }
-  return true;
-}
-
 export function abortEmbeddedAgentRun(sessionId: string): boolean;
 export function abortEmbeddedAgentRun(
   sessionId: undefined,
@@ -559,7 +539,18 @@ export function abortEmbeddedAgentRun(
       diag.debug(`abort failed: sessionId=${sessionId} reason=no_active_run`);
       return false;
     }
-    return abortEmbeddedAgentRunHandle(sessionId, handle, opts?.reason);
+    if (!isEmbeddedRunHandleAbortable(sessionId, handle)) {
+      diag.debug(`abort failed: sessionId=${sessionId} reason=not_abortable`);
+      return false;
+    }
+    diag.debug(`aborting run: sessionId=${sessionId}`);
+    try {
+      handle.abort(opts?.reason);
+    } catch (err) {
+      diag.warn(`abort failed: sessionId=${sessionId} err=${String(err)}`);
+      return false;
+    }
+    return true;
   }
 
   const abortActiveEmbeddedRunHandles = (params: {
@@ -825,11 +816,18 @@ export async function waitForEmbeddedAgentRunEnd(
 
 async function waitForEmbeddedAgentRunHandleEnd(
   sessionId: string,
-  handle: EmbeddedAgentQueueHandle,
+  handle: EmbeddedAgentQueueHandle | undefined,
+  replyOperation: ReplyOperation | undefined,
   timeoutMs: number,
 ): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
-  while (ACTIVE_EMBEDDED_RUNS.get(sessionId) === handle) {
+  while (true) {
+    const handleActive = handle !== undefined && ACTIVE_EMBEDDED_RUNS.get(sessionId) === handle;
+    const replyOperationActive =
+      replyOperation !== undefined && isReplyOperationActive(replyOperation);
+    if (!handleActive && !replyOperationActive) {
+      return true;
+    }
     const remainingMs = deadline - Date.now();
     if (remainingMs <= 0) {
       return false;
@@ -838,7 +836,6 @@ async function waitForEmbeddedAgentRunHandleEnd(
       setTimeout(resolve, Math.min(remainingMs, 25));
     });
   }
-  return true;
 }
 
 export type AbortAndDrainEmbeddedAgentRunResult = {
@@ -858,36 +855,51 @@ export async function abortAndDrainEmbeddedAgentRun(params: {
   // Recovery must stay bound to one run generation; a replacement under the
   // same session id owns its own abort, drain, and cleanup lifecycle.
   const capturedHandle = ACTIVE_EMBEDDED_RUNS.get(params.sessionId);
+  const capturedReplyOperation = resolveReplyRunForCurrentSessionId(params.sessionId);
   // Recovery is a staleness expiry: stamp run_stalled on the reply operation
   // BEFORE any handle abort, or the run loop's abort handler re-enters
   // abortByUser and misattributes the watchdog kill to the user.
   const expiredReplyRun =
     params.reason === "stuck_recovery" &&
-    expireStaleReplyRunBySessionId(params.sessionId, "stuck_recovery");
-  if (expiredReplyRun && !ACTIVE_EMBEDDED_RUNS.has(params.sessionId)) {
+    capturedReplyOperation !== undefined &&
+    expireStaleReplyOperation(capturedReplyOperation, "stuck_recovery");
+  if (expiredReplyRun && capturedHandle === undefined) {
     // Reply expiry aborts synchronously and clears registry ownership. Let the
     // command lane observe that abort before recovery decides whether to reset it.
     await new Promise<void>((resolve) => {
       setImmediate(resolve);
     });
-    const drained = await waitForEmbeddedAgentRunEnd(params.sessionId, settleMs);
+    const drained = await waitForEmbeddedAgentRunHandleEnd(
+      params.sessionId,
+      capturedHandle,
+      capturedReplyOperation,
+      settleMs,
+    );
     return { aborted: true, drained, forceCleared: false };
   }
   const aborted =
     (capturedHandle !== undefined &&
-      abortEmbeddedAgentRunHandle(params.sessionId, capturedHandle)) ||
+      ACTIVE_EMBEDDED_RUNS.get(params.sessionId) === capturedHandle &&
+      abortEmbeddedAgentRun(params.sessionId)) ||
+    (capturedHandle === undefined &&
+      capturedReplyOperation !== undefined &&
+      isReplyOperationActive(capturedReplyOperation) &&
+      capturedReplyOperation.abortByUser()) ||
     expiredReplyRun;
-  const drained =
-    aborted && capturedHandle !== undefined
-      ? await waitForEmbeddedAgentRunHandleEnd(params.sessionId, capturedHandle, settleMs)
-      : aborted
-        ? await waitForEmbeddedAgentRunEnd(params.sessionId, settleMs)
-        : false;
+  const drained = aborted
+    ? await waitForEmbeddedAgentRunHandleEnd(
+        params.sessionId,
+        capturedHandle,
+        capturedReplyOperation,
+        settleMs,
+      )
+    : false;
   const forceCleared =
     params.forceClear === true && (!aborted || !drained)
       ? forceClearEmbeddedAgentRun(
           params.sessionId,
           capturedHandle,
+          capturedReplyOperation,
           params.sessionKey,
           params.reason,
         )
@@ -1024,6 +1036,7 @@ export function clearActiveEmbeddedRun(
 function forceClearEmbeddedAgentRun(
   sessionId: string,
   expectedHandle: EmbeddedAgentQueueHandle | undefined,
+  expectedReplyOperation: ReplyOperation | undefined,
   sessionKey?: string,
   reason = "stuck_recovery",
 ): boolean {
@@ -1043,7 +1056,10 @@ function forceClearEmbeddedAgentRun(
     diag.debug(`run force-clear skipped: sessionId=${sessionId} reason=handle_mismatch`);
   }
   const cause = new Error(`Embedded run force-cleared by ${reason}`);
-  return forceClearReplyRunBySessionId(sessionId, cause) || cleared;
+  return (
+    (expectedReplyOperation ? forceClearReplyOperation(expectedReplyOperation, cause) : false) ||
+    cleared
+  );
 }
 
 const testing = {

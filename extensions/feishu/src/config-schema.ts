@@ -23,10 +23,16 @@ const FeishuGroupPolicySchema = z.union([
   // Preserve the shipped Feishu alias while the canonical value remains "open".
   z.literal("allowall").transform(() => "open" as const),
 ]);
-const FeishuDomainSchema = z.union([
-  z.enum(["feishu", "lark"]),
-  z.string().url().startsWith("https://"),
-]);
+// URL schemes are case-insensitive (RFC 3986). Accept HTTPS://... and normalize
+// via the URL constructor so downstream Feishu clients always see lowercase https://.
+const CustomFeishuDomainSchema = z
+  .string()
+  .url()
+  .transform((value) => new URL(value).toString().replace(/\/+$/, ""))
+  .refine((value) => value.startsWith("https://"), {
+    message: "Custom Feishu domain must use HTTPS",
+  });
+const FeishuDomainSchema = z.union([z.enum(["feishu", "lark"]), CustomFeishuDomainSchema]);
 const FeishuConnectionModeSchema = z.enum(["websocket", "webhook"]);
 const TtsOverrideSchema = z
   .object({

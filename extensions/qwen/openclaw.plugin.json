@@ -93,6 +93,15 @@
         "api": "openai-completions",
         "models": [
           {
+            "id": "qwen3.8-max-preview",
+            "name": "qwen3.8-max-preview",
+            "reasoning": true,
+            "input": ["text", "image", "video"],
+            "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 },
+            "contextWindow": 1000000,
+            "maxTokens": 131072
+          },
+          {
             "id": "qwen3.7-max",
             "name": "qwen3.7-max",
             "reasoning": true,

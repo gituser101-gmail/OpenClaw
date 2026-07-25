@@ -7,6 +7,7 @@ import { buildQwenMediaUnderstandingProvider } from "./media-understanding-provi
 import {
   isQwenCodingPlanBaseUrl,
   isQwenStandardOnlyModelId,
+  isQwenTokenPlanAlwaysThinkingEffortModelId,
   isQwenTokenPlanDeepSeekV4ModelId,
   isQwenTokenPlanGlmModelId,
   isQwenTokenPlanThinkingOnlyModelId,
@@ -42,6 +43,9 @@ const QWEN_TOKEN_PLAN_THINKING_LEVEL_IDS = [
 const QWEN_TOKEN_PLAN_GLM_NO_MAX_THINKING_LEVEL_IDS = QWEN_TOKEN_PLAN_THINKING_LEVEL_IDS.filter(
   (id) => id !== "max",
 );
+// qwen3.8-max-preview cannot turn thinking off, so it has no "off" level, but it does
+// accept the documented low/high/xhigh effort enum and defaults to xhigh server-side.
+const QWEN_TOKEN_PLAN_ALWAYS_THINKING_EFFORT_LEVEL_IDS = ["low", "high", "xhigh"] as const;
 
 function normalizeProviderId(value: string): string {
   return value.trim().toLowerCase();
@@ -116,6 +120,13 @@ function createQwenTokenPlanAuthMethod(region: "global" | "cn") {
 }
 
 function resolveQwenTokenPlanThinkingProfile(modelId: string) {
+  if (isQwenTokenPlanAlwaysThinkingEffortModelId(modelId)) {
+    return {
+      levels: QWEN_TOKEN_PLAN_ALWAYS_THINKING_EFFORT_LEVEL_IDS.map((id) => ({ id })),
+      defaultLevel: "xhigh" as const,
+      preserveWhenCatalogReasoningFalse: true,
+    };
+  }
   if (isQwenTokenPlanThinkingOnlyModelId(modelId)) {
     return {
       levels: [{ id: "low" as const, label: "on" }],

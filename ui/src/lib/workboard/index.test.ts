@@ -283,13 +283,15 @@ describe("workboard controller", () => {
         session: sampleSession,
       });
       await Promise.resolve();
-      expect(client.request).not.toHaveBeenCalledWith("workboard.cards.list", {});
+      expect(client.request).not.toHaveBeenCalledWith("workboard.cards.list", {
+        proofView: "bounded",
+      });
 
       lifecycleWrite.resolve({ card: updatedCard });
       await syncing;
       await capture;
 
-      expect(client.request).toHaveBeenCalledWith("workboard.cards.list", {});
+      expect(client.request).toHaveBeenCalledWith("workboard.cards.list", { proofView: "bounded" });
       expect(state.cards).toEqual([updatedCard]);
     });
   });
@@ -301,7 +303,7 @@ describe("workboard controller", () => {
 
     await loadBoard(client);
 
-    expect(client.request).toHaveBeenCalledWith("workboard.cards.list", {});
+    expect(client.request).toHaveBeenCalledWith("workboard.cards.list", { proofView: "bounded" });
     expect(getWorkboardState(host).cards).toEqual([sampleCard]);
   });
 
@@ -314,7 +316,9 @@ describe("workboard controller", () => {
     await loadBoard(client, { refreshDiagnostics: true });
 
     expect(client.request).toHaveBeenNthCalledWith(1, "workboard.cards.diagnostics.refresh", {});
-    expect(client.request).toHaveBeenNthCalledWith(2, "workboard.cards.list", {});
+    expect(client.request).toHaveBeenNthCalledWith(2, "workboard.cards.list", {
+      proofView: "bounded",
+    });
   });
 
   it("keeps loading cards when diagnostics refresh fails", async () => {
@@ -328,7 +332,9 @@ describe("workboard controller", () => {
     await loadBoard(client, { refreshDiagnostics: true });
 
     expect(client.request).toHaveBeenNthCalledWith(1, "workboard.cards.diagnostics.refresh", {});
-    expect(client.request).toHaveBeenNthCalledWith(2, "workboard.cards.list", {});
+    expect(client.request).toHaveBeenNthCalledWith(2, "workboard.cards.list", {
+      proofView: "bounded",
+    });
     expect(state.cards).toEqual([sampleCard]);
     expect(state.error).toBeNull();
     expect(state.lastRefreshError).toBe("diagnostics denied");
@@ -628,7 +634,7 @@ describe("workboard controller", () => {
     });
     await refreshBoard(client, "live");
 
-    expect(client.request).toHaveBeenCalledWith("workboard.cards.list", {});
+    expect(client.request).toHaveBeenCalledWith("workboard.cards.list", { proofView: "bounded" });
     expect(state.lastRefreshSource).toBe("live");
     expect(state.lastRefreshAt).toEqual(expect.any(Number));
     expect(state.lastRefreshError).toBeNull();
@@ -923,7 +929,7 @@ describe("workboard controller", () => {
 
     await refreshBoard(client, "live");
 
-    expect(client.request).toHaveBeenCalledWith("workboard.cards.list", {});
+    expect(client.request).toHaveBeenCalledWith("workboard.cards.list", { proofView: "bounded" });
     expect(client.request).not.toHaveBeenCalledWith(
       "workboard.cards.diagnostics.refresh",
       expect.anything(),
@@ -2821,7 +2827,7 @@ describe("workboard controller", () => {
     await syncLifecycle(client, [{ ...sampleSession, status: "running", hasActiveRun: true }]);
 
     expect(client.request).toHaveBeenCalledTimes(1);
-    expect(client.request).toHaveBeenCalledWith("workboard.cards.list", {});
+    expect(client.request).toHaveBeenCalledWith("workboard.cards.list", { proofView: "bounded" });
     loadResponse.resolve({ cards: [sampleCard] });
     await loading;
   });
@@ -2939,7 +2945,9 @@ describe("workboard controller", () => {
     const card = await captureSessionToWorkboard({ host, client: client as never, session });
 
     expect(card).toMatchObject({ title: "Fix login", status: "review" });
-    expect(client.request).toHaveBeenNthCalledWith(1, "workboard.cards.list", {});
+    expect(client.request).toHaveBeenNthCalledWith(1, "workboard.cards.list", {
+      proofView: "bounded",
+    });
     expect(client.request).toHaveBeenNthCalledWith(2, "chat.history", {
       sessionKey: sampleSession.key,
       limit: 40,
@@ -3229,7 +3237,7 @@ describe("workboard controller", () => {
 
     expect(card).toBeNull();
     expect(client.request).toHaveBeenCalledOnce();
-    expect(client.request).toHaveBeenCalledWith("workboard.cards.list", {});
+    expect(client.request).toHaveBeenCalledWith("workboard.cards.list", { proofView: "bounded" });
   });
 
   it("waits for an in-flight Workboard load before capturing a session", async () => {
@@ -3308,13 +3316,15 @@ describe("workboard controller", () => {
     const capture = captureSession(client, capturedSession);
     await Promise.resolve();
 
-    expect(client.request).not.toHaveBeenCalledWith("workboard.cards.list", {});
+    expect(client.request).not.toHaveBeenCalledWith("workboard.cards.list", {
+      proofView: "bounded",
+    });
 
     lifecycleUpdate.resolve({ card: { ...lifecycleCard, status: "running" } });
     await syncing;
 
     await expect(capture).resolves.toEqual(capturedCard);
-    expect(client.request).toHaveBeenCalledWith("workboard.cards.list", {});
+    expect(client.request).toHaveBeenCalledWith("workboard.cards.list", { proofView: "bounded" });
     expect(client.request).toHaveBeenCalledWith(
       "workboard.cards.create",
       expect.objectContaining({ sessionKey: capturedSession.key }),
@@ -4861,12 +4871,14 @@ describe("workboard controller", () => {
     stopWorkboardLifecycleRefresh(host);
     expect(state.syncingCardIds).toEqual(new Set([first.id]));
     await expect(loadWorkboard({ host, client: client as never })).resolves.toBe(false);
-    expect(client.request).not.toHaveBeenCalledWith("workboard.cards.list", {});
+    expect(client.request).not.toHaveBeenCalledWith("workboard.cards.list", {
+      proofView: "bounded",
+    });
     firstUpdate.resolve({ card: { ...first, status: "running" } });
     await syncing;
     expect(state.syncingCardIds.size).toBe(0);
     await expect(loadWorkboard({ host, client: client as never })).resolves.toBe(true);
-    expect(client.request).toHaveBeenCalledWith("workboard.cards.list", {});
+    expect(client.request).toHaveBeenCalledWith("workboard.cards.list", { proofView: "bounded" });
 
     expect(
       client.request.mock.calls.filter(([method]) => method === "workboard.cards.update"),

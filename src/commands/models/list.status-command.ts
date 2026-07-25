@@ -1619,6 +1619,7 @@ export async function modelsStatusCommand(
       const { formatUsageWindowSummary, loadProviderUsageSummary, resolveUsageProviderId } =
         await loadProviderUsageRuntime();
       const usageByProvider = new Map<string, string>();
+      const usageByProfile = new Map<string, string>();
       const usageProviders = Array.from(
         new Set(
           oauthProfiles
@@ -1643,6 +1644,16 @@ export async function modelsStatusCommand(
             });
             if (formatted) {
               usageByProvider.set(snapshot.provider, formatted);
+            }
+          }
+          for (const snapshot of usageSummary.profiles ?? []) {
+            const formatted = formatUsageWindowSummary(snapshot, {
+              now: Date.now(),
+              maxWindows: 2,
+              includeResets: true,
+            });
+            if (formatted) {
+              usageByProfile.set(snapshot.authProfileId, formatted);
             }
           }
         } catch {
@@ -1685,7 +1696,10 @@ export async function modelsStatusCommand(
         });
         const usage = usageKey ? usageByProvider.get(usageKey) : undefined;
         const usageSuffix = usage ? colorize(rich, theme.muted, ` usage: ${usage}`) : "";
-        runtime.log(`- ${colorize(rich, theme.heading, provider)}${usageSuffix}`);
+        const hasProfileUsage = profiles.some((profile) => usageByProfile.has(profile.profileId));
+        runtime.log(
+          `- ${colorize(rich, theme.heading, provider)}${hasProfileUsage ? "" : usageSuffix}`,
+        );
         for (const profile of profiles) {
           const labelText = profile.label || profile.profileId;
           const labelLocal = colorize(rich, theme.accent, labelText);
@@ -1696,7 +1710,11 @@ export async function modelsStatusCommand(
               : profile.expiresAt
                 ? ` expires in ${formatRemainingShort(profile.remainingMs)}`
                 : " expires unknown";
-          runtime.log(`  - ${labelLocal} ${status}${expiry}`);
+          const profileUsage = usageByProfile.get(profile.profileId);
+          const profileUsageSuffix = profileUsage
+            ? colorize(rich, theme.muted, ` usage: ${profileUsage}`)
+            : "";
+          runtime.log(`  - ${labelLocal} ${status}${expiry}${profileUsageSuffix}`);
         }
       }
     }

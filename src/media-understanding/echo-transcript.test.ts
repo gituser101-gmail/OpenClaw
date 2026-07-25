@@ -66,7 +66,7 @@ describe("sendTranscriptEcho", () => {
       bestEffort: true,
       durability: "best_effort",
     });
-    expect(DEFAULT_ECHO_TRANSCRIPT_FORMAT).toBe('🎙️ "{transcript}"');
+    expect(DEFAULT_ECHO_TRANSCRIPT_FORMAT).toBe('📝 "{transcript}"');
   });
 
   it("uses a custom format when provided", async () => {
@@ -98,12 +98,44 @@ describe("sendTranscriptEcho", () => {
 
     expect(mockDeliverOutboundPayloads).toHaveBeenCalledWith(
       expect.objectContaining({
-        payloads: [{ text: '🎙️ "tickets cost $$40, wait for the deal & confirm with $&"' }],
+        payloads: [{ text: '📝 "tickets cost $$40, wait for the deal & confirm with $&"' }],
       }),
     );
   });
 
-  it("threads the echo as a reply to the inbound voice message when MessageSid is set", async () => {
+  it("threads the echo as a reply to the inbound voice message only when reply is opted in", async () => {
+    await sendTranscriptEcho({
+      ctx: createCtx({
+        Provider: "telegram",
+        From: undefined,
+        OriginatingTo: "telegram:42",
+        MessageSid: "73299",
+        MessageSidFull: "telegram:73299",
+      }),
+      cfg: EMPTY_CONFIG,
+      transcript: "what the agent heard",
+      reply: true,
+    });
+
+    expect(mockDeliverOutboundPayloads).toHaveBeenCalledWith({
+      cfg: EMPTY_CONFIG,
+      channel: "telegram",
+      to: "telegram:42",
+      accountId: "acc1",
+      threadId: undefined,
+      replyToId: "telegram:73299",
+      payloads: [
+        {
+          text: DEFAULT_ECHO_TRANSCRIPT_FORMAT.replace("{transcript}", "what the agent heard"),
+          replyToId: "telegram:73299",
+        },
+      ],
+      bestEffort: true,
+      durability: "best_effort",
+    });
+  });
+
+  it("does not thread the echo as a reply when reply is not opted in (default)", async () => {
     await sendTranscriptEcho({
       ctx: createCtx({
         Provider: "telegram",
@@ -122,11 +154,9 @@ describe("sendTranscriptEcho", () => {
       to: "telegram:42",
       accountId: "acc1",
       threadId: undefined,
-      replyToId: "telegram:73299",
       payloads: [
         {
           text: DEFAULT_ECHO_TRANSCRIPT_FORMAT.replace("{transcript}", "what the agent heard"),
-          replyToId: "telegram:73299",
         },
       ],
       bestEffort: true,

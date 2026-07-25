@@ -13,9 +13,10 @@ const loadMessageRuntime = createLazyRuntimeModule(() => import("../channels/mes
 
 /**
  * Default operator-visible transcript echo format for preflight audio transcription.
- * Matches the familiar Hermes-style mic glyph so users can skim “what was heard.”
+ * Unchanged from prior releases so existing `echoTranscript: true` installs keep the
+ * same visible output on upgrade.
  */
-export const DEFAULT_ECHO_TRANSCRIPT_FORMAT = '🎙️ "{transcript}"';
+export const DEFAULT_ECHO_TRANSCRIPT_FORMAT = '📝 "{transcript}"';
 
 function formatEchoTranscript(transcript: string, format: string): string {
   // Function replacer keeps `$` sequences in the transcript literal instead of
@@ -43,6 +44,8 @@ export async function sendTranscriptEcho(params: {
   cfg: OpenClawConfig;
   transcript: string;
   format?: string;
+  /** Opt-in: quote/reply to the inbound voice note when the channel supports it. */
+  reply?: boolean;
 }): Promise<void> {
   const { ctx, cfg, transcript } = params;
   const channel = ctx.Provider ?? ctx.Surface ?? "";
@@ -66,7 +69,8 @@ export async function sendTranscriptEcho(params: {
   }
 
   const text = formatEchoTranscript(transcript, params.format ?? DEFAULT_ECHO_TRANSCRIPT_FORMAT);
-  const replyToId = resolveEchoReplyToId(ctx);
+  // Reply-threading is opt-in so existing enabled echoes keep ordinary send semantics.
+  const replyToId = params.reply ? resolveEchoReplyToId(ctx) : undefined;
 
   try {
     const { sendDurableMessageBatch } = await loadMessageRuntime();

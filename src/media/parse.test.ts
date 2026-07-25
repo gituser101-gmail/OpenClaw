@@ -20,6 +20,12 @@ describe("splitMediaFromOutput", () => {
     });
   });
 
+  it("keeps relative multi-media directives as separate items (#112464 review)", () => {
+    expectParsedMediaOutputCase("MEDIA:media/a.png media/b.png", {
+      mediaUrls: ["media/a.png", "media/b.png"],
+    });
+  });
+
   function expectParsedMediaOutputCase(
     input: string,
     expected: {

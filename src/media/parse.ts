@@ -623,15 +623,17 @@ export function splitMediaFromOutput(
         parts.length > 1 &&
         /\s/.test(payloadValue) &&
         looksLikeLocalPath &&
+        beginsNewMediaRoot(normalizeMediaSource(cleanCandidate(parts[0] ?? ""))) &&
         !parts
           .slice(1)
           .some((part) => beginsNewMediaRoot(normalizeMediaSource(cleanCandidate(part))))
       ) {
-        // A single local path with spaces splits on whitespace into fragments that
+        // A single ABSOLUTE path with spaces splits on whitespace into fragments that
         // each look path-like, so the loop above over-counts them as separate media.
-        // When no fragment after the first begins a new absolute path or URL, this is
-        // one spaced path (e.g. a Windows profile path, or "/home/u/my folder/a.png"),
-        // so collapse it back rather than emit fragments.
+        // Collapse only when the payload STARTS at an absolute path/URL root and no
+        // later fragment begins a new root -- that keeps "/home/u/my folder/a.png" as
+        // one item while leaving genuine relative multi-media like "media/a.png
+        // media/b.png" (no rooted first fragment) as separate attachments.
         const spacedPath = normalizeMediaSource(cleanCandidate(payloadValue));
         if (isValidMedia(spacedPath, { allowSpaces: true, allowBareFilename: true })) {
           media.splice(mediaStartIndex, media.length - mediaStartIndex, spacedPath);

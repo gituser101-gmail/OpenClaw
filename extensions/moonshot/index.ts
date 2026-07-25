@@ -12,6 +12,7 @@ import {
 import { buildMoonshotProvider } from "./provider-catalog.js";
 import { isMoonshotAlwaysThinkingModelId, resolveThinkingProfile } from "./provider-policy-api.js";
 import { createKimiWebSearchProvider } from "./src/kimi-web-search-provider.js";
+import { normalizeMoonshotToolSchemas } from "./tool-schemas.js";
 
 const PROVIDER_ID = "moonshot";
 const moonshotThinkingStreamHooks = buildProviderStreamFamilyHooks("moonshot-thinking");
@@ -75,6 +76,7 @@ export default defineSingleProviderPluginEntry({
         ? moonshotThinkingStreamHooks.wrapStreamFn?.(ctx)
         : ctx.streamFn,
     resolveThinkingProfile,
+    normalizeToolSchemas: normalizeMoonshotToolSchemas,
     isModernModelRef: ({ modelId }) => isMoonshotAlwaysThinkingModelId(modelId),
   },
   register(api) {

@@ -190,7 +190,7 @@ export async function authorizeCronJobPrecheckCommand(params: {
   authz: CronJobPrecheckAuthz;
   env?: NodeJS.ProcessEnv;
 }): Promise<{ allowed: true } | { allowed: false; reason: string }> {
-  if (params.authz.triggersEnabled !== true) {
+  if (!params.authz.triggersEnabled) {
     return { allowed: false, reason: PRECHECK_TRIGGERS_DISABLED };
   }
 

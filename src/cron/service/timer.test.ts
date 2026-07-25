@@ -524,6 +524,7 @@ describe("cron service timer seam coverage", () => {
       nowMs: () => now,
       enqueueSystemEvent,
       requestHeartbeat: vi.fn(),
+      runIsolatedAgentJob: vi.fn(async () => ({ status: "ok" as const })),
     });
     const job: CronJob = {
       ...createDueMainJob({ now, wakeMode: "now" }),

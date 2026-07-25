@@ -152,7 +152,7 @@ export function interpretPrecheckOutput(params: {
   };
 }
 
-export type CronJobPrecheckAuthz = {
+type CronJobPrecheckAuthz = {
   /** Operator must enable unattended cron scripts/triggers (same gate as script payloads). */
   triggersEnabled: boolean;
   /** Optional agent id for exec-approvals agent scope. */

@@ -222,7 +222,7 @@ describe("qwen provider plugin", () => {
       expected,
     );
     expect(provider.resolveThinkingProfile?.({ modelId: "qwen3.8-max-preview" } as never)).toEqual({
-      levels: ["low", "high", "xhigh"].map((id) => ({ id })),
+      levels: ["low", "medium", "high", "xhigh"].map((id) => ({ id })),
       defaultLevel: "xhigh",
       preserveWhenCatalogReasoningFalse: true,
     });

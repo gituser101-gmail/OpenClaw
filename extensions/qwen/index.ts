@@ -43,9 +43,15 @@ const QWEN_TOKEN_PLAN_THINKING_LEVEL_IDS = [
 const QWEN_TOKEN_PLAN_GLM_NO_MAX_THINKING_LEVEL_IDS = QWEN_TOKEN_PLAN_THINKING_LEVEL_IDS.filter(
   (id) => id !== "max",
 );
-// qwen3.8-max-preview cannot turn thinking off, so it has no "off" level, but it does
-// accept the documented low/high/xhigh effort enum and defaults to xhigh server-side.
-const QWEN_TOKEN_PLAN_ALWAYS_THINKING_EFFORT_LEVEL_IDS = ["low", "high", "xhigh"] as const;
+// qwen3.8-max-preview cannot turn thinking off, so it has no "off" level. It defaults to
+// xhigh server-side. Alibaba documents low/high/xhigh, but the gateway also accepts medium,
+// so medium is exposed and passed through rather than rounded up to a costlier tier.
+const QWEN_TOKEN_PLAN_ALWAYS_THINKING_EFFORT_LEVEL_IDS = [
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+] as const;
 
 function normalizeProviderId(value: string): string {
   return value.trim().toLowerCase();

@@ -205,7 +205,7 @@ describe("wrapQwenProviderStream", () => {
     ["off", "low"],
     ["minimal", "low"],
     ["low", "low"],
-    ["medium", "high"],
+    ["medium", "medium"],
     ["high", "high"],
     ["xhigh", "xhigh"],
     ["max", "xhigh"],

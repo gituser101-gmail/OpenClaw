@@ -325,6 +325,10 @@ function patchTokenPlanQwen38Payload(
       payload.reasoning_effort = "low";
       return;
     case "medium":
+      // Documented as low/high/xhigh, but the gateway accepts medium, so send it
+      // rather than rounding up to a tier the caller did not ask to pay for.
+      payload.reasoning_effort = "medium";
+      return;
     case "high":
       payload.reasoning_effort = "high";
       return;

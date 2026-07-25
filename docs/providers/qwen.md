@@ -262,10 +262,10 @@ Token Plan models are also marked reasoning-capable. `kimi-k2.7-code` and
 `MiniMax-M2.5` are thinking-only, so OpenClaw keeps thinking enabled even when
 the session requests `/think off`. `qwen3.8-max-preview` also cannot disable
 thinking — the gateway rejects `enable_thinking: false` outright — but unlike
-those two it still honours an effort setting, so it exposes `low`, `high`, and
-`xhigh` levels and defaults to `xhigh`, matching the service default. OpenClaw
-maps `off` and `minimal` down to `low`, `medium` up to `high`, and `max` to
-`xhigh`. DeepSeek V4 maps `minimal` through `high` to
+those two it still honours an effort setting, so it exposes `low`, `medium`,
+`high`, and `xhigh` levels and defaults to `xhigh`, matching the service
+default. OpenClaw maps `off` and `minimal` down to `low` and `max` to `xhigh`;
+the other levels pass through unchanged. DeepSeek V4 maps `minimal` through `high` to
 the service's `high` effort and maps `xhigh` or `max` to `max`. GLM 5.2 accepts
 the full `minimal` through `max` range; GLM 5.1 and GLM 5 accept through
 `xhigh`, and all three default to `high`. Other hybrid models follow the

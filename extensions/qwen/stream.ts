@@ -313,7 +313,7 @@ function createQwenTokenPlanConstraintWrapper(
 // Map OpenClaw's wider level set onto that enum rather than dropping reasoning_effort.
 function patchTokenPlanQwen38Payload(
   payload: Record<string, unknown>,
-  thinkingLevel: QwenThinkingLevel | string | undefined,
+  thinkingLevel: string | undefined,
 ): void {
   delete payload.thinking;
   payload.enable_thinking = true;

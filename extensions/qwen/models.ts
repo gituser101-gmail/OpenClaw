@@ -26,7 +26,7 @@ export const QWEN_36_FLASH_MODEL_ID = "qwen3.6-flash";
 export const QWEN_36_PLUS_MODEL_ID = "qwen3.6-plus";
 export const QWEN_37_MAX_MODEL_ID = "qwen3.7-max";
 export const QWEN_37_PLUS_MODEL_ID = "qwen3.7-plus";
-export const QWEN_38_MAX_PREVIEW_MODEL_ID = "qwen3.8-max-preview";
+const QWEN_38_MAX_PREVIEW_MODEL_ID = "qwen3.8-max-preview";
 export const QWEN_DEFAULT_COST = {
   input: 0,
   output: 0,

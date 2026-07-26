@@ -112,6 +112,8 @@ export type AgentCommandOpts = {
   allowModelOverride?: boolean;
   /** Optional runtime tool allow-list; when set, only these tools are exposed for this run. */
   toolsAllow?: string[];
+  /** Whether the session has an immutable per-spawn runtime tool policy active. */
+  hasSessionRuntimeToolPolicy?: boolean;
   /** Trusted owner-scoped plugin tool grant; normal policy and deny rules still apply. */
   runtimePluginToolGrant?: RuntimePluginToolGrant;
   /** Trusted in-process subagent-completion handoff; never accepted from public RPC params. */

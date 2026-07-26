@@ -1,4 +1,5 @@
 import { sanitizeForLog } from "../../../packages/terminal-core/src/ansi.js";
+import { isRuntimeToolPolicyActive } from "../../agents/runtime-tool-policy.js";
 import type { SessionEntry } from "../../config/sessions/types.js";
 import { emitAgentEvent } from "../../infra/agent-events.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
@@ -414,7 +415,12 @@ export async function runEmbeddedAgentAttempt(params: {
             runTimeoutOverrideMs,
             runId,
             lifecycleGeneration,
-            opts: params.opts,
+            opts: {
+              ...params.opts,
+              hasSessionRuntimeToolPolicy: isRuntimeToolPolicyActive(
+                params.sessionEntry?.runtimeToolPolicy,
+              ),
+            },
             runContext,
             spawnedBy,
             messageChannel,

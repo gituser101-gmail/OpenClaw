@@ -13,6 +13,8 @@ import {
 } from "@openclaw/normalization-core/string-coerce";
 import { DEFAULT_SUBAGENT_MAX_SPAWN_DEPTH } from "../config/agent-limits.js";
 import { resolveStorePath } from "../config/sessions.js";
+import type { RuntimeToolPolicy } from "../config/sessions/runtime-tool-policy.types.js";
+import { listSessionEntriesReadOnly } from "../config/sessions/session-accessor.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import {
   isAcpSessionKey,
@@ -28,6 +30,7 @@ import {
   getSubagentDepthFromSessionStore,
   readSubagentSessionStore,
 } from "./subagent-depth.js";
+import { normalizeRuntimeToolPolicy } from "./runtime-tool-policy.js";
 
 /** Resolved role for a main session, orchestrating subagent, or leaf subagent. */
 export type SubagentSessionRole = "main" | "orchestrator" | "leaf";
@@ -50,6 +53,7 @@ type SessionCapabilityEntry = {
   inheritedToolPolicyVersion?: unknown;
   inheritedToolAllow?: unknown;
   inheritedToolDeny?: unknown;
+  runtimeToolPolicy?: unknown;
 };
 
 /** Minimal persisted session-store shape needed to resolve subagent capabilities. */
@@ -65,6 +69,7 @@ export type SessionCapabilityStore = Record<
     inheritedToolPolicyVersion?: unknown;
     inheritedToolAllow?: unknown;
     inheritedToolDeny?: unknown;
+    runtimeToolPolicy?: unknown;
   }
 >;
 
@@ -413,4 +418,30 @@ export function resolveStoredSubagentInheritedToolAllowlist(
     store,
   });
   return normalizeInheritedToolAllowlist(entry?.inheritedToolAllow);
+}
+
+/**
+ * Resolve the immutable per-spawn runtime tool policy stored on a subagent
+ * session entry. Returns `undefined` when no policy is set (no restriction).
+ * Corrupted persisted data fail-closes to `"none"` via normalization.
+ */
+export function resolveStoredRuntimeToolPolicy(
+  sessionKey: string | undefined | null,
+  opts?: {
+    cfg?: OpenClawConfig;
+    store?: SessionCapabilityStore;
+  },
+): RuntimeToolPolicy | undefined {
+  const normalizedSessionKey = normalizeOptionalString(sessionKey);
+  if (!normalizedSessionKey || !shouldInspectStoredSubagentEnvelope(normalizedSessionKey)) {
+    return undefined;
+  }
+  const store = resolveSubagentCapabilityStore(normalizedSessionKey, opts);
+  const entry = resolveSessionCapabilityEntry({
+    sessionKey: normalizedSessionKey,
+    cfg: opts?.cfg,
+    store,
+  });
+  // Normalize here: corrupted persisted data fail-closes to "none".
+  return normalizeRuntimeToolPolicy(entry?.runtimeToolPolicy);
 }

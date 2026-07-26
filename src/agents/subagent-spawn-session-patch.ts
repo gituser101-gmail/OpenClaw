@@ -1,4 +1,5 @@
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
+import type { RuntimeToolPolicy } from "../config/sessions/runtime-tool-policy.types.js";
 import { buildSessionCreationStamp } from "../config/sessions/session-entry-provenance.js";
 import type { SessionEntry } from "../config/sessions/types.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
@@ -9,6 +10,8 @@ import {
   normalizeInheritedToolAllowlist,
   normalizeInheritedToolDenylist,
 } from "./inherited-tool-deny.js";
+import { normalizeRuntimeToolPolicy, runtimeToolPolicyEqual } from "./runtime-tool-policy.js";
+import { resolveStoredRuntimeToolPolicy } from "./subagent-capabilities.js";
 import { getSubagentSpawnDeps } from "./subagent-spawn-deps.js";
 import { splitModelRef } from "./subagent-spawn-plan.js";
 import { resolveGatewaySessionStoreTarget, upsertSessionEntry } from "./subagent-spawn.runtime.js";
@@ -27,6 +30,12 @@ function buildDirectChildSessionPatch(patch: Record<string, unknown>): Partial<S
   }
   if (patch.inheritedToolPolicyVersion === 1) {
     entry.inheritedToolPolicyVersion = 1;
+  }
+  // runtimeToolPolicy is normalized to its canonical form before persisting.
+  // The immutability check (first-write-wins) lives at the upsert boundary in
+  // createInitialSubagentSession, where the persisted value can be read.
+  if (patch.runtimeToolPolicy !== undefined) {
+    entry.runtimeToolPolicy = normalizeRuntimeToolPolicy(patch.runtimeToolPolicy);
   }
   if (patch.incognito === true) {
     entry.incognito = true;
@@ -116,6 +125,8 @@ export async function createInitialSubagentSession(params: {
   swarmGroupId?: string;
   collect: boolean;
   outputSchema?: Record<string, unknown>;
+  /** Per-spawn runtime tool policy requested via sessions_spawn `tools`. */
+  runtimeToolPolicy?: RuntimeToolPolicy;
 }): Promise<{ status: "ok"; entry?: SessionEntry } | { status: "error"; error: string }> {
   const initialChildSessionPatch: Record<string, unknown> = {
     spawnedBy: params.requesterInternalKey,
@@ -129,6 +140,11 @@ export async function createInitialSubagentSession(params: {
     inheritedToolPolicyVersion: 1,
     ...inheritedToolAllowPatch(params.inheritedToolAllowlist),
     ...inheritedToolDenyPatch(params.inheritedToolDenylist),
+    // The immutable guard below may drop this field to keep the existing value
+    // on an idempotent re-write; buildDirectChildSessionPatch normalizes it.
+    ...(params.runtimeToolPolicy !== undefined
+      ? { runtimeToolPolicy: params.runtimeToolPolicy }
+      : {}),
     ...params.modelPatch,
     ...(params.swarmGroupId ? { swarmGroupId: params.swarmGroupId } : {}),
     ...(params.collect ? { swarmCollector: true } : {}),
@@ -147,19 +163,44 @@ export async function createInitialSubagentSession(params: {
           cfg: params.cfg,
           key: params.childSessionKey,
         });
-    const entry = await upsertSessionEntry(
-      {
-        storePath: target.storePath,
-        sessionKey: target.canonicalKey,
-      },
-      {
-        ...buildDirectChildSessionPatch(initialChildSessionPatch),
-        ...buildSessionCreationStamp({
-          via: "spawn",
-          actor: { type: "agent", id: params.requesterInternalKey },
-        }),
-      },
-    );
+    const sessionScope = {
+      storePath: target.storePath,
+      sessionKey: target.canonicalKey,
+    };
+
+    // runtimeToolPolicy is immutable once written: first write wins, identical
+    // re-writes are idempotent, and any attempt to change or clear it is
+    // rejected. Read the persisted authority before upsert so the check cannot
+    // be bypassed by a fresh patch that omits or alters the field.
+    const requestedRuntimeToolPolicy =
+      initialChildSessionPatch.runtimeToolPolicy !== undefined
+        ? normalizeRuntimeToolPolicy(initialChildSessionPatch.runtimeToolPolicy)
+        : undefined;
+    if (requestedRuntimeToolPolicy !== undefined) {
+      const persistedRuntimeToolPolicy = resolveStoredRuntimeToolPolicy(params.childSessionKey, {
+        cfg: params.cfg,
+      });
+      if (
+        persistedRuntimeToolPolicy !== undefined &&
+        !runtimeToolPolicyEqual(persistedRuntimeToolPolicy, requestedRuntimeToolPolicy)
+      ) {
+        throw new Error(
+          "runtimeToolPolicy is immutable: a child session's tool policy cannot be changed after it is set. Create a new child session for a different policy.",
+        );
+      }
+      if (persistedRuntimeToolPolicy !== undefined) {
+        // Idempotent re-write: keep the existing authority, drop the incoming copy.
+        delete initialChildSessionPatch.runtimeToolPolicy;
+      }
+    }
+
+    const entry = await upsertSessionEntry(sessionScope, {
+      ...buildDirectChildSessionPatch(initialChildSessionPatch),
+      ...buildSessionCreationStamp({
+        via: "spawn",
+        actor: { type: "agent", id: params.requesterInternalKey },
+      }),
+    });
     return { status: "ok", entry: entry ?? undefined };
   } catch (err) {
     const message = err instanceof Error ? err.message : typeof err === "string" ? err : "error";

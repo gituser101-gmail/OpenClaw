@@ -1232,6 +1232,30 @@ describe("runEmbeddedAttempt context engine sessionKey forwarding", () => {
     });
   });
 
+  it("uses minimal prompt inputs for an active runtime tool policy", async () => {
+    hoisted.resolveSkillsPromptForRunMock.mockReturnValue("SKILL CATALOG SHOULD NOT APPEAR");
+    const seen: { systemPrompt?: string } = {};
+
+    await createContextEngineAttemptRunner({
+      contextEngine: createContextEngineBootstrapAndAssemble(),
+      sessionKey,
+      tempPaths,
+      attemptOverrides: {
+        disableTools: false,
+        hasSessionRuntimeToolPolicy: true,
+      },
+      sessionPrompt: async (session) => {
+        seen.systemPrompt = session.agent.state.systemPrompt;
+        session.messages = [
+          ...session.messages,
+          { role: "assistant", content: "done", timestamp: 2 },
+        ];
+      },
+    });
+
+    expect(seen.systemPrompt).not.toContain("SKILL CATALOG SHOULD NOT APPEAR");
+  });
+
   it("keeps before_prompt_build context in the model prompt and out of transcript messages", async () => {
     const runBeforePromptBuild = vi.fn(async () => ({
       prependContext: "dynamic hook context",

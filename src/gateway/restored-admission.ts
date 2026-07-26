@@ -4,8 +4,8 @@ import { isDeepStrictEqual } from "node:util";
 import { z } from "zod";
 import { stableStringify } from "../agents/stable-stringify.js";
 import { sha256File, sha256Hex } from "../infra/crypto-digest.js";
+import { requireDirectorySync, syncDirectory } from "../infra/directory-durability.js";
 import { FsSafeError, root } from "../infra/fs-safe.js";
-import { syncDirectoryBestEffort } from "../infra/sqlite-snapshot.js";
 import {
   loadRestoredAdmissionDescriptor,
   type RestoredAdmissionDescriptor,
@@ -39,6 +39,12 @@ const readyRecordSchema = z
   .strict();
 
 type RestoredAdmissionReadyRecord = z.infer<typeof readyRecordSchema>;
+
+export type RestoredAdmissionStartup = {
+  descriptor: RestoredAdmissionDescriptor;
+  release: () => boolean;
+  complete: typeof completeRestoredAdmission;
+};
 
 class RestoredAdmissionCompletionError extends Error {
   constructor(
@@ -207,7 +213,7 @@ async function writeRecord(filePath: string, value: RestoredAdmissionReadyRecord
   } finally {
     await handle.close();
   }
-  await syncDirectoryBestEffort(path.dirname(filePath));
+  requireDirectorySync(await syncDirectory(path.dirname(filePath)), "Restored-admission journal");
 }
 
 async function readRecordIfPresent(rootPath: string, relativePath: string): Promise<unknown> {

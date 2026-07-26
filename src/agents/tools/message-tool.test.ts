@@ -4,6 +4,7 @@ import { Type } from "typebox";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ChannelMessageAdapterShape } from "../../channels/message/types.js";
 import type { ChannelMessageCapability } from "../../channels/plugins/message-capabilities.js";
+import type { ChannelMessageToolSchemaContribution } from "../../channels/plugins/types.core.js";
 import type { ChannelMessageActionName, ChannelPlugin } from "../../channels/plugins/types.js";
 import {
   mintMessageActionTurnCapability,
@@ -2123,6 +2124,15 @@ describe("message tool schema scoping", () => {
     blurb: "Slack test plugin.",
     actions: ["send", "react"],
     capabilities: ["presentation"],
+    toolSchema: () => [
+      {
+        actions: ["send"],
+        properties: {
+          topLevel: Type.Optional(Type.Boolean()),
+          replyBroadcast: Type.Optional(Type.Boolean()),
+        },
+      },
+    ],
   });
 
   afterEach(() => {
@@ -2238,6 +2248,58 @@ describe("message tool schema scoping", () => {
       expect(properties).toHaveProperty("pollOptionId");
     },
   );
+
+  it("keeps legacy and all-configured schemas but omits explicit current-channel schemas from an unscoped message tool", () => {
+    const telegramWithScopedLocation = createChannelPlugin({
+      id: "telegram",
+      label: "Telegram",
+      docsPath: "/channels/telegram",
+      blurb: "Telegram test plugin.",
+      actions: ["send"],
+      toolSchema: (): ChannelMessageToolSchemaContribution[] => [
+        {
+          actions: ["send"],
+          properties: {
+            pollDurationSeconds: Type.Optional(Type.Number()),
+          },
+          visibility: "all-configured",
+        },
+        {
+          actions: ["send"],
+          properties: {
+            location: Type.Optional(
+              Type.Object({ latitude: Type.Number(), longitude: Type.Number() }),
+            ),
+          },
+          visibility: "current-channel",
+        },
+      ],
+    });
+    setActivePluginRegistry(
+      createTestRegistry([
+        { pluginId: "telegram", source: "test", plugin: telegramWithScopedLocation },
+        { pluginId: "discord", source: "test", plugin: discordPlugin },
+        { pluginId: "slack", source: "test", plugin: slackPlugin },
+      ]),
+    );
+
+    const unscopedProperties = getToolProperties(createMessageTool({ config: {} as never }));
+    const scopedProperties = getToolProperties(
+      createMessageTool({ config: {} as never, currentChannelProvider: "telegram" }),
+    );
+
+    expect(unscopedProperties.location).toMatchObject({ type: "string" });
+    expect(unscopedProperties.pollDurationSeconds).toMatchObject({ type: "number" });
+    expect(unscopedProperties.topLevel).toMatchObject({ type: "boolean" });
+    expect(unscopedProperties.replyBroadcast).toMatchObject({ type: "boolean" });
+    expect(scopedProperties.location).toMatchObject({
+      type: "object",
+      properties: {
+        latitude: { type: "number" },
+        longitude: { type: "number" },
+      },
+    });
+  });
 
   it("includes poll in the action enum when the current channel supports poll actions", () => {
     setActivePluginRegistry(

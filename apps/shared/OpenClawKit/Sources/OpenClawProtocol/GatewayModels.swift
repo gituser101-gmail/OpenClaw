@@ -14502,6 +14502,24 @@ public struct TerminalExitEvent: Codable, Sendable {
     }
 }
 
+public struct PluginApprovalExternalResolution: Codable, Sendable {
+    public let label: String
+    public let decisions: [ApprovalAllowDecision]
+
+    public init(
+        label: String,
+        decisions: [ApprovalAllowDecision])
+    {
+        self.label = label
+        self.decisions = decisions
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case label
+        case decisions
+    }
+}
+
 public struct ExecApprovalPresentation: Codable, Sendable {
     public let kind: String
     public let commandtext: String
@@ -14554,6 +14572,7 @@ public struct PluginApprovalPresentation: Codable, Sendable {
     public let toolname: AnyCodable?
     public let agentid: AnyCodable?
     public let alloweddecisions: [ApprovalDecision]
+    public let externalresolution: PluginApprovalExternalResolution?
 
     public init(
         kind: String,
@@ -14564,7 +14583,8 @@ public struct PluginApprovalPresentation: Codable, Sendable {
         pluginid: AnyCodable? = nil,
         toolname: AnyCodable? = nil,
         agentid: AnyCodable? = nil,
-        alloweddecisions: [ApprovalDecision])
+        alloweddecisions: [ApprovalDecision],
+        externalresolution: PluginApprovalExternalResolution? = nil)
     {
         self.kind = kind
         self.title = title
@@ -14575,6 +14595,7 @@ public struct PluginApprovalPresentation: Codable, Sendable {
         self.toolname = toolname
         self.agentid = agentid
         self.alloweddecisions = alloweddecisions
+        self.externalresolution = externalresolution
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -14587,6 +14608,7 @@ public struct PluginApprovalPresentation: Codable, Sendable {
         case toolname = "toolName"
         case agentid = "agentId"
         case alloweddecisions = "allowedDecisions"
+        case externalresolution = "externalResolution"
     }
 }
 

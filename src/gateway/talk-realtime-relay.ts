@@ -123,7 +123,7 @@ type RelaySession = {
   connId: string;
   context: GatewayRequestContext;
   bridge: RealtimeVoiceBridgeSession;
-  harness: RealtimeVoiceSessionHarness;
+  harness: RealtimeVoiceSessionHarness<unknown, true>;
   sessionKey?: string;
   agentId?: string;
   expiresAtMs: number;
@@ -731,6 +731,7 @@ export function createTalkRealtimeRelaySession(
     throw new Error("Realtime relay session expiry is outside the supported Date range");
   }
   const harness = createRealtimeVoiceSessionHarness({
+    returnEvents: true,
     talk: {
       sessionId: relaySessionId,
       mode: "realtime",
@@ -746,21 +747,24 @@ export function createTalkRealtimeRelaySession(
       inputAudioDelta: (audio) => ({ byteLength: audio.byteLength }),
       outputAudioStarted: () => ({}),
       outputAudioDelta: (audio) => ({ byteLength: audio.byteLength }),
-      outputAudioDone: (reason) => ({ reason }),
+      outputAudioDone: (reason, details) =>
+        details?.markName ? { markName: details.markName } : { reason },
     },
     transcriptLookbackMs: RELAY_TRANSCRIPT_ECHO_LOOKBACK_MS,
     captureBridgeEvents: false,
   });
-  const emit = (event: TalkRealtimeRelayEventPayload, talkEvent?: TalkEventInput) =>
+  const broadcastEvent = (event: TalkRealtimeRelayEventPayload, talkEvent?: TalkEvent) =>
     broadcastToOwner(
       params.context,
       params.connId,
       {
         ...event,
-        ...(talkEvent ? { talkEvent: harness.emit(talkEvent) } : {}),
+        ...(talkEvent ? { talkEvent } : {}),
       },
       relayEventDeliveryOptions(event),
     );
+  const emit = (event: TalkRealtimeRelayEventPayload, talkEvent?: TalkEventInput) =>
+    broadcastEvent(event, talkEvent ? harness.emit(talkEvent) : undefined);
   let currentOutputItemId: string | undefined;
   let currentOutputResponseId: string | undefined;
   let ready = false;
@@ -780,8 +784,12 @@ export function createTalkRealtimeRelaySession(
     audioSink: {
       isOpen: () => Boolean(relayRef.current && relaySessions.has(relayRef.current.id)),
       sendAudio: (audio) => {
-        const turnId = relayRef.current ? ensureRelayTurn(relayRef.current) : undefined;
-        emit(
+        const relay = relayRef.current;
+        const recorded = relay?.harness.recordOutputAudio(audio);
+        if (relay) {
+          broadcastRelayTurnStarted(relay, recorded?.turn.event);
+        }
+        broadcastEvent(
           {
             relaySessionId,
             type: "audio",
@@ -789,36 +797,16 @@ export function createTalkRealtimeRelaySession(
             ...(currentOutputItemId ? { itemId: currentOutputItemId } : {}),
             ...(currentOutputResponseId ? { responseId: currentOutputResponseId } : {}),
           },
-          {
-            type: "output.audio.delta",
-            turnId,
-            payload: { byteLength: audio.length },
-          },
+          recorded?.outputAudioDelta,
         );
       },
       clearAudio: (reason) => {
-        const turnId = relayRef.current ? ensureRelayTurn(relayRef.current) : undefined;
-        emit(
-          { relaySessionId, type: "clear", ...(reason ? { reason } : {}) },
-          {
-            type: "output.audio.done",
-            turnId,
-            payload: { reason: reason ?? "clear" },
-            final: true,
-          },
-        );
+        const talkEvent = relayRef.current?.harness.finishOutputAudio(reason ?? "clear");
+        broadcastEvent({ relaySessionId, type: "clear", ...(reason ? { reason } : {}) }, talkEvent);
       },
       sendMark: (markName) => {
-        const turnId = relayRef.current ? ensureRelayTurn(relayRef.current) : undefined;
-        emit(
-          { relaySessionId, type: "mark", markName },
-          {
-            type: "output.audio.done",
-            turnId,
-            payload: { markName },
-            final: true,
-          },
-        );
+        const talkEvent = relayRef.current?.harness.finishOutputAudio("mark", { markName });
+        broadcastEvent({ relaySessionId, type: "mark", markName }, talkEvent);
       },
     },
     onEvent: (event) => {
@@ -841,16 +829,19 @@ export function createTalkRealtimeRelaySession(
         event.type === "response.done" ||
         event.type === "response.cancelled"
       ) {
-        emit({
-          relaySessionId,
-          type: "audioDone",
-          ...((event.itemId ?? currentOutputItemId)
-            ? { itemId: event.itemId ?? currentOutputItemId }
-            : {}),
-          ...((event.responseId ?? currentOutputResponseId)
-            ? { responseId: event.responseId ?? currentOutputResponseId }
-            : {}),
-        });
+        broadcastEvent(
+          {
+            relaySessionId,
+            type: "audioDone",
+            ...((event.itemId ?? currentOutputItemId)
+              ? { itemId: event.itemId ?? currentOutputItemId }
+              : {}),
+            ...((event.responseId ?? currentOutputResponseId)
+              ? { responseId: event.responseId ?? currentOutputResponseId }
+              : {}),
+          },
+          relayRef.current?.harness.finishOutputAudio(event.type),
+        );
         currentOutputItemId = undefined;
         currentOutputResponseId = undefined;
       }
@@ -1241,16 +1232,21 @@ function submitRealtimeAgentConsultWorkingResponse(
 }
 
 function ensureRelayTurn(session: RelaySession): string {
-  const turn = session.harness.talk.ensureTurn();
-  if (turn.event) {
-    broadcastToOwner(session.context, session.connId, {
-      relaySessionId: session.id,
-      type: "inputAudio",
-      byteLength: 0,
-      talkEvent: turn.event,
-    });
-  }
+  const turn = session.harness.ensureTurn();
+  broadcastRelayTurnStarted(session, turn.event);
   return turn.turnId;
+}
+
+function broadcastRelayTurnStarted(session: RelaySession, event: TalkEvent | undefined): void {
+  if (!event) {
+    return;
+  }
+  broadcastToOwner(session.context, session.connId, {
+    relaySessionId: session.id,
+    type: "inputAudio",
+    byteLength: 0,
+    talkEvent: event,
+  });
 }
 
 function getRelaySession(relaySessionId: string, connId: string): RelaySession {
@@ -1275,17 +1271,17 @@ export function sendTalkRealtimeRelayAudio(params: {
   }
   const session = getRelaySession(params.relaySessionId, params.connId);
   const audio = decodeTalkRelayAudioBase64(params.audioBase64, "Realtime relay");
-  const turnId = ensureRelayTurn(session);
+  const recorded = session.harness.recordInputAudio(audio);
+  if (!recorded) {
+    return;
+  }
+  broadcastRelayTurnStarted(session, recorded.turn.event);
   session.bridge.sendAudio(audio);
   broadcastToOwner(session.context, session.connId, {
     relaySessionId: session.id,
     type: "inputAudio",
     byteLength: audio.byteLength,
-    talkEvent: session.harness.talk.emit({
-      type: "input.audio.delta",
-      turnId,
-      payload: { byteLength: audio.byteLength },
-    }),
+    talkEvent: recorded.inputAudioDelta,
   });
   if (typeof params.timestamp === "number" && Number.isFinite(params.timestamp)) {
     session.bridge.setMediaTimestamp(params.timestamp);

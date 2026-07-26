@@ -2613,9 +2613,9 @@ describe("server-channels auto restart", () => {
 
     await flushMicrotasks();
     expect(reloadSettled).toBe(false);
-    expect(
-      startAccount.mock.calls.filter(([ctx]) => ctx?.accountId === "account-a"),
-    ).toHaveLength(1);
+    expect(startAccount.mock.calls.filter(([ctx]) => ctx?.accountId === "account-a")).toHaveLength(
+      1,
+    );
 
     firstTaskSettled.resolve();
     await reloadStart;
@@ -2629,12 +2629,8 @@ describe("server-channels auto restart", () => {
       "account-b",
       "account-a",
     ]);
-    expect(manager.getRuntimeSnapshot().channelAccounts.discord?.["account-a"]?.running).toBe(
-      true,
-    );
-    expect(manager.getRuntimeSnapshot().channelAccounts.discord?.["account-b"]?.running).toBe(
-      true,
-    );
+    expect(manager.getRuntimeSnapshot().channelAccounts.discord?.["account-a"]?.running).toBe(true);
+    expect(manager.getRuntimeSnapshot().channelAccounts.discord?.["account-b"]?.running).toBe(true);
 
     await manager.stopChannel("discord");
   });

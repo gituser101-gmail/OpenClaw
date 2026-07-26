@@ -11,7 +11,7 @@ import {
   type CronRunCostRollup,
 } from "../../cron/run-cost-rollup.js";
 import type { CronRunLogEntry } from "../../cron/run-log-types.js";
-import type { CronDeliveryPreview, CronJob } from "../../cron/types.js";
+import type { CronJob } from "../../cron/types.js";
 import { parseStrictPositiveInteger } from "../../infra/parse-finite-number.js";
 import { defaultRuntime } from "../../runtime.js";
 import { sleep } from "../../utils/sleep.js";
@@ -28,6 +28,8 @@ import {
   warnIfCronSchedulerDisabled,
 } from "./shared.js";
 
+const CRON_SHOW_PAGE_SIZE = 200;
+const CRON_SHOW_LOOKUP_MAX_PAGES = 50;
 const CRON_RUN_WAIT_TIMEOUT_DEFAULT = "10m";
 const CRON_RUN_WAIT_POLL_INTERVAL_DEFAULT = "2s";
 

@@ -122,6 +122,21 @@ export function resolveNormalizedMessageMarkdown(normalizedMessage: NormalizedMe
     .trim();
 }
 
+export function resolveTranscriptMetadata(message: unknown): Record<string, unknown> | null {
+  if (!message || typeof message !== "object" || Array.isArray(message)) {
+    return null;
+  }
+  const metadata = (message as Record<string, unknown>)["__openclaw"];
+  return metadata && typeof metadata === "object" && !Array.isArray(metadata)
+    ? (metadata as Record<string, unknown>)
+    : null;
+}
+
+export function isOversizedHistoryPlaceholder(message: unknown): boolean {
+  const metadata = resolveTranscriptMetadata(message);
+  return metadata?.truncated === true && metadata.reason === "oversized";
+}
+
 export function resolveMessageActionDetails(params: {
   message: unknown;
   messageId: string;
@@ -130,28 +145,26 @@ export function resolveMessageActionDetails(params: {
   senderLabel: string;
 }): MessageActionDetails | null {
   const { message, messageId: renderMessageId, onOpenSidebar, onReply, senderLabel } = params;
-  const record = message as Record<string, unknown>;
   const normalizedMessage = normalizeMessage(message);
   const normalizedMarkdown = resolveNormalizedMessageMarkdown(normalizedMessage);
   const role = normalizeRoleForGrouping(normalizedMessage.role);
-  const visibleMarkdown =
-    role === "assistant" ? stripThinkingTags(normalizedMarkdown).trim() : normalizedMarkdown.trim();
+  const isOversized = isOversizedHistoryPlaceholder(message);
+  const visibleMarkdown = isOversized
+    ? t("chat.messages.tooLargeToDisplay")
+    : role === "assistant"
+      ? stripThinkingTags(normalizedMarkdown).trim()
+      : normalizedMarkdown.trim();
   const markdown = role === "assistant" ? visibleMarkdown : undefined;
   const replyText = onReply ? truncateUtf16Safe(visibleMarkdown, 500) : "";
   if (!markdown && !replyText) {
     return null;
   }
-  const transcriptMeta =
-    record["__openclaw"] &&
-    typeof record["__openclaw"] === "object" &&
-    !Array.isArray(record["__openclaw"])
-      ? (record["__openclaw"] as Record<string, unknown>)
-      : null;
+  const transcriptMeta = resolveTranscriptMetadata(message);
   const messageId =
     typeof transcriptMeta?.id === "string"
       ? transcriptMeta.id
-      : typeof record.messageId === "string"
-        ? record.messageId
+      : typeof (message as Record<string, unknown>).messageId === "string"
+        ? ((message as Record<string, unknown>).messageId as string)
         : undefined;
   const sourceMessageId = persistedMessageEntryId(message);
   return {
@@ -170,7 +183,7 @@ export function resolveMessageActionDetails(params: {
     shouldFetchFullMessage: Boolean(
       onOpenSidebar &&
       messageId &&
-      !record.openclawMessageToolMirror &&
+      !(message as Record<string, unknown>).openclawMessageToolMirror &&
       (transcriptMeta?.truncated === true || markdown?.includes("\n...(truncated)...")),
     ),
   };

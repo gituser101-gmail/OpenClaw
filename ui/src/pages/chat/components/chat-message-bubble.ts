@@ -40,6 +40,7 @@ import { renderAssistantAttachments } from "./chat-message-attachments.ts";
 import { renderMessageImages, resolveRenderableMessageImages } from "./chat-message-images.ts";
 import {
   detectJson,
+  isOversizedHistoryPlaceholder,
   jsonSummaryLabel,
   renderMarkdownText,
   renderUserMessageMarkdown,
@@ -227,7 +228,12 @@ export function renderGroupedMessage(
   const extractedThinking =
     opts.showReasoning && role === "assistant" ? extractThinkingCached(message) : null;
   const reasoningMarkdown = extractedThinking ? formatReasoningMarkdown(extractedThinking) : null;
-  const markdown = extractedText?.trim() ? extractedText : null;
+  const isOversized = isOversizedHistoryPlaceholder(message);
+  const markdown = isOversized
+    ? t("chat.messages.tooLargeToDisplay")
+    : extractedText?.trim()
+      ? extractedText
+      : null;
   const markdownRenderOptions: MarkdownRenderOptions = {
     assistantTranscriptRoleHeaders: role === "assistant",
     codeBlockChrome: role === "user" ? "none" : "copy",
@@ -438,7 +444,9 @@ export function renderGroupedMessage(
                             <pre class="chat-json-content"><code>${jsonResult.pretty}</code></pre>
                           </details>`
                         : markdown
-                          ? renderMarkdownText(markdown, opts.isStreaming, markdownRenderOptions)
+                          ? isOversized
+                            ? html`<div class="chat-text chat-history-omitted">${markdown}</div>`
+                            : renderMarkdownText(markdown, opts.isStreaming, markdownRenderOptions)
                           : nothing}
                       ${hasToolCards
                         ? singleToolCard && !markdown && !hasImages
@@ -499,9 +507,11 @@ export function renderGroupedMessage(
                   <pre class="chat-json-content"><code>${jsonResult.pretty}</code></pre>
                 </details>`
               : markdown
-                ? normalizedRole === "user"
-                  ? renderUserMessageMarkdown(markdown, messageKey, opts, markdownRenderOptions)
-                  : renderMarkdownText(markdown, opts.isStreaming, markdownRenderOptions)
+                ? isOversized
+                  ? html`<div class="chat-text chat-history-omitted">${markdown}</div>`
+                  : normalizedRole === "user"
+                    ? renderUserMessageMarkdown(markdown, messageKey, opts, markdownRenderOptions)
+                    : renderMarkdownText(markdown, opts.isStreaming, markdownRenderOptions)
                 : nothing}
             ${hasToolCards
               ? renderInlineToolCards(toolCards, {

@@ -4429,5 +4429,59 @@ describe("grouped chat rendering", () => {
     expect(sidebar.kind).toBe("markdown");
     expect(sidebar.fullMessageRequest).toBeUndefined();
   });
+
+  it("renders an oversized history placeholder as a user-facing notice instead of the internal string", () => {
+    const container = document.createElement("div");
+    renderGroupedMessage(
+      container,
+      {
+        role: "user",
+        content: [{ type: "text", text: "[chat.history omitted: message too large]" }],
+        __openclaw: { id: "oversized-user", seq: 1, truncated: true, reason: "oversized" },
+      },
+      "user",
+    );
+
+    expect(container.textContent).not.toContain("[chat.history omitted: message too large]");
+    const notice = container.querySelector(".chat-history-omitted");
+    expect(notice).not.toBeNull();
+    expect(notice!.textContent?.trim()).toBe("This message is too large to display here.");
+  });
+
+  it("renders an oversized assistant placeholder with expand action and hides the internal string", () => {
+    const container = document.createElement("div");
+    const onOpenSidebar = vi.fn();
+    renderAssistantMessage(
+      container,
+      {
+        role: "assistant",
+        content: [{ type: "text", text: "[chat.history omitted: message too large]" }],
+        __openclaw: { id: "oversized-assistant", seq: 1, truncated: true, reason: "oversized" },
+      },
+      {
+        sessionKey: "global",
+        agentId: "work",
+        onOpenSidebar,
+      },
+    );
+
+    expect(container.textContent).not.toContain("[chat.history omitted: message too large]");
+    const notice = container.querySelector(".chat-history-omitted");
+    expect(notice).not.toBeNull();
+    expect(notice!.textContent?.trim()).toBe("This message is too large to display here.");
+
+    const expandButton = container.querySelector<HTMLButtonElement>(".chat-expand-btn");
+    expect(expandButton).toBeInstanceOf(HTMLButtonElement);
+    expandButton!.click();
+
+    const sidebar = requireFirstMockArg(onOpenSidebar, "sidebar open");
+    expect(sidebar.content).toBe("This message is too large to display here.");
+    expect(sidebar.fullMessageRequest).toEqual({
+      sessionKey: "global",
+      agentId: "work",
+      messageId: "oversized-assistant",
+      kind: "assistant_message",
+    });
+  });
 });
 /* oxlint-disable max-lines -- TODO: split this grandfathered oversized file. */

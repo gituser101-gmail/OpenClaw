@@ -1508,7 +1508,7 @@ describe("updateSessionStoreAfterAgentRun", () => {
       await replaceSessionEntry(
         { storePath, sessionKey },
         {
-          ...sessionStore[sessionKey],
+          ...sessionStore[sessionKey]!,
           updatedAt: 2,
           goal: concurrentGoal,
         },

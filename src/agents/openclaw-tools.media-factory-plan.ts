@@ -259,8 +259,13 @@ export function resolveOptionalMediaToolFactoryPlan(params: {
   if (params.config?.plugins?.enabled === false) {
     // Optional media tools are plugin/capability backed. Disabling plugins shuts them off even when
     // stale defaults or env availability would otherwise appear to make a tool available.
+    // Image understanding can still be available via modelHasVision or explicit config,
+    // which do not require plugin snapshots.
+    const imageWhenPluginsDisabled =
+      Boolean(params.agentDir?.trim()) &&
+      (params.modelHasVision === true || hasExplicitImageModelConfig(params.config));
     return {
-      image: false,
+      image: imageWhenPluginsDisabled,
       imageGenerate: false,
       videoGenerate: false,
       musicGenerate: false,

@@ -247,6 +247,79 @@ describe("session catalog Gateway methods", () => {
     expect(hoisted.loadGatewaySessionRow).toHaveBeenCalledTimes(2);
   });
 
+  it("coalesces simultaneous identical catalog requests", async () => {
+    let releaseList!: () => void;
+    const listGate = new Promise<void>((resolve) => {
+      releaseList = resolve;
+    });
+    const list = vi.fn(async () => {
+      await listGate;
+      return [];
+    });
+    hoisted.activeRegistry.sessionCatalogs = [
+      {
+        provider: provider("codex", { list }),
+      },
+    ];
+
+    const first = call("sessions.catalog.list", { search: "same" });
+    const second = call("sessions.catalog.list", {
+      search: "same",
+      progressId: "follower-progress-does-not-change-the-load",
+    });
+    await vi.waitFor(() => expect(list).toHaveBeenCalledTimes(1));
+    releaseList();
+
+    const [firstRespond, secondRespond] = await Promise.all([first, second]);
+    expect(list).toHaveBeenCalledTimes(1);
+    expect(firstRespond).toHaveBeenCalledWith(true, {
+      catalogs: [expect.objectContaining({ id: "codex", hosts: [] })],
+    });
+    expect(secondRespond).toHaveBeenCalledWith(true, {
+      catalogs: [expect.objectContaining({ id: "codex", hosts: [] })],
+    });
+  });
+
+  it("queues distinct catalog requests when admission is saturated", async () => {
+    const releaseList: Array<() => void> = [];
+    const list = vi.fn(async () => {
+      await new Promise<void>((resolve) => {
+        releaseList.push(resolve);
+      });
+      return [];
+    });
+    hoisted.activeRegistry.sessionCatalogs = [
+      {
+        provider: provider("codex", { list }),
+      },
+    ];
+
+    const activeRequests = Array.from({ length: 4 }, (_, index) =>
+      call("sessions.catalog.list", { search: `saturating-${index}` }),
+    );
+
+    try {
+      await vi.waitFor(() => expect(list).toHaveBeenCalledTimes(4));
+
+      const queued = call("sessions.catalog.list", { search: "saturating-queued" });
+      await Promise.resolve();
+
+      expect(list).toHaveBeenCalledTimes(4);
+      releaseList[0]?.();
+      await vi.waitFor(() => expect(list).toHaveBeenCalledTimes(5));
+
+      releaseList.slice(1).forEach((release) => release());
+      const queuedRespond = await queued;
+
+      expect(queuedRespond).toHaveBeenCalledWith(true, {
+        catalogs: [expect.objectContaining({ id: "codex", hosts: [] })],
+      });
+    } finally {
+      releaseList.forEach((release) => release());
+      await Promise.allSettled(activeRequests);
+    }
+  });
+
   it("uses the pinned Gateway catalog runtime after active registry churn", async () => {
     const previousNodesRuntime = gatewaySubagentState.nodes;
     const listNodes = vi.fn(async () => ({ nodes: [] }));

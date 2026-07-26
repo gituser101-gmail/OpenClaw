@@ -5250,9 +5250,11 @@ describe("gateway plugin hot reload handlers", () => {
     );
     expect(startChannel).toHaveBeenCalledWith("telegram", undefined, {
       includeKnownAccounts: true,
+      preserveManualStop: true,
     });
     expect(startChannel).toHaveBeenCalledWith("discord", undefined, {
       includeKnownAccounts: true,
+      preserveManualStop: true,
     });
     expect(startRootCounts).toEqual([1, 1]);
     expect(setState).not.toHaveBeenCalled();
@@ -5592,6 +5594,7 @@ describe("gateway plugin hot reload handlers", () => {
     });
     expect(startChannel).toHaveBeenCalledWith("openclaw-weixin", undefined, {
       includeKnownAccounts: true,
+      preserveManualStop: true,
     });
   });
 
@@ -5767,6 +5770,7 @@ describe("gateway plugin hot reload handlers", () => {
     });
     expect(startChannel).toHaveBeenCalledWith("openclaw-weixin", undefined, {
       includeKnownAccounts: true,
+      preserveManualStop: true,
     });
   });
 
@@ -6156,6 +6160,7 @@ describe("deferred channel reload abort generation", () => {
     });
     expect(channels.start).toHaveBeenCalledWith("whatsapp", undefined, {
       includeKnownAccounts: true,
+      preserveManualStop: true,
     });
   });
 
@@ -6190,6 +6195,7 @@ describe("deferred channel reload abort generation", () => {
     });
     expect(channels.start).toHaveBeenCalledWith("whatsapp", undefined, {
       includeKnownAccounts: true,
+      preserveManualStop: true,
     });
   });
 

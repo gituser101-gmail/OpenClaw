@@ -659,7 +659,7 @@ export function createPluginRuntimeMock(overrides: DeepPartial<PluginRuntime> = 
       ) as unknown as PluginRuntime["system"]["formatNativeDependencyHint"],
     },
     talk: {
-      watch: vi.fn(() => () => {}),
+      onActivity: vi.fn(() => () => {}),
     },
     media: {
       loadWebMedia: vi.fn() as unknown as PluginRuntime["media"]["loadWebMedia"],

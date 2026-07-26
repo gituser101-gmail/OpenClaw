@@ -163,8 +163,9 @@ describe("plugin runtime command execution", () => {
       expected: onSessionTranscriptUpdate,
     },
     {
-      name: "exposes runtime.talk.watch",
-      readValue: (runtime: ReturnType<typeof createPluginRuntime>) => typeof runtime.talk.watch,
+      name: "exposes runtime.talk.onActivity",
+      readValue: (runtime: ReturnType<typeof createPluginRuntime>) =>
+        typeof runtime.talk.onActivity,
       expected: "function",
     },
     {

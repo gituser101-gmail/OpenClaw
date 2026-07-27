@@ -30,6 +30,8 @@ import {
   type SystemAgentVerifiedInferenceDeps,
 } from "./verified-inference.js";
 
+const QR_TEXT = "https://example.test/pair";
+
 const mocks = vi.hoisted(() => ({
   readConfigFileSnapshot: vi.fn(async () => ({
     exists: true,
@@ -728,6 +730,62 @@ describe("SystemAgentChatEngine", () => {
     expect(done.text).toContain("telegram is configured");
     expect(done.question).toBeUndefined();
     expect(wizardRuns).toEqual(["telegram", "token:123:abc", "mode:open"]);
+  });
+
+  it("projects a negotiated QR wizard step as a typed acknowledgement", async () => {
+    let acknowledged: boolean | undefined;
+    const engine = new SystemAgentChatEngine({
+      runAgentTurn: async () => null,
+      planWithAssistant: async () => null,
+      deps: { loadOverview: fakeOverviewLoader() },
+      supportsQrCode: true,
+      runChannelSetupWizard: async (_channel: string, prompter: WizardPrompter) => {
+        acknowledged = await prompter.qrCode?.({
+          title: "Link a device",
+          message: "Scan this QR code, then continue.",
+          text: QR_TEXT,
+        });
+      },
+    });
+
+    const prompt = await engine.handle("connect telegram");
+
+    expect(prompt).toMatchObject({
+      text: expect.stringContaining("Scan this QR code"),
+      wizardInputPending: true,
+      qrDataUrl: expect.stringMatching(/^data:image\/png;base64,/u),
+      question: {
+        id: expect.any(String),
+        header: "Link a device",
+        question: "Scan this QR code, then continue.",
+        options: [{ label: "Continue", recommended: true }],
+        allowSkip: false,
+      },
+    });
+
+    const done = await engine.handle("Continue");
+    expect(done.text).toContain("telegram is configured");
+    expect(done.qrDataUrl).toBeUndefined();
+    expect(acknowledged).toBe(true);
+  });
+
+  it("keeps generic one-option wizard selections prose-only", async () => {
+    const engine = new SystemAgentChatEngine({
+      runAgentTurn: async () => null,
+      planWithAssistant: async () => null,
+      deps: { loadOverview: fakeOverviewLoader() },
+      runChannelSetupWizard: async (_channel: string, prompter: WizardPrompter) => {
+        await prompter.select({
+          message: "Only one route",
+          options: [{ value: "only", label: "Only option" }],
+        });
+      },
+    });
+
+    const prompt = await engine.handle("connect telegram");
+
+    expect(prompt.text).toContain("1. Only option");
+    expect(prompt.question).toBeUndefined();
   });
 
   it("reports hosted channel setup success when audit persistence fails", async () => {

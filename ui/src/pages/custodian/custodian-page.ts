@@ -393,7 +393,11 @@ export class CustodianPage extends OpenClawLightDomElement {
     }
   }
 
-  private appendAssistant(reply: string, question: CustodianStructuredQuestion | null): void {
+  private appendAssistant(
+    reply: string,
+    question: CustodianStructuredQuestion | null,
+    qrDataUrl?: string,
+  ): void {
     this.messages = [
       ...this.messages,
       {
@@ -402,6 +406,7 @@ export class CustodianPage extends OpenClawLightDomElement {
         text: reply,
         at: Date.now(),
         question,
+        ...(qrDataUrl ? { qrDataUrl } : {}),
       },
     ];
   }
@@ -428,11 +433,11 @@ export class CustodianPage extends OpenClawLightDomElement {
       this.sensitive = result.sensitive === true;
       this.wizardInputPending = result.wizardInputPending === true;
       this.retryParams = null;
-      const question = parseCustodianQuestion(result.question);
+      const question = parseCustodianQuestion(result.question, result.qrDataUrl !== undefined);
       // Match regular chat: NO_REPLY is a delivery sentinel, not transcript content.
       const silentReply = SILENT_REPLY_PATTERN.test(result.reply);
-      if (!silentReply || question) {
-        this.appendAssistant(silentReply ? "" : result.reply, question);
+      if (!silentReply || question || result.qrDataUrl) {
+        this.appendAssistant(silentReply ? "" : result.reply, question, result.qrDataUrl);
       }
       if (result.action === "open-agent") {
         let sessionKey = this.context.gateway.snapshot.sessionKey?.trim();
@@ -671,6 +676,7 @@ export class CustodianPage extends OpenClawLightDomElement {
               message,
               boundaryAfterId: this.earlierBoundaryAfterId,
               showQuestion,
+              showQrCode: showQuestion && !this.answeredQuestions.has(questionKey),
               questionDisabled:
                 this.sending || !this.chatAvailable || this.answeredQuestions.has(questionKey),
               onSelect: (label) => this.answerQuestion(message, label),

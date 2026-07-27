@@ -19,6 +19,7 @@ export type CustodianMessage = {
   text: string;
   at: number;
   question: CustodianStructuredQuestion | null;
+  qrDataUrl?: string;
 };
 
 export function hasUnresolvedCustodianQuestion(
@@ -140,6 +141,7 @@ export function renderCustodianTranscriptEntry(params: {
   message: CustodianMessage;
   boundaryAfterId: number | null;
   showQuestion: boolean;
+  showQrCode: boolean;
   questionDisabled: boolean;
   onSelect: (label: string) => void;
   onSkip: () => void;
@@ -153,6 +155,11 @@ export function renderCustodianTranscriptEntry(params: {
           assistantName: t("custodian.title"),
           assistantAvatar: "OC",
         })
+      : nothing}
+    ${params.showQrCode && params.message.qrDataUrl
+      ? html`<div class="custodian__qr-code">
+          <img src=${params.message.qrDataUrl} alt=${t("custodian.setupQrCodeAlt")} />
+        </div>`
       : nothing}
     ${renderCustodianEarlierDivider(params.message, params.boundaryAfterId)}
     ${params.showQuestion && question

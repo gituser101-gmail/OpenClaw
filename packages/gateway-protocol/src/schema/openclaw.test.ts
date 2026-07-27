@@ -5,11 +5,29 @@ import {
   validateSystemAgentSetupVerifyParams,
 } from "../index.js";
 import {
+  SystemAgentChatParamsSchema,
+  SystemAgentChatResultSchema,
   SystemAgentChatQuestionSchema,
   SystemAgentChatHistoryResultSchema,
   SystemAgentSetupDetectResultSchema,
   SystemAgentSetupVerifyResultSchema,
 } from "./openclaw.js";
+import { QR_PNG_DATA_URL_MAX_LENGTH } from "./qr.js";
+
+const QR_DATA_URL =
+  "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
+
+describe("OpenClaw chat params protocol", () => {
+  it("keeps presentation capabilities out of the request shape", () => {
+    expect(Value.Check(SystemAgentChatParamsSchema, { sessionId: "setup-session" })).toBe(true);
+    expect(
+      Value.Check(SystemAgentChatParamsSchema, {
+        sessionId: "setup-session",
+        capabilities: { qrCodePng: true },
+      }),
+    ).toBe(false);
+  });
+});
 
 describe("OpenClaw chat question protocol", () => {
   const question = {
@@ -27,6 +45,59 @@ describe("OpenClaw chat question protocol", () => {
     expect(Value.Check(SystemAgentChatQuestionSchema, { ...question, skipAction: "dismiss" })).toBe(
       false,
     );
+  });
+
+  it("accepts a single non-skippable acknowledgement action", () => {
+    expect(
+      Value.Check(SystemAgentChatQuestionSchema, {
+        ...question,
+        options: [{ label: "Continue" }],
+        allowSkip: false,
+      }),
+    ).toBe(true);
+  });
+});
+
+describe("OpenClaw chat result protocol", () => {
+  const question = {
+    id: "setup-qr",
+    header: "Scan QR code",
+    question: "Scan the code, then continue.",
+    options: [{ label: "Continue" }],
+    allowSkip: false,
+  };
+
+  it("accepts the shared bounded PNG data URL contract", () => {
+    expect(
+      Value.Check(SystemAgentChatResultSchema, {
+        sessionId: "setup-session",
+        reply: "Scan this QR code, then continue.",
+        action: "none",
+        wizardInputPending: true,
+        qrDataUrl: QR_DATA_URL,
+        question,
+      }),
+    ).toBe(true);
+    expect(
+      Value.Check(SystemAgentChatResultSchema, {
+        sessionId: "setup-session",
+        reply: "Scan this QR code, then continue.",
+        action: "none",
+        wizardInputPending: true,
+        qrDataUrl: "not-a-data-url",
+        question,
+      }),
+    ).toBe(false);
+    expect(
+      Value.Check(SystemAgentChatResultSchema, {
+        sessionId: "setup-session",
+        reply: "Scan this QR code, then continue.",
+        action: "none",
+        wizardInputPending: true,
+        qrDataUrl: `data:image/png;base64,${"A".repeat(QR_PNG_DATA_URL_MAX_LENGTH)}`,
+        question,
+      }),
+    ).toBe(false);
   });
 });
 

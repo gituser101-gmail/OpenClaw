@@ -128,6 +128,8 @@ type GatewaySystemAgentSession = {
       text: string;
       action: "none" | "exit" | "open-tui" | "open-setup";
       sensitive?: boolean;
+      wizardInputPending?: boolean;
+      qrDataUrl?: string;
       question?: SystemAgentChatQuestion;
     }>;
     seedHistory: (turns: readonly SystemAgentHistoryTurn[]) => void;
@@ -146,6 +148,8 @@ type GatewaySystemAgentSession = {
   welcomeAuditSequence?: number;
   lastUsedAt: number;
   ownerKey: string;
+  /** QR presentation support negotiated when the session was created. */
+  supportsQrCode: boolean;
   pendingApproval?: { id: string; proposalHash: string };
 };
 

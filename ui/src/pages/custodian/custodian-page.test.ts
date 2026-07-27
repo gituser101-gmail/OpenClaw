@@ -5,6 +5,9 @@ import type { GatewayBrowserClient } from "../../api/gateway.ts";
 import { waitForFast } from "../../test-helpers/wait-for.ts";
 import { createContext, mountPage } from "./custodian-page.test-harness.ts";
 
+const QR_DATA_URL =
+  "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
+
 describe("custodian page", () => {
   beforeEach(() => {
     vi.spyOn(crypto, "randomUUID").mockReturnValue("00000000-0000-4000-8000-000000000001");
@@ -63,7 +66,9 @@ describe("custodian page", () => {
     await waitForFast(() => expect(request).toHaveBeenCalledTimes(2));
     await page.updateComplete;
     expect(request.mock.calls[0]?.[0]).toBe("openclaw.chat");
-    expect(request.mock.calls[0]?.[1]).toMatchObject({ welcomeVariant: "onboarding" });
+    expect(request.mock.calls[0]?.[1]).toMatchObject({
+      welcomeVariant: "onboarding",
+    });
     // The engine receives the parseable reply text; the transcript shows the label.
     expect(request.mock.calls[1]?.[1]).toMatchObject({
       welcomeVariant: "onboarding",
@@ -72,6 +77,50 @@ describe("custodian page", () => {
     const userGroup = page.querySelector<HTMLElement>(".chat-group.user")!;
     expect(userGroup.textContent).toContain("Connect WhatsApp");
     expect(connectOption.disabled).toBe(true);
+  });
+
+  it("renders a setup QR image without exposing its payload text", async () => {
+    const request = vi
+      .fn()
+      .mockResolvedValueOnce({
+        sessionId: "control-ui-onboarding-00000000-0000-4000-8000-000000000001",
+        reply: "Scan this code, then continue.",
+        action: "none",
+        wizardInputPending: true,
+        qrDataUrl: QR_DATA_URL,
+        question: {
+          id: "link-device",
+          header: "Link a device",
+          question: "Scan the QR code, then continue.",
+          options: [{ label: "Continue" }],
+          allowSkip: false,
+        },
+      })
+      .mockResolvedValueOnce({
+        sessionId: "control-ui-onboarding-00000000-0000-4000-8000-000000000001",
+        reply: "Device linked.",
+        action: "none",
+      });
+    const { context } = createContext(request);
+    const { page } = await mountPage(context);
+
+    await waitForFast(() =>
+      expect(page.querySelector<HTMLImageElement>(".custodian__qr-code img")).not.toBeNull(),
+    );
+
+    const image = page.querySelector<HTMLImageElement>(".custodian__qr-code img");
+    expect(image?.getAttribute("src")).toBe(QR_DATA_URL);
+    expect(image?.getAttribute("alt")).toBe("Setup QR code");
+    expect(page.textContent).not.toContain(QR_DATA_URL);
+    expect(page.querySelector(".option-card__skip")).toBeNull();
+
+    page.querySelector<HTMLButtonElement>("[data-option-value]")?.click();
+    await waitForFast(() => expect(request).toHaveBeenCalledTimes(2));
+    await page.updateComplete;
+    expect(page.querySelector(".custodian__qr-code")).toBeNull();
+    expect(request.mock.calls[1]?.[1]).toMatchObject({
+      message: "Continue",
+    });
   });
 
   it("renders advertised durable history before the live welcome with a divider", async () => {

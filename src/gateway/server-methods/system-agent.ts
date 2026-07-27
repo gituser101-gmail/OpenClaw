@@ -1,4 +1,8 @@
 import { randomUUID } from "node:crypto";
+import {
+  GATEWAY_CLIENT_CAPS,
+  hasGatewayClientCap,
+} from "../../../packages/gateway-protocol/src/client-info.js";
 // OpenClaw gateway methods host the setup/repair conversation for clients.
 import {
   buildSystemAgentSessionInvalidatedErrorDetails,
@@ -523,6 +527,21 @@ export const systemAgentHandlers: GatewayRequestHandlers = {
           );
           return;
         }
+        const supportsQrCode = hasGatewayClientCap(
+          client?.connect.caps,
+          GATEWAY_CLIENT_CAPS.SYSTEM_AGENT_QR_CODE,
+        );
+        if (boundSession && !params.reset && boundSession.supportsQrCode !== supportsQrCode) {
+          respond(
+            false,
+            undefined,
+            errorShape(
+              ErrorCodes.INVALID_REQUEST,
+              "OpenClaw client capabilities changed; reset the session to continue.",
+            ),
+          );
+          return;
+        }
         if (params.reset) {
           const existing = sessions.get(sessionId);
           sessions.delete(sessionId);
@@ -565,6 +584,7 @@ export const systemAgentHandlers: GatewayRequestHandlers = {
           // engine's setup path honors this via surface: "gateway".
           const engine = new SystemAgentChatEngine({
             surface: "gateway",
+            supportsQrCode,
             verifiedInference: inference.binding,
             operatorApprovalOnly: params.delegation !== undefined,
           });
@@ -624,6 +644,7 @@ export const systemAgentHandlers: GatewayRequestHandlers = {
               : {}),
             lastUsedAt: Date.now(),
             ownerKey,
+            supportsQrCode,
           };
           sessions.set(sessionId, session);
           if (welcomeOnly) {
@@ -731,6 +752,7 @@ export const systemAgentHandlers: GatewayRequestHandlers = {
               : {}),
             ...(reply.sensitive === true ? { sensitive: true } : {}),
             ...(reply.wizardInputPending === true ? { wizardInputPending: true } : {}),
+            ...(session.supportsQrCode && reply.qrDataUrl ? { qrDataUrl: reply.qrDataUrl } : {}),
             ...(reply.question ? { question: reply.question } : {}),
             ...(proposalId ? { needsApproval: true, proposalId } : {}),
           },

@@ -57,12 +57,20 @@ type WizardDeviceCodeParams = {
   message?: string;
 };
 
+export type WizardQrCodeParams = {
+  title: string;
+  message: string;
+  text: string;
+};
+
 export type WizardPrompter = {
   intro: (title: string) => Promise<void>;
   outro: (message: string) => Promise<void>;
   note: (message: string, title?: string) => Promise<void>;
   /** Present a browser device code as structured UI when the client supports it. */
   deviceCode?: (params: WizardDeviceCodeParams) => Promise<void>;
+  /** Render caller-supplied text as a QR code and wait for acknowledgement. */
+  qrCode?: (params: WizardQrCodeParams) => Promise<boolean>;
   plain?: (message: string) => Promise<void>;
   select: <T>(params: WizardSelectParams<T>) => Promise<T>;
   multiselect: <T>(params: WizardMultiSelectParams<T>) => Promise<T[]>;

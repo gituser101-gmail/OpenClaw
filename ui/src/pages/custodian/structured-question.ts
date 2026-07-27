@@ -4,8 +4,10 @@ export type CustodianStructuredQuestion = {
   id: string;
   header: string;
   question: string;
+  presentation: "choices" | "action";
   options: Array<{ label: string; description?: string; recommended?: boolean; reply?: string }>;
   isOther: boolean;
+  allowSkip: boolean;
   skipAction?: "exit";
 };
 
@@ -16,11 +18,12 @@ function nonEmptyString(value: unknown): string | null {
 /**
  * Sanitize the typed `question` field from `openclaw.chat`. The gateway owns
  * the schema, but this state renders buttons that send messages, so the page
- * still enforces the card contract locally: 2-4 unique options, at most one
+ * still enforces the card contract locally: 1-4 unique options, at most one
  * recommended. Anything else degrades to the prose reply.
  */
 export function parseCustodianQuestion(
   value: SystemAgentChatQuestion | undefined,
+  allowSingleAction = false,
 ): CustodianStructuredQuestion | null {
   if (!value || typeof value !== "object") {
     return null;
@@ -31,7 +34,11 @@ export function parseCustodianQuestion(
   if (!id || !header || !question || !Array.isArray(value.options)) {
     return null;
   }
-  if (value.options.length < 2 || value.options.length > 4) {
+  const minimumOptions = allowSingleAction ? 1 : 2;
+  if (value.options.length < minimumOptions || value.options.length > 4) {
+    return null;
+  }
+  if (value.options.length === 1 && value.allowSkip !== false) {
     return null;
   }
   const options: CustodianStructuredQuestion["options"] = [];
@@ -59,8 +66,10 @@ export function parseCustodianQuestion(
     id,
     header,
     question,
+    presentation: options.length === 1 ? "action" : "choices",
     options,
     isOther: value.isOther === true,
+    allowSkip: value.allowSkip !== false,
     ...(value.skipAction === "exit" ? { skipAction: "exit" as const } : {}),
   };
 }

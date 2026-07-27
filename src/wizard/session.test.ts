@@ -2,6 +2,17 @@
 import { describe, expect, test, vi } from "vitest";
 import { WizardSession } from "./session.js";
 
+const QR_TEXT = "https://example.test/pair";
+const QR_DATA_URL =
+  "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
+const qrImageMocks = vi.hoisted(() => ({
+  renderQrPngDataUrl: vi.fn(async () => QR_DATA_URL),
+}));
+
+vi.mock("../media/qr-image.js", () => ({
+  renderQrPngDataUrl: qrImageMocks.renderQrPngDataUrl,
+}));
+
 function noteRunner() {
   return new WizardSession(async (prompter) => {
     await prompter.note("Welcome");
@@ -104,6 +115,66 @@ describe("WizardSession", () => {
         expiresInMinutes: 15,
         message: "Enter this one-time code in your browser.",
       },
+    });
+  });
+
+  test("renders caller-supplied text as a QR image only for capable hosts", async () => {
+    let acknowledged: boolean | undefined;
+    const supported = new WizardSession(
+      async (prompter) => {
+        acknowledged = await prompter.qrCode?.({
+          title: "Link a device",
+          message: "Scan this QR code, then continue.",
+          text: QR_TEXT,
+        });
+      },
+      { supportsQrCode: true },
+    );
+
+    const prompt = await supported.next();
+    expect(prompt.step).toMatchObject({
+      type: "select",
+      title: "Link a device",
+      message: "Scan this QR code, then continue.",
+      options: [{ value: true, label: "Continue" }],
+      initialValue: true,
+      qrDataUrl: QR_DATA_URL,
+      executor: "client",
+    });
+    expect(qrImageMocks.renderQrPngDataUrl).toHaveBeenCalledWith(QR_TEXT);
+    if (!prompt.step) {
+      throw new Error("expected QR acknowledgement step");
+    }
+    await supported.answer(prompt.step.id, true);
+    expect((await supported.next()).status).toBe("done");
+    expect(acknowledged).toBe(true);
+
+    let unsupportedHasQr = true;
+    const unsupported = new WizardSession(async (prompter) => {
+      unsupportedHasQr = typeof prompter.qrCode === "function";
+    });
+    expect((await unsupported.next()).status).toBe("done");
+    expect(unsupportedHasQr).toBe(false);
+  });
+
+  test("reports QR rendering failures before presenting a wizard step", async () => {
+    qrImageMocks.renderQrPngDataUrl.mockRejectedValueOnce(new Error("QR rendering failed"));
+    const session = new WizardSession(
+      async (prompter) => {
+        await prompter.qrCode?.({
+          title: "Link a device",
+          message: "Scan this QR code, then continue.",
+          text: QR_TEXT,
+        });
+      },
+      { supportsQrCode: true },
+    );
+
+    const result = await session.next();
+    expect(result).toMatchObject({
+      done: true,
+      status: "error",
+      error: expect.stringContaining("QR rendering failed"),
     });
   });
 

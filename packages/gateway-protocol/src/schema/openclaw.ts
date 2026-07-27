@@ -3,6 +3,7 @@ import type { Static } from "typebox";
 import { Type } from "typebox";
 import { closedObject } from "./closed-object.js";
 import { NonEmptyString } from "./primitives.js";
+import { QrPngDataUrlSchema } from "./qr.js";
 import { WizardStartResultSchema } from "./wizard.js";
 
 /**
@@ -50,10 +51,12 @@ export const SystemAgentChatQuestionSchema = closedObject({
       /** Message text a client sends when this option is chosen; defaults to label. */
       reply: Type.Optional(NonEmptyString),
     }),
-    { minItems: 2, maxItems: 4 },
+    { minItems: 1, maxItems: 4 },
   ),
   /** Free-text answers are also accepted for this question. */
   isOther: Type.Optional(Type.Boolean()),
+  /** False omits the visible skip/cancel action. */
+  allowSkip: Type.Optional(Type.Boolean()),
   /** Client-owned action for the visible skip control; omitted means send a reply. */
   skipAction: Type.Optional(Type.Literal("exit")),
 });
@@ -79,6 +82,8 @@ export const SystemAgentChatResultSchema = closedObject({
   agentId: Type.Optional(NonEmptyString),
   needsApproval: Type.Optional(Type.Boolean()),
   proposalId: Type.Optional(NonEmptyString),
+  /** Core-rendered QR image for clients that negotiated presentation support. */
+  qrDataUrl: Type.Optional(QrPngDataUrlSchema),
   question: Type.Optional(SystemAgentChatQuestionSchema),
 });
 

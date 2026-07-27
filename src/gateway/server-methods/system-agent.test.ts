@@ -2,6 +2,7 @@
 
 import { expectDefined } from "@openclaw/normalization-core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { GATEWAY_CLIENT_CAPS } from "../../../packages/gateway-protocol/src/client-info.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import type { SystemAgentApprovalRequestPayload } from "../../infra/system-agent-approvals.js";
 import { getCommandLaneSnapshot } from "../../process/command-queue.js";
@@ -11,6 +12,7 @@ import { defaultRuntime } from "../../runtime.js";
 import { SystemAgentChatEngine } from "../../system-agent/chat-engine.js";
 import { SystemAgentInferenceUnavailableError } from "../../system-agent/inference-error.js";
 import { createSystemAgentVerifiedInferenceTestFixture } from "../../system-agent/system-agent.test-helpers.js";
+import * as verifiedInferenceRuntime from "../../system-agent/verified-inference.js";
 import type {
   SystemAgentVerifiedInferenceBinding,
   SystemAgentVerifiedInferenceDeps,
@@ -55,6 +57,7 @@ const greetingMocks = vi.hoisted(() => ({
 const onboardingWelcomeMocks = vi.hoisted(() => ({
   buildOnboardingWelcome: vi.fn(),
 }));
+const onboardChannelsMocks = vi.hoisted(() => ({ setupChannels: vi.fn() }));
 
 vi.mock("../../system-agent/setup-inference.js", () => ({
   activateSetupInference: setupInferenceMocks.activateSetupInference,
@@ -88,6 +91,11 @@ vi.mock("../../system-agent/greeting.js", async (importOriginal) => {
 vi.mock("../../system-agent/onboarding-welcome.js", () => ({
   buildOnboardingWelcome: onboardingWelcomeMocks.buildOnboardingWelcome,
 }));
+vi.mock("../../commands/onboard-channels.js", () => ({
+  createChannelOnboardingPostWriteHookCollector: () => ({ collect: vi.fn(), drain: () => [] }),
+  runCollectedChannelOnboardingPostWriteHooks: vi.fn(async () => undefined),
+  setupChannels: onboardChannelsMocks.setupChannels,
+}));
 
 type RespondCall = {
   ok: boolean;
@@ -111,6 +119,16 @@ const defaultClient = {
   connId: "conn-test",
   connect: { device: { id: "device-test" } },
 } as GatewayClient;
+
+function clientWithQrSupport(enabled: boolean): GatewayClient {
+  return {
+    ...defaultClient,
+    connect: {
+      ...defaultClient.connect,
+      caps: enabled ? [GATEWAY_CLIENT_CAPS.SYSTEM_AGENT_QR_CODE] : [],
+    },
+  };
+}
 
 const verifiedConfig: OpenClawConfig = {
   agents: { defaults: { model: "openai/gpt-5.5@openai:verified" } },
@@ -183,6 +201,7 @@ function seededSession(overrides?: Partial<SystemAgentChatSession>): SystemAgent
     welcome: "welcome text",
     lastUsedAt: 1,
     ownerKey: "device:device-test",
+    supportsQrCode: false,
     ...overrides,
   };
 }
@@ -224,6 +243,7 @@ beforeEach(async () => {
   onboardingWelcomeMocks.buildOnboardingWelcome.mockReset().mockResolvedValue({
     text: "Inference is ready. Let's finish setup.",
   });
+  onboardChannelsMocks.setupChannels.mockReset();
 });
 
 afterEach(() => {
@@ -511,6 +531,49 @@ describe("openclaw.chat", () => {
     expect(sessions.size).toBe(1);
     expect(firstCall.ok).toBe(true);
     expect(secondCall.ok).toBe(true);
+  });
+
+  it("returns a core-rendered QR only to clients that negotiated support", async () => {
+    vi.spyOn(
+      verifiedInferenceRuntime,
+      "resolveSystemAgentVerifiedInferenceRoute",
+    ).mockResolvedValue(requireVerifiedInferenceFixture().execution);
+    onboardChannelsMocks.setupChannels.mockImplementation(
+      async (cfg: OpenClawConfig, _runtime: unknown, prompter: WizardPrompter) => {
+        await prompter.qrCode?.({
+          title: "Link a device",
+          message: "Scan this QR code, then continue.",
+          text: "https://example.test/pair",
+        });
+        return cfg;
+      },
+    );
+    const sessions = new Map<string, SystemAgentChatSession>();
+    const context = makeContext(sessions);
+
+    const capable = await callChat(
+      context,
+      {
+        sessionId: "qr-capable",
+        message: "connect discord",
+      },
+      clientWithQrSupport(true),
+    );
+    const legacy = await callChat(
+      context,
+      {
+        sessionId: "qr-legacy",
+        message: "connect discord",
+      },
+      clientWithQrSupport(false),
+    );
+
+    expect(capable, JSON.stringify(capable)).toMatchObject({ ok: true });
+    expect(capable.payload).toMatchObject({
+      qrDataUrl: expect.stringMatching(/^data:image\/png;base64,/u),
+      wizardInputPending: true,
+    });
+    expect(legacy.payload).not.toHaveProperty("qrDataUrl");
   });
 
   it("keeps read-only setup detection outside the serialized system-agent lane", async () => {

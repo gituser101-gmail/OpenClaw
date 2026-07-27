@@ -1,10 +1,10 @@
 import { stringifyRouteThreadId } from "../plugin-sdk/channel-route.js";
 import type { BootstrapContextMode } from "./bootstrap-files.js";
 import { normalizeSpawnedRunMetadata } from "./spawned-context.js";
-import { buildSubagentInitialUserMessage } from "./subagent-initial-user-message.js";
-import type { SubagentLaunchAuthorization } from "./subagent-launch-authorization.js";
 import { shouldAnnounceCompletionForInitialChildRun } from "./subagent-announce-target.js";
 import type { SubagentAnnounceTarget } from "./subagent-announce-target.types.js";
+import { buildSubagentInitialUserMessage } from "./subagent-initial-user-message.js";
+import type { SubagentLaunchAuthorization } from "./subagent-launch-authorization.js";
 import { resolveSubagentAgentGatewayTimeoutMs } from "./subagent-spawn-gateway.js";
 import { AGENT_LANE_SUBAGENT } from "./subagent-spawn.runtime.js";
 import type { SpawnSubagentMode } from "./subagent-spawn.types.js";

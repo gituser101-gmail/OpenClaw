@@ -52,6 +52,7 @@ const DEFAULT_TRANSIENT_OUTGOING_IMAGE_TTL_MS = 15 * 60 * 1000;
 const MANAGED_OUTGOING_IMAGE_TICKET_SCOPE = "managed-outgoing-image";
 export const MANAGED_OUTGOING_IMAGE_TICKET_TTL_MS = 5 * 60 * 1000;
 export const MANAGED_OUTGOING_IMAGE_ARTIFACT_ID_PREFIX = "artifact_managed_image_";
+const DEFAULT_MANAGED_IMAGE_THUMBNAIL_MAX_SIDE = 300;
 const MANAGED_OUTGOING_ATTACHMENT_ID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const managedOutgoingImageTicketSecret = randomBytes(32);
@@ -333,7 +334,11 @@ async function deleteAgedOrphanManagedImageFiles(params: {
   return deletedCount;
 }
 
-function buildOutgoingVariantUrl(sessionKey: string, attachmentId: string, variant: "full") {
+function buildOutgoingVariantUrl(
+  sessionKey: string,
+  attachmentId: string,
+  variant: "full" | "thumbnail",
+) {
   return `${OUTGOING_IMAGE_ROUTE_PREFIX}/${encodeURIComponent(sessionKey)}/${attachmentId}/${variant}`;
 }
 
@@ -1223,7 +1228,9 @@ export async function handleManagedOutgoingImageHttpRequest(
   },
 ): Promise<boolean> {
   const requestUrl = new URL(req.url ?? "/", "http://localhost");
-  const match = requestUrl.pathname.match(/^\/api\/chat\/media\/outgoing\/([^/]+)\/([^/]+)\/full$/);
+  const match = requestUrl.pathname.match(
+    /^\/api\/chat\/media\/outgoing\/([^/]+)\/([^/]+)\/(full|thumbnail)$/,
+  );
   if (!match) {
     return false;
   }
@@ -1235,6 +1242,7 @@ export async function handleManagedOutgoingImageHttpRequest(
 
   const encodedSessionKey = match[1];
   const attachmentId = match[2];
+  const variant = match[3] === "thumbnail" ? "thumbnail" : "full";
   if (!encodedSessionKey || !attachmentId) {
     return false;
   }
@@ -1309,9 +1317,6 @@ export async function handleManagedOutgoingImageHttpRequest(
     return true;
   }
 
-  res.statusCode = 200;
-  res.setHeader("content-type", record.original.contentType || "application/octet-stream");
-  res.setHeader("content-length", String(body.byteLength));
   res.setHeader("x-content-type-options", "nosniff");
   res.setHeader("referrer-policy", "no-referrer");
   res.setHeader(
@@ -1320,6 +1325,34 @@ export async function handleManagedOutgoingImageHttpRequest(
       ? `private, max-age=${MANAGED_OUTGOING_IMAGE_TICKET_TTL_MS / 1000}, immutable`
       : "private, max-age=31536000, immutable",
   );
+
+  if (variant === "thumbnail") {
+    try {
+      const thumbnail = await createImageProcessor().encode(body, {
+        format: "png",
+        resize: {
+          maxSide: DEFAULT_MANAGED_IMAGE_THUMBNAIL_MAX_SIDE,
+          enlarge: false,
+        },
+        compressionLevel: 8,
+      });
+      const thumbnailName =
+        safeAttachmentFilename(record.original.filename).replace(/\.[a-z0-9]{2,5}$/iu, "") ||
+        "generated-image";
+      res.statusCode = 200;
+      res.setHeader("content-type", "image/png");
+      res.setHeader("content-length", String(thumbnail.data.byteLength));
+      res.setHeader("content-disposition", `inline; filename="${thumbnailName}-thumbnail.png"`);
+      res.end(thumbnail.data);
+      return true;
+    } catch {
+      // Keep the image available when no thumbnail backend is present.
+    }
+  }
+
+  res.statusCode = 200;
+  res.setHeader("content-type", record.original.contentType || "application/octet-stream");
+  res.setHeader("content-length", String(body.byteLength));
   res.setHeader(
     "content-disposition",
     `inline; filename="${safeAttachmentFilename(record.original.filename)}"`,

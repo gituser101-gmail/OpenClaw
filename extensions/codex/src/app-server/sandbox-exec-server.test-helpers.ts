@@ -180,6 +180,7 @@ export async function readUntilClosed(
   exitCode?: number;
   closed?: boolean;
   nextSeq?: number;
+  failure?: string | null;
 }> {
   let afterSeq = 0;
   const chunks: Array<{ stream: string; chunk: string }> = [];
@@ -194,6 +195,7 @@ export async function readUntilClosed(
       exitCode?: number;
       closed?: boolean;
       nextSeq?: number;
+      failure?: string | null;
     };
     chunks.push(...(read.chunks ?? []));
     afterSeq = Math.max(afterSeq, (read.nextSeq ?? 1) - 1);

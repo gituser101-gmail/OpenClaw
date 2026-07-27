@@ -22,7 +22,7 @@ import type { TelegramContext, TelegramGetChat } from "./bot/types.js";
 import type { TelegramMessageDispatchReplayClaim } from "./message-dispatch-dedupe.js";
 
 export function registerTelegramMessageHandlers(
-  { bot, runtime, shouldSkipUpdate }: RegisterTelegramHandlerParams,
+  { bot, opts, runtime, shouldSkipUpdate }: RegisterTelegramHandlerParams,
   messageRuntime: TelegramHandlerMessageRuntime,
   authorizationRuntime: TelegramHandlerAuthorizationRuntime,
   inboundRuntime: TelegramHandlerInboundRuntime,
@@ -40,6 +40,10 @@ export function registerTelegramMessageHandlers(
   const { authorizeInboundMessage } = authorizationRuntime;
   const { processInboundMessage } = inboundRuntime;
   const getChat: TelegramGetChat = bot.api.getChat.bind(bot.api);
+  // Replayed updates may omit grammY's per-update identity. Keep all message,
+  // edit, and channel-post paths on the bot's authenticated startup identity.
+  const resolveBotUserId = (ctx: { me?: { id: number } }) =>
+    ctx.me?.id ?? opts.botInfo?.id ?? bot.botInfo.id;
   type InboundTelegramEvent = {
     ctxForDedupe: TelegramUpdateKeyContext;
     ctx: TelegramContext;
@@ -247,15 +251,16 @@ export function registerTelegramMessageHandlers(
       getChat,
     });
     const normalizedMsg = withResolvedTelegramForumFlag(msg, isForum);
+    const botUserId = resolveBotUserId(ctx);
     // Bot-authored message updates can be echoed back by Telegram. Skip them here
     // and rely on the dedicated channel_post handler for channel-originated posts.
-    if (normalizedMsg.from?.id != null && normalizedMsg.from.id === ctx.me?.id) {
+    if (normalizedMsg.from?.id != null && normalizedMsg.from.id === botUserId) {
       return;
     }
     await handleInboundMessageLike({
       ctxForDedupe: ctx,
       ctx: buildSyntheticContext(ctx, normalizedMsg),
-      botUserId: ctx.me.id,
+      botUserId,
       msg: normalizedMsg,
       chatId: normalizedMsg.chat.id,
       isGroup,
@@ -279,7 +284,7 @@ export function registerTelegramMessageHandlers(
       ctxForDedupe: ctx,
       msg,
       requireConfiguredGroup: false,
-      botUserId: ctx.me.id,
+      botUserId: resolveBotUserId(ctx),
     });
   });
 
@@ -298,7 +303,7 @@ export function registerTelegramMessageHandlers(
     await handleInboundMessageLike({
       ctxForDedupe: ctx,
       ctx: buildSyntheticContext(ctx, syntheticMsg),
-      botUserId: ctx.me.id,
+      botUserId: resolveBotUserId(ctx),
       msg: syntheticMsg,
       chatId,
       isGroup: true,
@@ -326,7 +331,7 @@ export function registerTelegramMessageHandlers(
       ctxForDedupe: ctx,
       msg: normalizeChannelPostMessage(post),
       requireConfiguredGroup: true,
-      botUserId: ctx.me.id,
+      botUserId: resolveBotUserId(ctx),
     });
   });
 }

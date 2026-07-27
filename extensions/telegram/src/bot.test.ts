@@ -638,6 +638,23 @@ describe("createTelegramBot", () => {
       });
   });
 
+  function createTelegramApprovalBot(
+    approvers: string[] = ["9"],
+    overrides: Record<string, unknown> = {},
+  ) {
+    loadConfig.mockReturnValue({
+      channels: {
+        telegram: {
+          dmPolicy: "open",
+          allowFrom: ["*"],
+          ...overrides,
+          execApprovals: { enabled: true, approvers, target: "dm" },
+        },
+      },
+    });
+    createTelegramBot({ token: "tok" });
+  }
+
   it("starts with retired includeGroupHistoryContext still present in raw config", async () => {
     loadConfig.mockReturnValue({
       messages: { groupChat: { unmentionedInbound: "room_event" } },
@@ -1230,20 +1247,7 @@ describe("createTelegramBot", () => {
     editMessageTextSpy.mockClear();
     resolveExecApprovalSpy.mockClear();
 
-    loadConfig.mockReturnValue({
-      channels: {
-        telegram: {
-          dmPolicy: "open",
-          allowFrom: ["*"],
-          execApprovals: {
-            enabled: true,
-            approvers: ["9"],
-            target: "dm",
-          },
-        },
-      },
-    });
-    createTelegramBot({ token: "tok" });
+    createTelegramApprovalBot();
     const callbackHandler = getTelegramCallbackHandlerForTests();
 
     await callbackHandler(
@@ -1302,22 +1306,7 @@ describe("createTelegramBot", () => {
     editMessageReplyMarkupSpy.mockClear();
     editMessageTextSpy.mockClear();
 
-    loadConfig.mockReturnValue({
-      channels: {
-        telegram: {
-          botToken: "tok",
-          dmPolicy: "open",
-          allowFrom: ["*"],
-          capabilities: ["vision"],
-          execApprovals: {
-            enabled: true,
-            approvers: ["9"],
-            target: "dm",
-          },
-        },
-      },
-    });
-    createTelegramBot({ token: "tok" });
+    createTelegramApprovalBot(["9"], { botToken: "tok", capabilities: ["vision"] });
     const callbackHandler = getTelegramCallbackHandlerForTests();
 
     await callbackHandler(
@@ -1358,20 +1347,7 @@ describe("createTelegramBot", () => {
       },
     });
 
-    loadConfig.mockReturnValue({
-      channels: {
-        telegram: {
-          dmPolicy: "open",
-          allowFrom: ["*"],
-          execApprovals: {
-            enabled: true,
-            approvers: ["9"],
-            target: "dm",
-          },
-        },
-      },
-    });
-    createTelegramBot({ token: "tok" });
+    createTelegramApprovalBot();
     const callbackHandler = getTelegramCallbackHandlerForTests();
     const callbackData = buildTelegramApprovalCallbackData({
       type: "approval",
@@ -1441,20 +1417,7 @@ describe("createTelegramBot", () => {
       },
     });
 
-    loadConfig.mockReturnValue({
-      channels: {
-        telegram: {
-          dmPolicy: "open",
-          allowFrom: ["*"],
-          execApprovals: {
-            enabled: true,
-            approvers: ["9"],
-            target: "dm",
-          },
-        },
-      },
-    });
-    createTelegramBot({ token: "tok" });
+    createTelegramApprovalBot();
     const callbackData = buildTelegramApprovalCallbackData({
       type: "approval",
       approvalId: "fallback-receipt-id",
@@ -1513,20 +1476,7 @@ describe("createTelegramBot", () => {
       handler: pluginHandler as never,
     });
 
-    loadConfig.mockReturnValue({
-      channels: {
-        telegram: {
-          dmPolicy: "open",
-          allowFrom: ["*"],
-          execApprovals: {
-            enabled: true,
-            approvers: ["9"],
-            target: "dm",
-          },
-        },
-      },
-    });
-    createTelegramBot({ token: "tok" });
+    createTelegramApprovalBot();
 
     await getTelegramCallbackHandlerForTests()({
       callbackQuery: {
@@ -1586,20 +1536,7 @@ describe("createTelegramBot", () => {
       },
     });
 
-    loadConfig.mockReturnValue({
-      channels: {
-        telegram: {
-          dmPolicy: "open",
-          allowFrom: ["*"],
-          execApprovals: {
-            enabled: true,
-            approvers: ["9"],
-            target: "dm",
-          },
-        },
-      },
-    });
-    createTelegramBot({ token: "tok" });
+    createTelegramApprovalBot();
 
     await getTelegramCallbackHandlerForTests()({
       callbackQuery: {
@@ -1649,20 +1586,7 @@ describe("createTelegramBot", () => {
       .mockRejectedValueOnce(alreadyResolved)
       .mockRejectedValueOnce(new Error("unknown or expired approval id"));
 
-    loadConfig.mockReturnValue({
-      channels: {
-        telegram: {
-          dmPolicy: "open",
-          allowFrom: ["*"],
-          execApprovals: {
-            enabled: true,
-            approvers: ["9"],
-            target: "dm",
-          },
-        },
-      },
-    });
-    createTelegramBot({ token: "tok" });
+    createTelegramApprovalBot();
 
     await getTelegramCallbackHandlerForTests()({
       callbackQuery: {
@@ -1705,20 +1629,7 @@ describe("createTelegramBot", () => {
       .mockRejectedValueOnce(alreadyResolved)
       .mockRejectedValueOnce(new Error("gateway unavailable"));
 
-    loadConfig.mockReturnValue({
-      channels: {
-        telegram: {
-          dmPolicy: "open",
-          allowFrom: ["*"],
-          execApprovals: {
-            enabled: true,
-            approvers: ["9"],
-            target: "dm",
-          },
-        },
-      },
-    });
-    createTelegramBot({ token: "tok" });
+    createTelegramApprovalBot();
 
     await expect(
       getTelegramCallbackHandlerForTests()({
@@ -1751,20 +1662,7 @@ describe("createTelegramBot", () => {
     resolveExecApprovalSpy.mockClear();
     resolveExecApprovalSpy.mockRejectedValueOnce(new Error("unknown or expired approval id"));
 
-    loadConfig.mockReturnValue({
-      channels: {
-        telegram: {
-          dmPolicy: "open",
-          allowFrom: ["*"],
-          execApprovals: {
-            enabled: true,
-            approvers: ["9"],
-            target: "dm",
-          },
-        },
-      },
-    });
-    createTelegramBot({ token: "tok" });
+    createTelegramApprovalBot();
     const callbackHandler = getTelegramCallbackHandlerForTests();
 
     await callbackHandler(
@@ -1809,20 +1707,7 @@ describe("createTelegramBot", () => {
     editMessageReplyMarkupSpy.mockClear();
     resolveExecApprovalSpy.mockClear();
 
-    loadConfig.mockReturnValue({
-      channels: {
-        telegram: {
-          dmPolicy: "open",
-          allowFrom: ["*"],
-          execApprovals: {
-            enabled: true,
-            approvers: ["9"],
-            target: "dm",
-          },
-        },
-      },
-    });
-    createTelegramBot({ token: "tok" });
+    createTelegramApprovalBot();
     const callbackHandler = getTelegramCallbackHandlerForTests();
 
     await callbackHandler(
@@ -1844,20 +1729,7 @@ describe("createTelegramBot", () => {
     editMessageTextSpy.mockClear();
     resolveExecApprovalSpy.mockClear();
 
-    loadConfig.mockReturnValue({
-      channels: {
-        telegram: {
-          dmPolicy: "open",
-          allowFrom: ["*"],
-          execApprovals: {
-            enabled: true,
-            approvers: ["999"],
-            target: "dm",
-          },
-        },
-      },
-    });
-    createTelegramBot({ token: "tok" });
+    createTelegramApprovalBot(["999"]);
     const callbackHandler = getTelegramCallbackHandlerForTests();
 
     await callbackHandler(
@@ -1881,20 +1753,7 @@ describe("createTelegramBot", () => {
     resolveExecApprovalSpy.mockClear();
     resolveExecApprovalSpy.mockRejectedValueOnce(new Error("gateway secret detail"));
 
-    loadConfig.mockReturnValue({
-      channels: {
-        telegram: {
-          dmPolicy: "open",
-          allowFrom: ["*"],
-          execApprovals: {
-            enabled: true,
-            approvers: ["9"],
-            target: "dm",
-          },
-        },
-      },
-    });
-    createTelegramBot({ token: "tok" });
+    createTelegramApprovalBot();
     const callbackHandler = getTelegramCallbackHandlerForTests();
 
     await expect(
@@ -2025,20 +1884,7 @@ describe("createTelegramBot", () => {
       .mockRejectedValueOnce(new Error("unknown or expired approval id"))
       .mockRejectedValueOnce(new Error("unknown or expired approval id"));
 
-    loadConfig.mockReturnValue({
-      channels: {
-        telegram: {
-          dmPolicy: "open",
-          allowFrom: ["*"],
-          execApprovals: {
-            enabled: true,
-            approvers: ["9"],
-            target: "dm",
-          },
-        },
-      },
-    });
-    createTelegramBot({ token: "tok" });
+    createTelegramApprovalBot();
     const callbackHandler = getTelegramCallbackHandlerForTests();
 
     await callbackHandler(
@@ -6272,223 +6118,108 @@ describe("createTelegramBot", () => {
     expect(enqueueSystemEventSpy).toHaveBeenCalledTimes(expectedEnqueueCalls);
   });
 
-  it("skips reaction when reactionNotifications is off", async () => {
-    onSpy.mockClear();
-    enqueueSystemEventSpy.mockClear();
-    wasSentByBot.mockReturnValue(true);
-
-    loadConfig.mockReturnValue({
-      channels: {
-        telegram: { dmPolicy: "open", reactionNotifications: "off" },
-      },
-    });
-
-    createTelegramBot({ token: "tok" });
-    const handler = getOnHandler("message_reaction") as (
-      ctx: Record<string, unknown>,
-    ) => Promise<void>;
-
-    await handler({
-      update: { update_id: 501 },
-      messageReaction: {
-        chat: { id: 1234, type: "private" },
-        message_id: 42,
-        user: { id: 9, first_name: "Ada" },
-        date: 1736380800,
-        old_reaction: [],
-        new_reaction: [{ type: "emoji", emoji: THUMBS_UP_EMOJI }],
-      },
-    });
-
-    expect(enqueueSystemEventSpy).not.toHaveBeenCalled();
-  });
-
-  it("defaults reactionNotifications to own", async () => {
-    onSpy.mockClear();
-    enqueueSystemEventSpy.mockClear();
-    wasSentByBot.mockReturnValue(true);
-
-    loadConfig.mockReturnValue({
-      channels: {
-        telegram: { dmPolicy: "open", allowFrom: ["*"] },
-      },
-    });
-
-    createTelegramBot({ token: "tok" });
-    const handler = getOnHandler("message_reaction") as (
-      ctx: Record<string, unknown>,
-    ) => Promise<void>;
-
-    await handler({
-      update: { update_id: 502 },
-      messageReaction: {
-        chat: { id: 1234, type: "private" },
-        message_id: 43,
-        user: { id: 9, first_name: "Ada" },
-        date: 1736380800,
-        old_reaction: [],
-        new_reaction: [{ type: "emoji", emoji: THUMBS_UP_EMOJI }],
-      },
-    });
-
-    expect(enqueueSystemEventSpy).toHaveBeenCalledTimes(1);
-  });
-
-  it("allows reaction in all mode regardless of message sender", async () => {
-    onSpy.mockClear();
-    enqueueSystemEventSpy.mockClear();
-    wasSentByBot.mockReturnValue(false);
-
-    loadConfig.mockReturnValue({
-      channels: {
-        telegram: { dmPolicy: "open", allowFrom: ["*"], reactionNotifications: "all" },
-      },
-    });
-
-    createTelegramBot({ token: "tok" });
-    const handler = getOnHandler("message_reaction") as (
-      ctx: Record<string, unknown>,
-    ) => Promise<void>;
-
-    await handler({
-      update: { update_id: 503 },
-      messageReaction: {
-        chat: { id: 1234, type: "private" },
+  it.each([
+    {
+      name: "skips reaction when reactionNotifications is off",
+      updateId: 501,
+      channelConfig: { dmPolicy: "open", reactionNotifications: "off" },
+      sentByBot: true,
+      expectedEnqueueCalls: 0,
+    },
+    {
+      name: "defaults reactionNotifications to own",
+      updateId: 502,
+      channelConfig: { dmPolicy: "open", allowFrom: ["*"] },
+      sentByBot: true,
+      reaction: { message_id: 43 },
+      expectedEnqueueCalls: 1,
+    },
+    {
+      name: "allows reaction in all mode regardless of message sender",
+      updateId: 503,
+      channelConfig: { dmPolicy: "open", allowFrom: ["*"], reactionNotifications: "all" },
+      sentByBot: false,
+      reaction: {
         message_id: 99,
-        user: { id: 9, first_name: "Ada" },
-        date: 1736380800,
-        old_reaction: [],
         new_reaction: [{ type: "emoji", emoji: PARTY_EMOJI }],
       },
-    });
-
-    expect(enqueueSystemEventSpy).toHaveBeenCalledTimes(1);
-    expect(firstSystemEventArg(0)).toBe(`Telegram reaction added: ${PARTY_EMOJI} by Ada on msg 99`);
-    expect(firstSystemEventArg(1)).toBeTypeOf("object");
-  });
-
-  it("skips reaction in own mode when message is not sent by bot", async () => {
-    onSpy.mockClear();
-    enqueueSystemEventSpy.mockClear();
-    wasSentByBot.mockReturnValue(false);
-
-    loadConfig.mockReturnValue({
-      channels: {
-        telegram: { dmPolicy: "open", allowFrom: ["*"], reactionNotifications: "own" },
-      },
-    });
-
-    createTelegramBot({ token: "tok" });
-    const handler = getOnHandler("message_reaction") as (
-      ctx: Record<string, unknown>,
-    ) => Promise<void>;
-
-    await handler({
-      update: { update_id: 503 },
-      messageReaction: {
-        chat: { id: 1234, type: "private" },
+      expectedEnqueueCalls: 1,
+      expectedMessage: `Telegram reaction added: ${PARTY_EMOJI} by Ada on msg 99`,
+    },
+    {
+      name: "skips reaction in own mode when message is not sent by bot",
+      updateId: 503,
+      channelConfig: { dmPolicy: "open", allowFrom: ["*"], reactionNotifications: "own" },
+      sentByBot: false,
+      reaction: {
         message_id: 99,
-        user: { id: 9, first_name: "Ada" },
-        date: 1736380800,
-        old_reaction: [],
         new_reaction: [{ type: "emoji", emoji: PARTY_EMOJI }],
       },
-    });
-
-    expect(enqueueSystemEventSpy).not.toHaveBeenCalled();
-  });
-
-  it("allows reaction in own mode when message is sent by bot", async () => {
-    onSpy.mockClear();
-    enqueueSystemEventSpy.mockClear();
-    wasSentByBot.mockReturnValue(true);
-
-    loadConfig.mockReturnValue({
-      channels: {
-        telegram: { dmPolicy: "open", allowFrom: ["*"], reactionNotifications: "own" },
-      },
-    });
-
-    createTelegramBot({ token: "tok" });
-    const handler = getOnHandler("message_reaction") as (
-      ctx: Record<string, unknown>,
-    ) => Promise<void>;
-
-    await handler({
-      update: { update_id: 503 },
-      messageReaction: {
-        chat: { id: 1234, type: "private" },
+      expectedEnqueueCalls: 0,
+    },
+    {
+      name: "allows reaction in own mode when message is sent by bot",
+      updateId: 503,
+      channelConfig: { dmPolicy: "open", allowFrom: ["*"], reactionNotifications: "own" },
+      sentByBot: true,
+      reaction: {
         message_id: 99,
-        user: { id: 9, first_name: "Ada" },
-        date: 1736380800,
-        old_reaction: [],
         new_reaction: [{ type: "emoji", emoji: PARTY_EMOJI }],
       },
-    });
-
-    expect(enqueueSystemEventSpy).toHaveBeenCalledTimes(1);
-  });
-
-  it("skips reaction from bot users", async () => {
-    onSpy.mockClear();
-    enqueueSystemEventSpy.mockClear();
-    wasSentByBot.mockReturnValue(true);
-
-    loadConfig.mockReturnValue({
-      channels: {
-        telegram: { dmPolicy: "open", allowFrom: ["*"], reactionNotifications: "all" },
-      },
-    });
-
-    createTelegramBot({ token: "tok" });
-    const handler = getOnHandler("message_reaction") as (
-      ctx: Record<string, unknown>,
-    ) => Promise<void>;
-
-    await handler({
-      update: { update_id: 503 },
-      messageReaction: {
-        chat: { id: 1234, type: "private" },
+      expectedEnqueueCalls: 1,
+    },
+    {
+      name: "skips reaction from bot users",
+      updateId: 503,
+      channelConfig: { dmPolicy: "open", allowFrom: ["*"], reactionNotifications: "all" },
+      sentByBot: true,
+      reaction: {
         message_id: 99,
         user: { id: 9, first_name: "Bot", is_bot: true },
-        date: 1736380800,
-        old_reaction: [],
         new_reaction: [{ type: "emoji", emoji: PARTY_EMOJI }],
       },
-    });
-
-    expect(enqueueSystemEventSpy).not.toHaveBeenCalled();
-  });
-
-  it("skips reaction removal (only processes added reactions)", async () => {
-    onSpy.mockClear();
-    enqueueSystemEventSpy.mockClear();
-
-    loadConfig.mockReturnValue({
-      channels: {
-        telegram: { dmPolicy: "open", allowFrom: ["*"], reactionNotifications: "all" },
-      },
-    });
-
-    createTelegramBot({ token: "tok" });
-    const handler = getOnHandler("message_reaction") as (
-      ctx: Record<string, unknown>,
-    ) => Promise<void>;
-
-    await handler({
-      update: { update_id: 504 },
-      messageReaction: {
-        chat: { id: 1234, type: "private" },
-        message_id: 42,
-        user: { id: 9, first_name: "Ada" },
-        date: 1736380800,
+      expectedEnqueueCalls: 0,
+    },
+    {
+      name: "skips reaction removal (only processes added reactions)",
+      updateId: 504,
+      channelConfig: { dmPolicy: "open", allowFrom: ["*"], reactionNotifications: "all" },
+      sentByBot: true,
+      reaction: {
         old_reaction: [{ type: "emoji", emoji: THUMBS_UP_EMOJI }],
         new_reaction: [],
       },
-    });
+      expectedEnqueueCalls: 0,
+    },
+    {
+      name: "blocks reaction in own mode when cache is warm and message not sent by bot",
+      updateId: 601,
+      channelConfig: { dmPolicy: "open", reactionNotifications: "own" },
+      sentByBot: false,
+      reaction: { message_id: 99 },
+      expectedEnqueueCalls: 0,
+    },
+  ])(
+    "$name",
+    async ({ updateId, channelConfig, sentByBot, reaction, expectedEnqueueCalls, ...expected }) => {
+      onSpy.mockClear();
+      enqueueSystemEventSpy.mockClear();
+      wasSentByBot.mockReturnValue(sentByBot);
+      loadConfig.mockReturnValue({ channels: { telegram: channelConfig } });
+      createTelegramBot({ token: "tok" });
 
-    expect(enqueueSystemEventSpy).not.toHaveBeenCalled();
-  });
+      const handler = getOnHandler("message_reaction") as (
+        ctx: Record<string, unknown>,
+      ) => Promise<void>;
+      await handler(createTelegramReactionContext({ updateId, reaction }));
+
+      expect(enqueueSystemEventSpy).toHaveBeenCalledTimes(expectedEnqueueCalls);
+      if ("expectedMessage" in expected && expected.expectedMessage) {
+        expect(firstSystemEventArg(0)).toBe(expected.expectedMessage);
+        expect(firstSystemEventArg(1)).toBeTypeOf("object");
+      }
+    },
+  );
 
   it("enqueues one event per added emoji reaction", async () => {
     onSpy.mockClear();
@@ -6528,147 +6259,68 @@ describe("createTelegramBot", () => {
     ]);
   });
 
-  it("routes forum group reactions to the general topic (thread id not available on reactions)", async () => {
-    onSpy.mockClear();
-    enqueueSystemEventSpy.mockClear();
-
-    loadConfig.mockReturnValue({
-      channels: {
-        telegram: { dmPolicy: "open", reactionNotifications: "all" },
-      },
-    });
-
-    createTelegramBot({ token: "tok" });
-    const handler = getOnHandler("message_reaction") as (
-      ctx: Record<string, unknown>,
-    ) => Promise<void>;
-
-    // MessageReactionUpdated does not include message_thread_id in the Bot API,
-    // so forum reactions always route to the general topic (1).
-    await handler({
-      update: { update_id: 505 },
-      messageReaction: {
+  // The Bot API omits thread metadata on reaction updates, so forum reactions
+  // must use the General topic while regular groups remain unthreaded.
+  it.each([
+    {
+      name: "routes forum group reactions to the general topic (thread id not available on reactions)",
+      updateId: 505,
+      reaction: {
         chat: { id: 5678, type: "supergroup", is_forum: true },
         message_id: 100,
         user: { id: 10, first_name: "Bob", username: "bob_user" },
-        date: 1736380800,
-        old_reaction: [],
         new_reaction: [{ type: "emoji", emoji: FIRE_EMOJI }],
       },
-    });
-
-    expect(enqueueSystemEventSpy).toHaveBeenCalledTimes(1);
-    expect(firstSystemEventArg(0)).toBe(
-      `Telegram reaction added: ${FIRE_EMOJI} by Bob (@bob_user) on msg 100`,
-    );
-    expect(String(systemEventOptions().sessionKey)).toContain("telegram:group:5678:topic:1");
-    expect(String(systemEventOptions().contextKey)).toContain("telegram:reaction:add:5678:100:10");
-  });
-
-  it("uses correct session key for forum group reactions in general topic", async () => {
-    onSpy.mockClear();
-    enqueueSystemEventSpy.mockClear();
-
-    loadConfig.mockReturnValue({
-      channels: {
-        telegram: { dmPolicy: "open", reactionNotifications: "all" },
-      },
-    });
-
-    createTelegramBot({ token: "tok" });
-    const handler = getOnHandler("message_reaction") as (
-      ctx: Record<string, unknown>,
-    ) => Promise<void>;
-
-    await handler({
-      update: { update_id: 506 },
-      messageReaction: {
+      message: `Telegram reaction added: ${FIRE_EMOJI} by Bob (@bob_user) on msg 100`,
+      session: "telegram:group:5678:topic:1",
+      context: "telegram:reaction:add:5678:100:10",
+    },
+    {
+      name: "uses correct session key for forum group reactions in general topic",
+      updateId: 506,
+      reaction: {
         chat: { id: 5678, type: "supergroup", is_forum: true },
         message_id: 101,
-        // No message_thread_id - should default to general topic (1)
         user: { id: 10, first_name: "Bob" },
-        date: 1736380800,
-        old_reaction: [],
         new_reaction: [{ type: "emoji", emoji: EYES_EMOJI }],
       },
-    });
-
-    expect(enqueueSystemEventSpy).toHaveBeenCalledTimes(1);
-    expect(firstSystemEventArg(0)).toBe(`Telegram reaction added: ${EYES_EMOJI} by Bob on msg 101`);
-    expect(String(systemEventOptions().sessionKey)).toContain("telegram:group:5678:topic:1");
-    expect(String(systemEventOptions().contextKey)).toContain("telegram:reaction:add:5678:101:10");
-  });
-
-  it("uses correct session key for regular group reactions without topic", async () => {
-    onSpy.mockClear();
-    enqueueSystemEventSpy.mockClear();
-
-    loadConfig.mockReturnValue({
-      channels: {
-        telegram: { dmPolicy: "open", reactionNotifications: "all" },
-      },
-    });
-
-    createTelegramBot({ token: "tok" });
-    const handler = getOnHandler("message_reaction") as (
-      ctx: Record<string, unknown>,
-    ) => Promise<void>;
-
-    await handler({
-      update: { update_id: 507 },
-      messageReaction: {
+      message: `Telegram reaction added: ${EYES_EMOJI} by Bob on msg 101`,
+      session: "telegram:group:5678:topic:1",
+      context: "telegram:reaction:add:5678:101:10",
+    },
+    {
+      name: "uses correct session key for regular group reactions without topic",
+      updateId: 507,
+      reaction: {
         chat: { id: 9999, type: "group" },
         message_id: 200,
         user: { id: 11, first_name: "Charlie" },
-        date: 1736380800,
-        old_reaction: [],
         new_reaction: [{ type: "emoji", emoji: HEART_EMOJI }],
       },
-    });
-
-    expect(enqueueSystemEventSpy).toHaveBeenCalledTimes(1);
-    expect(firstSystemEventArg(0)).toBe(
-      `Telegram reaction added: ${HEART_EMOJI} by Charlie on msg 200`,
-    );
-    expect(String(systemEventOptions().sessionKey)).toContain("telegram:group:9999");
-    expect(String(systemEventOptions().contextKey)).toContain("telegram:reaction:add:9999:200:11");
-    // Verify session key does NOT contain :topic:
-    const eventOptions = firstSystemEventArg(1) as {
-      sessionKey?: string;
-    };
-    const sessionKey = eventOptions.sessionKey ?? "";
-    expect(sessionKey).not.toContain(":topic:");
-  });
-
-  it("blocks reaction in own mode when cache is warm and message not sent by bot", async () => {
+      message: `Telegram reaction added: ${HEART_EMOJI} by Charlie on msg 200`,
+      session: "telegram:group:9999",
+      context: "telegram:reaction:add:9999:200:11",
+    },
+  ])("$name", async ({ updateId, reaction, message, session, context }) => {
     onSpy.mockClear();
     enqueueSystemEventSpy.mockClear();
-    wasSentByBot.mockReturnValue(false);
-
     loadConfig.mockReturnValue({
-      channels: {
-        telegram: { dmPolicy: "open", reactionNotifications: "own" },
-      },
+      channels: { telegram: { dmPolicy: "open", reactionNotifications: "all" } },
     });
-
     createTelegramBot({ token: "tok" });
     const handler = getOnHandler("message_reaction") as (
       ctx: Record<string, unknown>,
     ) => Promise<void>;
 
-    await handler({
-      update: { update_id: 601 },
-      messageReaction: {
-        chat: { id: 1234, type: "private" },
-        message_id: 99,
-        user: { id: 9, first_name: "Ada" },
-        date: 1736380800,
-        old_reaction: [],
-        new_reaction: [{ type: "emoji", emoji: THUMBS_UP_EMOJI }],
-      },
-    });
+    await handler(createTelegramReactionContext({ updateId, reaction }));
 
-    expect(enqueueSystemEventSpy).not.toHaveBeenCalled();
+    expect(enqueueSystemEventSpy).toHaveBeenCalledTimes(1);
+    expect(firstSystemEventArg(0)).toBe(message);
+    expect(String(systemEventOptions().sessionKey)).toContain(session);
+    expect(String(systemEventOptions().contextKey)).toContain(context);
+    if (!reaction.chat.is_forum) {
+      expect(String(systemEventOptions().sessionKey)).not.toContain(":topic:");
+    }
   });
 });
 /* oxlint-disable max-lines -- TODO: split this grandfathered oversized file. */

@@ -619,180 +619,126 @@ describe("matrix monitor handler pairing account scope", () => {
     expect(enqueueSystemEvent).not.toHaveBeenCalled();
   });
 
-  it("drops room messages from configured Matrix bot accounts when allowBots is off", async () => {
-    const { handler, recordInboundSession } = createMatrixHandlerTestHarness({
-      isDirectMessage: false,
-      configuredBotUserIds: new Set(["@ops:example.org"]),
-      roomsConfig: {
-        "!room:example.org": { requireMention: false },
-      },
-      getMemberDisplayName: async () => "ops-bot",
-    });
-
-    await handler(
-      "!room:example.org",
-      createMatrixTextMessageEvent({
-        eventId: "$bot-off",
-        sender: "@ops:example.org",
-        body: "hello from bot",
-      }),
-    );
-
-    expect(recordInboundSession).not.toHaveBeenCalled();
-  });
-
-  it("accepts room messages from configured Matrix bot accounts when allowBots is true", async () => {
-    const { handler, recordInboundSession, runPrepared } = createMatrixHandlerTestHarness({
-      isDirectMessage: false,
+  type MatrixBotPolicyCase = {
+    name: string;
+    eventId: string;
+    accepted: boolean;
+    accountAllowBots?: boolean | "mentions";
+    sender?: string;
+    directMessage?: boolean;
+    mention?: boolean;
+    roomDeniesBots?: boolean;
+    verifyBotLoopProtection?: boolean;
+  };
+  const matrixBotPolicyCases: MatrixBotPolicyCase[] = [
+    {
+      name: "drops room messages from configured Matrix bot accounts when allowBots is off",
+      eventId: "$bot-off",
+      accepted: false,
+    },
+    {
+      name: "accepts room messages from configured Matrix bot accounts when allowBots is true",
+      eventId: "$bot-on",
+      accepted: true,
       accountAllowBots: true,
-      accountConfig: { botLoopProtection: { windowSeconds: 120, cooldownSeconds: 240 } },
-      configuredBotUserIds: new Set(["@ops:example.org"]),
-      roomsConfig: {
-        "!room:example.org": {
-          requireMention: false,
-          botLoopProtection: { maxEventsPerWindow: 3 },
-        },
-      },
-      getMemberDisplayName: async () => "ops-bot",
-    });
-
-    await handler(
-      "!room:example.org",
-      createMatrixTextMessageEvent({
-        eventId: "$bot-on",
-        sender: "@ops:example.org",
-        body: "hello from bot",
-        originServerTs: 123_456,
-      }),
-    );
-
-    expect(recordInboundSession).toHaveBeenCalled();
-    expect(runPrepared.mock.calls[0]?.[0].ctxPayload.GroupRequireMention).toBe(false);
-    expect(runPrepared.mock.calls[0]?.[0].botLoopProtection).toEqual({
-      scopeId: "ops",
-      conversationId: "!room:example.org",
-      senderId: "@ops:example.org",
-      receiverId: "@bot:example.org",
-      config: { maxEventsPerWindow: 3, windowSeconds: 120, cooldownSeconds: 240 },
-      defaultsConfig: undefined,
-      defaultEnabled: true,
-      nowMs: 123_456,
-    });
-  });
-
-  it("does not treat unconfigured Matrix users as bots when allowBots is off", async () => {
-    const { handler, resolveAgentRoute, recordInboundSession } = createMatrixHandlerTestHarness({
-      isDirectMessage: false,
-      configuredBotUserIds: new Set(["@ops:example.org"]),
-      roomsConfig: {
-        "!room:example.org": { requireMention: false },
-      },
-      getMemberDisplayName: async () => "human",
-    });
-
-    await handler(
-      "!room:example.org",
-      createMatrixTextMessageEvent({
-        eventId: "$non-bot",
-        sender: "@alice:example.org",
-        body: "hello from human",
-      }),
-    );
-
-    expect(resolveAgentRoute).toHaveBeenCalled();
-    expect(recordInboundSession).toHaveBeenCalled();
-  });
-
-  it('drops configured Matrix bot room messages without a mention when allowBots="mentions"', async () => {
-    const { handler, recordInboundSession } = createMatrixHandlerTestHarness({
-      isDirectMessage: false,
+      verifyBotLoopProtection: true,
+    },
+    {
+      name: "does not treat unconfigured Matrix users as bots when allowBots is off",
+      eventId: "$non-bot",
+      accepted: true,
+      sender: "@alice:example.org",
+    },
+    {
+      name: 'drops configured Matrix bot room messages without a mention when allowBots="mentions"',
+      eventId: "$bot-mentions-off",
+      accepted: false,
       accountAllowBots: "mentions",
-      configuredBotUserIds: new Set(["@ops:example.org"]),
-      roomsConfig: {
-        "!room:example.org": { requireMention: false },
-      },
-      mentionRegexes: [/@bot/i],
-      getMemberDisplayName: async () => "ops-bot",
-    });
-
-    await handler(
-      "!room:example.org",
-      createMatrixTextMessageEvent({
-        eventId: "$bot-mentions-off",
-        sender: "@ops:example.org",
-        body: "hello from bot",
-      }),
-    );
-
-    expect(recordInboundSession).not.toHaveBeenCalled();
-  });
-
-  it('accepts configured Matrix bot room messages with a mention when allowBots="mentions"', async () => {
-    const { handler, recordInboundSession } = createMatrixHandlerTestHarness({
-      isDirectMessage: false,
+    },
+    {
+      name: 'accepts configured Matrix bot room messages with a mention when allowBots="mentions"',
+      eventId: "$bot-mentions-on",
+      accepted: true,
       accountAllowBots: "mentions",
-      configuredBotUserIds: new Set(["@ops:example.org"]),
-      roomsConfig: {
-        "!room:example.org": { requireMention: false },
-      },
-      mentionRegexes: [/@bot/i],
-      getMemberDisplayName: async () => "ops-bot",
-    });
-
-    await handler(
-      "!room:example.org",
-      createMatrixTextMessageEvent({
-        eventId: "$bot-mentions-on",
-        sender: "@ops:example.org",
-        body: "hello @bot",
-        mentions: { user_ids: ["@bot:example.org"] },
-      }),
-    );
-
-    expect(recordInboundSession).toHaveBeenCalled();
-  });
-
-  it('accepts configured Matrix bot DMs without a mention when allowBots="mentions"', async () => {
-    const { handler, recordInboundSession } = createMatrixHandlerTestHarness({
-      isDirectMessage: true,
+      mention: true,
+    },
+    {
+      name: 'accepts configured Matrix bot DMs without a mention when allowBots="mentions"',
+      eventId: "$bot-dm-mentions",
+      accepted: true,
       accountAllowBots: "mentions",
-      configuredBotUserIds: new Set(["@ops:example.org"]),
-      getMemberDisplayName: async () => "ops-bot",
-    });
-
-    await handler(
-      "!dm:example.org",
-      createMatrixTextMessageEvent({
-        eventId: "$bot-dm-mentions",
-        sender: "@ops:example.org",
-        body: "hello from dm bot",
-      }),
-    );
-
-    expect(recordInboundSession).toHaveBeenCalled();
-  });
-
-  it("lets room-level allowBots override a permissive account default", async () => {
-    const { handler, recordInboundSession } = createMatrixHandlerTestHarness({
-      isDirectMessage: false,
+      directMessage: true,
+    },
+    {
+      name: "lets room-level allowBots override a permissive account default",
+      eventId: "$bot-room-override",
+      accepted: false,
       accountAllowBots: true,
-      configuredBotUserIds: new Set(["@ops:example.org"]),
-      roomsConfig: {
-        "!room:example.org": { requireMention: false, allowBots: false },
-      },
-      getMemberDisplayName: async () => "ops-bot",
-    });
+      roomDeniesBots: true,
+    },
+  ];
+
+  it.each(matrixBotPolicyCases)("$name", async (testCase) => {
+    const { handler, recordInboundSession, resolveAgentRoute, runPrepared } =
+      createMatrixHandlerTestHarness({
+        isDirectMessage: testCase.directMessage ?? false,
+        ...(testCase.accountAllowBots !== undefined && {
+          accountAllowBots: testCase.accountAllowBots,
+        }),
+        ...(testCase.verifyBotLoopProtection && {
+          accountConfig: { botLoopProtection: { windowSeconds: 120, cooldownSeconds: 240 } },
+        }),
+        configuredBotUserIds: new Set(["@ops:example.org"]),
+        ...(!testCase.directMessage && {
+          roomsConfig: {
+            "!room:example.org": {
+              requireMention: false,
+              ...(testCase.roomDeniesBots && { allowBots: false }),
+              ...(testCase.verifyBotLoopProtection && {
+                botLoopProtection: { maxEventsPerWindow: 3 },
+              }),
+            },
+          },
+        }),
+        ...(testCase.accountAllowBots === "mentions" &&
+          !testCase.directMessage && { mentionRegexes: [/@bot/i] }),
+        getMemberDisplayName: async () => (testCase.sender ? "human" : "ops-bot"),
+      });
 
     await handler(
-      "!room:example.org",
+      testCase.directMessage ? "!dm:example.org" : "!room:example.org",
       createMatrixTextMessageEvent({
-        eventId: "$bot-room-override",
-        sender: "@ops:example.org",
-        body: "hello from bot",
+        eventId: testCase.eventId,
+        sender: testCase.sender ?? "@ops:example.org",
+        body: testCase.sender
+          ? "hello from human"
+          : testCase.mention
+            ? "hello @bot"
+            : testCase.directMessage
+              ? "hello from dm bot"
+              : "hello from bot",
+        ...(testCase.mention && { mentions: { user_ids: ["@bot:example.org"] } }),
+        ...(testCase.verifyBotLoopProtection && { originServerTs: 123_456 }),
       }),
     );
 
-    expect(recordInboundSession).not.toHaveBeenCalled();
+    expect(recordInboundSession).toHaveBeenCalledTimes(testCase.accepted ? 1 : 0);
+    if (testCase.sender) {
+      expect(resolveAgentRoute).toHaveBeenCalled();
+    }
+    if (testCase.verifyBotLoopProtection) {
+      expect(runPrepared.mock.calls[0]?.[0].ctxPayload.GroupRequireMention).toBe(false);
+      expect(runPrepared.mock.calls[0]?.[0].botLoopProtection).toEqual({
+        scopeId: "ops",
+        conversationId: "!room:example.org",
+        senderId: "@ops:example.org",
+        receiverId: "@bot:example.org",
+        config: { maxEventsPerWindow: 3, windowSeconds: 120, cooldownSeconds: 240 },
+        defaultsConfig: undefined,
+        defaultEnabled: true,
+        nowMs: 123_456,
+      });
+    }
   });
 
   it("blocks room control commands from DM-only paired senders", async () => {
@@ -2128,186 +2074,113 @@ describe("matrix monitor handler live allowlist reload", () => {
       ([params]) => JSON.stringify((params.entries ?? []).map(String)) === JSON.stringify(entries),
     ).length;
 
-  it("accepts a DM sender added to live dm.allowFrom", async () => {
+  const liveDmAllowlistCases: Array<{
+    name: string;
+    event: string;
+    initialAllowFrom: string[];
+    updatedAllowFrom: string[];
+    expectedBefore: number;
+    expectedAfter: number;
+    accountScoped?: boolean;
+    startupDisplayName?: boolean;
+  }> = [
+    {
+      name: "accepts a DM sender added to live dm.allowFrom",
+      event: "add",
+      initialAllowFrom: [],
+      updatedAllowFrom: ["@alice:example.org"],
+      expectedBefore: 0,
+      expectedAfter: 1,
+    },
+    {
+      name: "blocks a DM sender removed from live dm.allowFrom",
+      event: "remove",
+      initialAllowFrom: ["@alice:example.org"],
+      updatedAllowFrom: [],
+      expectedBefore: 1,
+      expectedAfter: 1,
+    },
+    {
+      name: "blocks a DM sender after live wildcard removal",
+      event: "wildcard",
+      initialAllowFrom: ["*"],
+      updatedAllowFrom: [],
+      expectedBefore: 1,
+      expectedAfter: 1,
+    },
+    {
+      name: "uses account-scoped live dm.allowFrom overrides",
+      event: "account",
+      initialAllowFrom: ["@alice:example.org"],
+      updatedAllowFrom: [],
+      expectedBefore: 1,
+      expectedAfter: 1,
+      accountScoped: true,
+    },
+    {
+      name: "keeps startup-resolved display names only while the raw input remains configured",
+      event: "name",
+      initialAllowFrom: ["Alice"],
+      updatedAllowFrom: [],
+      expectedBefore: 1,
+      expectedAfter: 1,
+      startupDisplayName: true,
+    },
+  ];
+
+  it.each(liveDmAllowlistCases)("$name", async (testCase) => {
     const dispatchInboundMessage = createDispatchInboundMessage();
     const cfg = {
       channels: {
         matrix: {
-          dm: { allowFrom: [] as string[] },
-        },
-      },
-    };
-    const { handler } = createMatrixHandlerTestHarness({
-      cfg,
-      dmPolicy: "allowlist",
-      isDirectMessage: true,
-      allowFrom: [],
-      allowFromResolvedEntries: [],
-      dispatchInboundMessage,
-    });
-
-    await sendLiveAllowlistMessage(handler, {
-      eventId: "$dm-add-before",
-      sender: "@alice:example.org",
-      body: "hello",
-    });
-    expect(dispatchInboundMessage).not.toHaveBeenCalled();
-
-    cfg.channels.matrix.dm.allowFrom = ["@alice:example.org"];
-    await sendLiveAllowlistMessage(handler, {
-      eventId: "$dm-add-after",
-      sender: "@alice:example.org",
-      body: "hello again",
-    });
-
-    expect(dispatchInboundMessage).toHaveBeenCalledTimes(1);
-  });
-
-  it("blocks a DM sender removed from live dm.allowFrom", async () => {
-    const dispatchInboundMessage = createDispatchInboundMessage();
-    const cfg = {
-      channels: {
-        matrix: {
-          dm: { allowFrom: ["@alice:example.org"] },
-        },
-      },
-    };
-    const { handler } = createMatrixHandlerTestHarness({
-      cfg,
-      dmPolicy: "allowlist",
-      isDirectMessage: true,
-      allowFrom: ["@alice:example.org"],
-      allowFromResolvedEntries: [{ input: "@alice:example.org", id: "@alice:example.org" }],
-      dispatchInboundMessage,
-    });
-
-    await sendLiveAllowlistMessage(handler, {
-      eventId: "$dm-remove-before",
-      sender: "@alice:example.org",
-      body: "hello",
-    });
-    expect(dispatchInboundMessage).toHaveBeenCalledTimes(1);
-
-    cfg.channels.matrix.dm.allowFrom = [];
-    await sendLiveAllowlistMessage(handler, {
-      eventId: "$dm-remove-after",
-      sender: "@alice:example.org",
-      body: "hello again",
-    });
-
-    expect(dispatchInboundMessage).toHaveBeenCalledTimes(1);
-  });
-
-  it("blocks a DM sender after live wildcard removal", async () => {
-    const dispatchInboundMessage = createDispatchInboundMessage();
-    const cfg = {
-      channels: {
-        matrix: {
-          dm: { allowFrom: ["*"] },
-        },
-      },
-    };
-    const { handler } = createMatrixHandlerTestHarness({
-      cfg,
-      dmPolicy: "allowlist",
-      isDirectMessage: true,
-      allowFrom: ["*"],
-      allowFromResolvedEntries: [],
-      dispatchInboundMessage,
-    });
-
-    await sendLiveAllowlistMessage(handler, {
-      eventId: "$dm-wildcard-before",
-      sender: "@alice:example.org",
-      body: "hello",
-    });
-    expect(dispatchInboundMessage).toHaveBeenCalledTimes(1);
-
-    cfg.channels.matrix.dm.allowFrom = [];
-    await sendLiveAllowlistMessage(handler, {
-      eventId: "$dm-wildcard-after",
-      sender: "@alice:example.org",
-      body: "hello again",
-    });
-
-    expect(dispatchInboundMessage).toHaveBeenCalledTimes(1);
-  });
-
-  it("uses account-scoped live dm.allowFrom overrides", async () => {
-    const dispatchInboundMessage = createDispatchInboundMessage();
-    const cfg = {
-      channels: {
-        matrix: {
-          dm: { allowFrom: ["@base:example.org"] },
-          accounts: {
-            ops: {
-              dm: { allowFrom: ["@alice:example.org"] },
-            },
+          ...(testCase.startupDisplayName && { dangerouslyAllowNameMatching: true }),
+          dm: {
+            allowFrom: testCase.accountScoped
+              ? ["@base:example.org"]
+              : [...testCase.initialAllowFrom],
           },
+          ...(testCase.accountScoped && {
+            accounts: { ops: { dm: { allowFrom: [...testCase.initialAllowFrom] } } },
+          }),
         },
       },
     };
+    const startupAllowFrom = testCase.startupDisplayName
+      ? ["@alice:example.org"]
+      : testCase.initialAllowFrom;
     const { handler } = createMatrixHandlerTestHarness({
       cfg,
-      accountId: "ops",
+      ...(testCase.accountScoped && { accountId: "ops" }),
       dmPolicy: "allowlist",
       isDirectMessage: true,
-      allowFrom: ["@alice:example.org"],
-      allowFromResolvedEntries: [{ input: "@alice:example.org", id: "@alice:example.org" }],
+      allowFrom: startupAllowFrom,
+      allowFromResolvedEntries: testCase.initialAllowFrom
+        .filter((entry) => entry !== "*")
+        .map((input) => ({ input, id: "@alice:example.org" })),
       dispatchInboundMessage,
     });
 
     await sendLiveAllowlistMessage(handler, {
-      eventId: "$dm-account-before",
+      eventId: `$dm-${testCase.event}-before`,
       sender: "@alice:example.org",
       body: "hello",
     });
-    expect(dispatchInboundMessage).toHaveBeenCalledTimes(1);
+    expect(dispatchInboundMessage).toHaveBeenCalledTimes(testCase.expectedBefore);
 
-    cfg.channels.matrix.accounts.ops.dm.allowFrom = [];
+    const liveDm = testCase.accountScoped
+      ? cfg.channels.matrix.accounts?.ops.dm
+      : cfg.channels.matrix.dm;
+    if (!liveDm) {
+      throw new Error("expected account-scoped Matrix DM configuration");
+    }
+    liveDm.allowFrom = testCase.updatedAllowFrom;
     await sendLiveAllowlistMessage(handler, {
-      eventId: "$dm-account-after",
+      eventId: `$dm-${testCase.event}-after`,
       sender: "@alice:example.org",
       body: "hello again",
     });
 
-    expect(dispatchInboundMessage).toHaveBeenCalledTimes(1);
-  });
-
-  it("keeps startup-resolved display names only while the raw input remains configured", async () => {
-    const dispatchInboundMessage = createDispatchInboundMessage();
-    const cfg = {
-      channels: {
-        matrix: {
-          dangerouslyAllowNameMatching: true,
-          dm: { allowFrom: ["Alice"] },
-        },
-      },
-    };
-    const { handler } = createMatrixHandlerTestHarness({
-      cfg,
-      dmPolicy: "allowlist",
-      isDirectMessage: true,
-      allowFrom: ["@alice:example.org"],
-      allowFromResolvedEntries: [{ input: "Alice", id: "@alice:example.org" }],
-      dispatchInboundMessage,
-    });
-
-    await sendLiveAllowlistMessage(handler, {
-      eventId: "$dm-name-before",
-      sender: "@alice:example.org",
-      body: "hello",
-    });
-    expect(dispatchInboundMessage).toHaveBeenCalledTimes(1);
-
-    cfg.channels.matrix.dm.allowFrom = [];
-    await sendLiveAllowlistMessage(handler, {
-      eventId: "$dm-name-after",
-      sender: "@alice:example.org",
-      body: "hello again",
-    });
-
-    expect(dispatchInboundMessage).toHaveBeenCalledTimes(1);
+    expect(dispatchInboundMessage).toHaveBeenCalledTimes(testCase.expectedAfter);
   });
 
   it("accepts a DM sender added as a live-resolved display name", async () => {
@@ -2359,7 +2232,20 @@ describe("matrix monitor handler live allowlist reload", () => {
     expect(dispatchInboundMessage).toHaveBeenCalledTimes(1);
   });
 
-  it("refreshes cached live display-name allowlists when name matching is disabled", async () => {
+  it.each([
+    {
+      name: "refreshes cached live display-name allowlists when name matching is disabled",
+      event: "disable",
+      initiallyEnabled: true,
+      expectedBefore: 1,
+    },
+    {
+      name: "refreshes cached live display-name allowlists when name matching is enabled",
+      event: "enable",
+      initiallyEnabled: false,
+      expectedBefore: 0,
+    },
+  ])("$name", async ({ event, initiallyEnabled, expectedBefore }) => {
     const dispatchInboundMessage = createDispatchInboundMessage();
     const resolveLiveUserAllowlist = vi.fn(async (params: LiveNameMatchingResolveParams) =>
       isLiveNameMatchingEnabled(params.cfg) ? ["@alice:example.org"] : [],
@@ -2367,7 +2253,7 @@ describe("matrix monitor handler live allowlist reload", () => {
     const cfg = {
       channels: {
         matrix: {
-          dangerouslyAllowNameMatching: true,
+          dangerouslyAllowNameMatching: initiallyEnabled,
           dm: { allowFrom: ["Alice"] },
         },
       },
@@ -2383,58 +2269,15 @@ describe("matrix monitor handler live allowlist reload", () => {
     });
 
     await sendLiveAllowlistMessage(handler, {
-      eventId: "$dm-live-name-disable-before",
+      eventId: `$dm-live-name-${event}-before`,
       sender: "@alice:example.org",
       body: "hello",
     });
-    expect(dispatchInboundMessage).toHaveBeenCalledTimes(1);
+    expect(dispatchInboundMessage).toHaveBeenCalledTimes(expectedBefore);
 
-    cfg.channels.matrix.dangerouslyAllowNameMatching = false;
+    cfg.channels.matrix.dangerouslyAllowNameMatching = !initiallyEnabled;
     await sendLiveAllowlistMessage(handler, {
-      eventId: "$dm-live-name-disable-after",
-      sender: "@alice:example.org",
-      body: "hello again",
-    });
-
-    expect(countLiveAllowlistCallsForEntries(resolveLiveUserAllowlist.mock.calls, ["Alice"])).toBe(
-      2,
-    );
-    expect(dispatchInboundMessage).toHaveBeenCalledTimes(1);
-  });
-
-  it("refreshes cached live display-name allowlists when name matching is enabled", async () => {
-    const dispatchInboundMessage = createDispatchInboundMessage();
-    const resolveLiveUserAllowlist = vi.fn(async (params: LiveNameMatchingResolveParams) =>
-      isLiveNameMatchingEnabled(params.cfg) ? ["@alice:example.org"] : [],
-    );
-    const cfg = {
-      channels: {
-        matrix: {
-          dangerouslyAllowNameMatching: false,
-          dm: { allowFrom: ["Alice"] },
-        },
-      },
-    };
-    const { handler } = createMatrixHandlerTestHarness({
-      cfg,
-      dmPolicy: "allowlist",
-      isDirectMessage: true,
-      allowFrom: [],
-      allowFromResolvedEntries: [],
-      dispatchInboundMessage,
-      resolveLiveUserAllowlist,
-    });
-
-    await sendLiveAllowlistMessage(handler, {
-      eventId: "$dm-live-name-enable-before",
-      sender: "@alice:example.org",
-      body: "hello",
-    });
-    expect(dispatchInboundMessage).not.toHaveBeenCalled();
-
-    cfg.channels.matrix.dangerouslyAllowNameMatching = true;
-    await sendLiveAllowlistMessage(handler, {
-      eventId: "$dm-live-name-enable-after",
+      eventId: `$dm-live-name-${event}-after`,
       sender: "@alice:example.org",
       body: "hello again",
     });

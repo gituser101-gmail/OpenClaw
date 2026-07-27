@@ -621,6 +621,7 @@ export function splitMediaFromOutput(
       if (
         !unwrapped &&
         parts.length > 1 &&
+        !parts.every((part) => HAS_FILE_EXT.test(cleanCandidate(part))) &&
         /\s/.test(payloadValue) &&
         looksLikeLocalPath &&
         beginsNewMediaRoot(normalizeMediaSource(cleanCandidate(parts[0] ?? ""))) &&
@@ -630,6 +631,10 @@ export function splitMediaFromOutput(
       ) {
         // A single ABSOLUTE path with spaces splits on whitespace into fragments that
         // each look path-like, so the loop above over-counts them as separate media.
+        // Collapse only when at least one fragment has NO file extension: a real spaced
+        // path ("/home/u/my folder/a.png") has an extension-less fragment ("/home/u/my"),
+        // whereas a genuine mixed list ("/tmp/a.png media/b.png") has every fragment ending
+        // in a media file -- keep those split as separate attachments.
         // Collapse only when the payload STARTS at an absolute path/URL root and no
         // later fragment begins a new root -- that keeps "/home/u/my folder/a.png" as
         // one item while leaving genuine relative multi-media like "media/a.png

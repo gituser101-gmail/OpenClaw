@@ -148,6 +148,7 @@ session to confirm the effective tool list.
 - **Model:** native sub-agents inherit the caller unless you set `agents.defaults.subagents.model` (or per-agent `agents.entries.*.subagents.model`). ACP runtime spawns use the same configured subagent model when present; otherwise the ACP harness keeps its own default. An explicit `sessions_spawn.model` still wins.
 - **Thinking:** native sub-agents inherit the caller unless you set `agents.defaults.subagents.thinking` (or per-agent `agents.entries.*.subagents.thinking`). ACP runtime spawns also apply `agents.defaults.models["provider/model"].params.thinking` for the selected model. An explicit `sessions_spawn.thinking` still wins.
 - **Run timeout:** pass `runTimeoutSeconds` to set a timeout for a specific native, ACP, or visible sub-agent run. When omitted, OpenClaw uses `agents.defaults.subagents.runTimeoutSeconds` if configured; otherwise it falls back to `0` (no timeout). An explicit `0` disables the timeout for that run.
+- **Announce target:** native sub-agents keep the normal parent-first completion path when `announceTarget` is omitted. Set `announceTarget: "parent"` on an individual spawn to wake the requester session with `deliver: false` and let the parent decide what to say externally.
 - **Process lifetime:** a detached OpenClaw sub-agent has its own run lifecycle. A background task created inside an external CLI backend is different: it shares the parent CLI subprocess and stops if that parent reaches `agents.defaults.timeoutSeconds`.
 - **Task delivery:** native sub-agents receive the delegated task in their first visible `[Subagent Task]` message. The sub-agent system prompt carries runtime rules and routing context, not a hidden duplicate of the task.
 
@@ -214,6 +215,9 @@ Per-agent override: `agents.entries.*.subagents.delegationMode`.
 </ParamField>
 <ParamField path="runTimeoutSeconds" type="integer">
   Override the configured run timeout for this child. Must be a non-negative integer; `0` disables the timeout. Applies to native, ACP, and visible sessions.
+</ParamField>
+<ParamField path="announceTarget" type='"parent"'>
+  Native sub-agents only. Keeps completion parent-only: the requester session is woken with `deliver: false`, and no external channel fallback is attempted.
 </ParamField>
 <ParamField path="thinking" type="string">
   Override thinking level for the sub-agent run. Not available with `visible: true`.
@@ -508,6 +512,7 @@ Delivery depends on requester depth:
 - Top-level requester sessions use a follow-up `agent` call with external delivery (`deliver=true`).
 - Nested requester subagent sessions receive an internal follow-up injection (`deliver=false`) so the orchestrator can synthesize child results in-session.
 - If a nested requester subagent session is gone, OpenClaw falls back to that session's requester when available.
+- With `announceTarget: "parent"`, delivery stays internal (`deliver=false`) and never falls back to an external channel.
 
 For top-level requester sessions, completion-mode direct delivery first
 resolves any bound conversation/thread route and hook override, then fills

@@ -665,6 +665,22 @@ export function createPluginRuntimeResolver(state: PluginRegistryState) {
             invoke: (params) => runWithPluginScope(() => nodes.invoke(params)),
           } satisfies PluginRuntime["nodes"];
         }
+        if (prop === "talk") {
+          const talk = getRuntimeProperty();
+          return {
+            onActivity: (listener) => {
+              const record =
+                pluginRuntimeRecordById.get(pluginId) ??
+                registry.plugins.find((entry) => entry.id === pluginId);
+              if (!record?.contracts?.talkActivityObservation?.includes("process-wide")) {
+                throw new Error(
+                  `Plugin "${pluginId}" must declare contracts.talkActivityObservation: ["process-wide"] to observe Talk activity.`,
+                );
+              }
+              return talk.onActivity(listener);
+            },
+          } satisfies PluginRuntime["talk"];
+        }
         if (prop === "agent") {
           if (scopedAgentRuntime) {
             return scopedAgentRuntime;

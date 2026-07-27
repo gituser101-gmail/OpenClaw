@@ -660,6 +660,16 @@ two-party event loops that do not go through the shared inbound reply runner.
   <Accordion title="api.runtime.talk">
     Watch anonymous Talk activity without receiving audio, transcripts, or
     session details. This is intended for ambient UI such as speaking avatars.
+    The plugin manifest must explicitly declare the process-wide observation
+    entitlement:
+
+    ```json
+    {
+      "contracts": {
+        "talkActivityObservation": ["process-wide"]
+      }
+    }
+    ```
 
     ```typescript
     const stop = api.runtime.talk.onActivity((event) => {
@@ -673,7 +683,9 @@ two-party event loops that do not go through the shared inbound reply runner.
     ```
 
     Events report an opaque `activityId`, lifecycle, speaking state, and speech
-    pulses. They never include audio, transcripts, or session identifiers.
+    pulses. They never include audio, transcripts, or session identifiers. The
+    entitlement is required because lifecycle and speaking timing still span
+    every Talk session in the Gateway process.
 
   </Accordion>
   <Accordion title="api.runtime.system">

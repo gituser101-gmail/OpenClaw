@@ -363,6 +363,7 @@ const MANIFEST_CONTRACT_KEYS = [
   "usageProviders",
   "migrationProviders",
   "gatewayMethodDispatch",
+  "talkActivityObservation",
   "tools",
 ] as const satisfies readonly (keyof PluginManifestContracts)[];
 

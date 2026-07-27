@@ -653,6 +653,7 @@ Use `contracts` only for static capability ownership metadata that OpenClaw can 
     "usageProviders": ["acme-ai"],
     "migrationProviders": ["hermes"],
     "gatewayMethodDispatch": ["authenticated-request"],
+    "talkActivityObservation": ["process-wide"],
     "tools": ["firecrawl_search", "firecrawl_scrape"]
   }
 }
@@ -684,6 +685,7 @@ Each list is optional:
 | `usageProviders`                 | `string[]` | Provider ids whose usage-auth and usage-snapshot hooks this plugin owns.                                                             |
 | `migrationProviders`             | `string[]` | Import provider ids this plugin owns for `openclaw migrate`.                                                                         |
 | `gatewayMethodDispatch`          | `string[]` | Reserved entitlement for authenticated plugin HTTP routes that dispatch Gateway methods in-process.                                  |
+| `talkActivityObservation`        | `string[]` | Reserved entitlement for anonymous process-wide Talk lifecycle and speaking-timing observation.                                      |
 | `tools`                          | `string[]` | Agent tool names this plugin owns.                                                                                                   |
 
 `contracts.embeddedExtensionFactories` is retained for bundled Codex app-server-only extension factories. Bundled tool-result transforms should declare `contracts.agentToolResultMiddleware` and register with `api.registerAgentToolResultMiddleware(...)` instead. Installed plugins may use the same middleware seam only when explicitly enabled and only for runtimes they declare in `contracts.agentToolResultMiddleware`.
@@ -701,6 +703,8 @@ General embedding providers should declare `contracts.embeddingProviders` for ea
 Worker providers must declare each `api.registerWorkerProvider(...)` id in `contracts.workerProviders`. Core persists durable intent before calling `provision`; providers validate their settings before external allocation, and repeated calls with the same operation id must adopt the same lease. Core also persists that validated settings snapshot and passes it with `leaseId` to `inspect({ leaseId, profile })` and `destroy({ leaseId, profile })`, including after the named profile is changed or removed. Destruction is idempotent, inspection returns the closed `active` / `destroyed` / `unknown` status union, and SSH private-key material is referenced only through `SecretRef`. Provisioned SSH endpoints must also include a public `hostKey` from trusted provisioning output as exactly `algorithm base64`, without a hostname or comment, so core can pin the host before connecting. Providers that mint dynamic identity refs may implement authoritative `resolveSshIdentity({ leaseId, profile, keyRef })`; providers without it use core's generic secret resolver. An authoritative `unknown` orphans an active local record; after a persisted destroy request it confirms teardown.
 
 `contracts.gatewayMethodDispatch` currently accepts `"authenticated-request"`. It is an API hygiene gate for native plugin HTTP routes that intentionally dispatch Gateway control-plane methods in-process, not a sandbox against malicious native plugins. Use it only for tightly reviewed bundled/operator surfaces that already require Gateway HTTP auth. An entitled route remains reachable while Gateway root-work admission is closed only when it also declares `auth: "gateway"` and the route-specific `gatewayRuntimeScopeSurface: "trusted-operator"`; ordinary sibling routes from the same plugin remain behind the admission boundary. This keeps suspension status and resume reachable without granting the whole plugin an admission bypass. Keep parsing and response shaping bounded outside dispatch; substantive or mutating work must go through Gateway method dispatch, which owns admission and scope enforcement.
+
+`contracts.talkActivityObservation` currently accepts `"process-wide"`. Declare it only for ambient UI that intentionally observes anonymous Talk lifecycle, state, and speaking timing across sessions. The feed contains no audio, transcripts, session keys, or provider details, but timing metadata is still sensitive; OpenClaw rejects subscriptions from plugins that omit this explicit entitlement.
 
 ## configContracts reference
 

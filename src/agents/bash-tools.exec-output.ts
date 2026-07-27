@@ -41,6 +41,18 @@ export function prependRedactionWarning(text: string, redacted: boolean): string
   return redacted ? `${EXEC_REDACTION_WARNING}\n\n${text}` : text;
 }
 
+/** Keeps the approval wrapper parseable while surfacing redaction inside its body. */
+export function insertExecApprovalRedactionWarning(text: string, redacted: boolean): string {
+  if (!redacted) {
+    return text;
+  }
+  const bodyIndex = text.indexOf("\n");
+  if (bodyIndex < 0) {
+    return `${text}\n${EXEC_REDACTION_WARNING}`;
+  }
+  return `${text.slice(0, bodyIndex + 1)}${EXEC_REDACTION_WARNING}\n\n${text.slice(bodyIndex + 1)}`;
+}
+
 export function buildExecUpdateResult(params: {
   tailText: string;
   tail: string;

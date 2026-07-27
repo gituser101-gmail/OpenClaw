@@ -33,6 +33,10 @@ import {
 import type { ExecuteNodeHostCommandParams } from "./bash-tools.exec-host-node.types.js";
 import * as execHostShared from "./bash-tools.exec-host-shared.js";
 import {
+  insertExecApprovalRedactionWarning,
+  redactExecOutputText,
+} from "./bash-tools.exec-output.js";
+import {
   DEFAULT_NOTIFY_TAIL_CHARS,
   createApprovalSlug,
   normalizeNotifyOutput,
@@ -630,12 +634,17 @@ export async function executeNodeHostCommand(
             const combined = [payload.stdout, payload.stderr, payload.error]
               .filter(Boolean)
               .join("\n");
-            const output = normalizeNotifyOutput(tail(combined, DEFAULT_NOTIFY_TAIL_CHARS));
+            const output = redactExecOutputText(
+              normalizeNotifyOutput(tail(combined, DEFAULT_NOTIFY_TAIL_CHARS)),
+            );
             const exitLabel = payload.timedOut ? "timeout" : `code ${payload.exitCode ?? "?"}`;
-            const summary = output
-              ? `Exec finished (node=${target.nodeId} id=${approvalId}, ${exitLabel})\n${output}`
+            const summary = output.text
+              ? `Exec finished (node=${target.nodeId} id=${approvalId}, ${exitLabel})\n${output.text}`
               : `Exec finished (node=${target.nodeId} id=${approvalId}, ${exitLabel})`;
-            await execHostShared.sendExecApprovalFollowupResult(followupTarget, summary);
+            await execHostShared.sendExecApprovalFollowupResult(
+              followupTarget,
+              insertExecApprovalRedactionWarning(summary, output.redacted),
+            );
           } catch {
             await execHostShared.sendExecApprovalFollowupResult(
               followupTarget,

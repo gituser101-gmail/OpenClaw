@@ -527,9 +527,72 @@ describe("processGatewayAllowlist", () => {
     });
   }
 
-  it("still requires approval when allowlist execution plan is unavailable despite durable trust", async () => {
+  it("denies shell-expansion plan misses immediately when asking is off and fallback denies", async () => {
+    const command = "grep -il needle -r /tmp --include=*.md";
+    const authorizationPlan = await planShellAuthorization({
+      command,
+      env: { PATH: "/usr/bin:/bin" },
+    });
+    expect(authorizationPlan.ok).toBe(true);
+    if (!authorizationPlan.ok) {
+      throw new Error(authorizationPlan.reason);
+    }
+    const segments = authorizationPlan.groups.flatMap((group) =>
+      group.candidates.map((candidate) => candidate.sourceSegment),
+    );
+    evaluateShellAllowlistWithAuthorizationMock.mockReturnValue({
+      allowlistMatches: [{ pattern: "/usr/bin/grep" }],
+      analysisOk: true,
+      allowlistSatisfied: true,
+      segments,
+      segmentAllowlistEntries: [{ pattern: "/usr/bin/grep" }],
+      segmentSatisfiedBy: ["allowlist"],
+      authorizationPlan,
+    });
+    const captured = captureSecurityEvents();
+
+    let result: Awaited<ReturnType<typeof runGatewayAllowlist>>;
+    try {
+      result = await runGatewayAllowlist({ command });
+    } finally {
+      captured.stop();
+    }
+
+    expect(createAndRegisterDefaultExecApprovalRequestMock).not.toHaveBeenCalled();
+    expect(result!.deniedResult?.content[0]).toEqual(
+      expect.objectContaining({
+        text: expect.stringContaining("ask-fallback-deny: execution-plan-miss"),
+      }),
+    );
+    expect(captured.events).toHaveLength(1);
+    expect(captured.events[0]).toMatchObject({
+      action: "exec.approval.denied",
+      outcome: "denied",
+      reason: "ask-fallback-deny: execution-plan-miss",
+      policy: {
+        id: "exec.approval",
+        decision: "deny",
+        reason: "ask-fallback-deny: execution-plan-miss",
+      },
+      attributes: {
+        security: "allowlist",
+        ask: "off",
+        segment_count: 1,
+      },
+    });
+  });
+
+  it("still requires approval for unavailable allowlist plans when ask is on-miss", async () => {
+    resolveExecHostApprovalContextMock.mockReturnValue({
+      approvals: { allowlist: [], file: { version: 1, agents: {} } },
+      hostSecurity: "allowlist",
+      hostAsk: "on-miss",
+      askFallback: "deny",
+    });
+
     const result = await runGatewayAllowlist({
       command: "echo ok",
+      ask: "on-miss",
     });
 
     expect(createAndRegisterDefaultExecApprovalRequestMock).toHaveBeenCalledTimes(1);
@@ -785,6 +848,25 @@ describe("processGatewayAllowlist", () => {
     });
     expect(JSON.stringify(captured.events)).not.toContain("allowed");
   });
+
+  it.runIf(process.platform !== "win32").each(["bash", "sh", "/bin/sh"])(
+    "keeps %s login-shell startup outside model auto-review",
+    async (shell) => {
+      const payload = "echo auto-review-startup-proof";
+      const command = `${shell} -lc "${payload}"`;
+      await configurePlanBackedCommand({ command });
+
+      const result = await runGatewayAllowlist({
+        command,
+        ask: "on-miss",
+        autoReview: true,
+      });
+
+      expect(defaultExecAutoReviewerMock).not.toHaveBeenCalled();
+      expect(createAndRegisterDefaultExecApprovalRequestMock).toHaveBeenCalledTimes(1);
+      expect(result.pendingResult?.details.status).toBe("approval-pending");
+    },
+  );
 
   it("does not execute after cancellation wins during auto-review", async () => {
     const command = "echo ok";
@@ -1920,6 +2002,49 @@ EOF`,
     expect(approvalInput?.trigger).toBe("diagnostics");
     expect(approvalInput?.outcome?.status).toBe("completed");
     expect(approvalInput?.outcome?.exitCode).toBe(0);
+  });
+
+  it("redacts secret-shaped output before sending gateway approval followups", async () => {
+    const fakeSecretOutput = "OPENAI_API_KEY=sk-proj-gateway-followup-canary-1234567890";
+    buildExecApprovalFollowupTargetMock.mockImplementation((value) => value);
+    requiresExecApprovalMock.mockReturnValue(true);
+    resolveExecHostApprovalContextMock.mockReturnValue({
+      approvals: { allowlist: [], file: { version: 1, agents: {} } },
+      hostSecurity: "allowlist",
+      hostAsk: "always",
+      askFallback: "deny",
+    });
+    resolveApprovalDecisionOrUndefinedMock.mockResolvedValue("allow-once");
+    createExecApprovalDecisionStateMock.mockReturnValue({
+      baseDecision: { timedOut: false },
+      approvedByAsk: true,
+      deniedReason: null,
+    });
+    runExecProcessMock.mockResolvedValue({
+      session: { id: "sess-redaction" },
+      promise: Promise.resolve({
+        status: "completed",
+        exitCode: 0,
+        exitSignal: null,
+        durationMs: 12,
+        timedOut: false,
+        aggregated: fakeSecretOutput,
+      }),
+    });
+
+    await runGatewayAllowlist({
+      command: "printf secret",
+      approvalFollowupMode: "direct",
+      turnSourceChannel: "webchat",
+    });
+
+    await vi.waitFor(() => {
+      expect(sendExecApprovalFollowupResultMock).toHaveBeenCalledTimes(1);
+    });
+    const followupText = requireSentFollowupText(0);
+    expect(followupText).toMatch(/^Exec finished \(/);
+    expect(followupText).toContain("Warning: redacted secret-shaped output");
+    expect(followupText).not.toContain(fakeSecretOutput);
   });
 
   it("uses async agent followups for explicit webchat approval mode", async () => {

@@ -666,6 +666,16 @@ describe("exec notifyOnExit suppression", () => {
     expect(heartbeat.sessionKey).toBe("agent:main:main");
   });
 
+  it("redacts secret-shaped output before enqueueing background completion events", async () => {
+    const fakeSecretOutput = "OPENAI_API_KEY=sk-proj-background-notify-canary-1234567890";
+
+    await runBackgroundedExit({ reason: "manual-cancel", stdout: `${fakeSecretOutput}\n` });
+
+    const [message] = requireSystemEventCall();
+    expect(message).toContain("Warning: redacted secret-shaped output");
+    expect(message).not.toContain(fakeSecretOutput);
+  });
+
   it("still notifies for no-output background exec timeouts", async () => {
     await runBackgroundedExit({ reason: "overall-timeout" });
 

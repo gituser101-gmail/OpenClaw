@@ -26,6 +26,7 @@ import {
   resolveAllowAlwaysPatternCoverage,
   type AllowAlwaysPattern,
 } from "../infra/exec-approvals.js";
+import { isBlockedShellWrapperCommand } from "../infra/exec-wrapper-resolution.js";
 import { buildNodeShellCommand } from "../infra/node-shell.js";
 import {
   parsePreparedSystemRunPayload,
@@ -607,6 +608,17 @@ export async function analyzeNodeApprovalRequirement(params: {
       // Fall back to requiring approval if node approvals cannot be fetched.
     }
   }
+  const [autoReviewSegment] = autoReviewBindingEval.segments;
+  // Review the semantic node payload, not the ordinary outer transport shell.
+  const autoReviewArgv =
+    autoReviewBindingEval.segments.length === 1 &&
+    autoReviewSegment !== undefined &&
+    autoReviewSegment.resolution?.policyBlocked !== true &&
+    !isBlockedShellWrapperCommand(autoReviewSegment.argv) &&
+    (autoReviewSegment.raw === undefined ||
+      autoReviewSegment.raw.trim() === autoReviewBindingCommand.trim())
+      ? autoReviewSegment.argv
+      : undefined;
   return {
     analysisOk,
     allowlistSatisfied,
@@ -627,11 +639,6 @@ export async function analyzeNodeApprovalRequirement(params: {
       runtimePayload: inlineEvalHit !== null,
       preparedCoverage: params.prepared.allowAlwaysCoverage,
     }),
-    autoReviewArgv:
-      autoReviewBindingEval.segments.length === 1 &&
-      (autoReviewBindingEval.segments.at(0)?.raw === undefined ||
-        autoReviewBindingEval.segments.at(0)?.raw.trim() === autoReviewBindingCommand.trim())
-        ? autoReviewBindingEval.segments.at(0)?.argv
-        : undefined,
+    autoReviewArgv,
   };
 }

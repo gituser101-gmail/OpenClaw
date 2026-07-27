@@ -13,13 +13,17 @@ import {
   isReplyRunStreamingForSessionId,
   listActiveReplyRunSessionIds,
   queueReplyRunMessage,
+  resolveActiveReplyOperationForSessionId,
+  resolveActiveReplyRunSessionId,
   resolveReplyBackendQueueMessageMismatch,
-  resolveReplyRunForCurrentSessionId,
   resolveReplyRunPhaseForSessionId,
-  type ReplyOperationPhase,
   type ReplyOperation,
+  type ReplyOperationPhase,
   waitForReplyRunEndBySessionId,
 } from "../../auto-reply/reply/reply-run-registry.js";
+import { getRuntimeConfig } from "../../config/io.js";
+import { resolveStorePath } from "../../config/sessions/paths.js";
+import { loadSessionEntry, updateSessionEntry } from "../../config/sessions/session-accessor.js";
 import {
   getAgentEventLifecycleGeneration,
   isAgentEventLifecycleGenerationCurrent,
@@ -36,6 +40,7 @@ import {
   logSessionStateChange,
   updateDiagnosticSessionFile,
 } from "../../logging/diagnostic.js";
+import { resolveAgentIdFromSessionKey } from "../../routing/session-key.js";
 import { resolveTimerTimeoutMs } from "../../shared/number-coercion.js";
 import {
   ACTIVE_EMBEDDED_RUNS,
@@ -855,7 +860,7 @@ export async function abortAndDrainEmbeddedAgentRun(params: {
   // Recovery must stay bound to one run generation; a replacement under the
   // same session id owns its own abort, drain, and cleanup lifecycle.
   const capturedHandle = ACTIVE_EMBEDDED_RUNS.get(params.sessionId);
-  const capturedReplyOperation = resolveReplyRunForCurrentSessionId(params.sessionId);
+  const capturedReplyOperation = resolveActiveReplyOperationForSessionId(params.sessionId);
   // Recovery is a staleness expiry: stamp run_stalled on the reply operation
   // BEFORE any handle abort, or the run loop's abort handler re-enters
   // abortByUser and misattributes the watchdog kill to the user.
@@ -888,6 +893,10 @@ export async function abortAndDrainEmbeddedAgentRun(params: {
   const drained = aborted
     ? await waitForEmbeddedAgentRunHandleEnd(capturedHandle, capturedReplyOperation, settleMs)
     : false;
+  const persistenceSnapshot =
+    params.forceClear === true && params.sessionKey
+      ? tryLoadForceClearSessionSnapshot(params.sessionKey)
+      : undefined;
   const forceCleared =
     params.forceClear === true && (!aborted || !drained)
       ? forceClearEmbeddedAgentRun(
@@ -898,7 +907,91 @@ export async function abortAndDrainEmbeddedAgentRun(params: {
           params.reason,
         )
       : false;
+  if (forceCleared && params.sessionKey && persistenceSnapshot) {
+    await persistForceClearedEmbeddedRunTerminalState({
+      ...persistenceSnapshot,
+      sessionId: params.sessionId,
+      sessionKey: params.sessionKey,
+    });
+  }
   return { aborted, drained, forceCleared };
+}
+
+type ForceClearSessionSnapshot = {
+  startedAt?: number;
+  storePath: string;
+  updatedAt: number;
+};
+
+function tryLoadForceClearSessionSnapshot(
+  sessionKey: string,
+): ForceClearSessionSnapshot | undefined {
+  try {
+    const cfg = getRuntimeConfig();
+    const agentId = resolveAgentIdFromSessionKey(sessionKey);
+    const storePath = resolveStorePath(cfg.session?.store, { agentId });
+    const entry = loadSessionEntry({ sessionKey, storePath });
+    if (!entry || entry.status !== "running") {
+      return undefined;
+    }
+    return {
+      ...(entry.startedAt === undefined ? {} : { startedAt: entry.startedAt }),
+      storePath,
+      updatedAt: entry.updatedAt,
+    };
+  } catch (err) {
+    diag.warn(
+      `load force-clear session snapshot failed: sessionKey=${sessionKey} error=${String(err)}`,
+    );
+    return undefined;
+  }
+}
+
+/** Persists terminal state when a forced registry clear cannot emit normal lifecycle. */
+async function persistForceClearedEmbeddedRunTerminalState(params: {
+  sessionId: string;
+  sessionKey: string;
+  startedAt?: number;
+  storePath: string;
+  updatedAt: number;
+}): Promise<void> {
+  try {
+    await updateSessionEntry(
+      { sessionKey: params.sessionKey, storePath: params.storePath },
+      (entry) => {
+        // A replacement can reuse the session id; bind this patch to both owners' exact snapshot.
+        if (
+          ACTIVE_EMBEDDED_RUNS.has(params.sessionId) ||
+          ACTIVE_EMBEDDED_RUN_SESSION_IDS_BY_KEY.has(params.sessionKey) ||
+          isReplyRunActiveForSessionId(params.sessionId) ||
+          resolveActiveReplyRunSessionId(params.sessionKey) !== undefined ||
+          entry.sessionId !== params.sessionId ||
+          entry.status !== "running" ||
+          entry.updatedAt !== params.updatedAt ||
+          entry.startedAt !== params.startedAt
+        ) {
+          return null;
+        }
+        const endedAt = Date.now();
+        return {
+          status: "killed",
+          abortedLastRun: true,
+          endedAt,
+          updatedAt: endedAt,
+        };
+      },
+      {
+        skipMaintenance: true,
+        takeCacheOwnership: true,
+        requireWriteSuccess: false,
+      },
+    );
+  } catch (err) {
+    // Registry ownership is already gone; preserve the completed recovery result.
+    diag.warn(
+      `persist force-cleared terminal state failed: sessionKey=${params.sessionKey} error=${String(err)}`,
+    );
+  }
 }
 
 function notifyEmbeddedRunEnded(sessionId: string) {

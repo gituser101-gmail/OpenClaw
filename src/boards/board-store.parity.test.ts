@@ -5,6 +5,7 @@ import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
 import { replaceSessionEntrySync } from "../config/sessions/session-accessor.entry.js";
 import { deleteSessionEntryLifecycle } from "../config/sessions/session-accessor.js";
 import { requireNodeSqlite } from "../infra/node-sqlite.js";
+import { migrateLegacyMediaPersistence } from "../infra/state-migrations.js";
 import {
   closeOpenClawAgentDatabasesForTest,
   openOpenClawAgentDatabase,
@@ -85,6 +86,19 @@ describe.each([
       html: "<p>one</p>",
       revision: 1,
       sha256: expect.stringMatching(/^[a-f0-9]{64}$/u),
+    });
+    expect(store.getSnapshotWithHtmlDocuments("agent:main:board")).toMatchObject({
+      snapshot: { revision: 1 },
+      htmlDocuments: new Map([
+        [
+          "weather",
+          expect.objectContaining({
+            html: "<p>one</p>",
+            revision: 1,
+            sha256: expect.stringMatching(/^[a-f0-9]{64}$/u),
+          }),
+        ],
+      ]),
     });
 
     // Legacy clients omit heightMode on resize; explicit user sizing must pin.
@@ -530,6 +544,8 @@ describe("SqliteBoardStore persistence", () => {
     `);
     existingV14.close();
 
+    expect(migrateLegacyMediaPersistence({ env }).warnings).toEqual([]);
+
     const reopened = openOpenClawAgentDatabase({ agentId: "main", env });
     expect(
       reopened.db
@@ -625,6 +641,8 @@ describe("SqliteBoardStore persistence", () => {
       UPDATE schema_meta SET schema_version = 14 WHERE meta_key = 'primary';
     `);
     closeOpenClawAgentDatabasesForTest();
+
+    expect(migrateLegacyMediaPersistence({ env }).warnings).toEqual([]);
 
     const upgradedStore = new SqliteBoardStore({
       resolveSession: () => ({ agentId: "main", sessionKey }),

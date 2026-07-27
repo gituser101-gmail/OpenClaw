@@ -746,7 +746,7 @@ vi.mock("./doctor/shared/missing-configured-plugin-install.js", () => ({
 }));
 
 vi.mock("./doctor/shared/active-tool-schema-warnings.js", () => ({
-  collectActiveToolSchemaProjectionWarnings: vi.fn(() => []),
+  collectActiveToolSchemaProjectionWarnings: vi.fn(async () => []),
 }));
 
 vi.mock("./doctor/shared/plugin-dependency-cleanup.js", () => ({
@@ -1383,7 +1383,7 @@ vi.mock("./doctor-config-preflight.js", async () => {
             exists,
             path: configPath,
             parsed,
-            includeProvenance: { agentRoster: injected?.agentRosterIncludeOwned === true },
+            agentRosterIncludeOwned: injected?.agentRosterIncludeOwned === true,
             sourceConfigBeforeMigrations,
             config: injectedEffectiveConfig,
             sourceConfig: injectedEffectiveConfig,
@@ -1407,7 +1407,7 @@ vi.mock("./doctor-config-preflight.js", async () => {
             exists,
             path: configPath,
             parsed,
-            includeProvenance: { agentRoster: injected?.agentRosterIncludeOwned === true },
+            agentRosterIncludeOwned: injected?.agentRosterIncludeOwned === true,
             sourceConfigBeforeMigrations,
             config: injectedEffectiveConfig,
             sourceConfig: injectedEffectiveConfig,
@@ -1432,7 +1432,7 @@ vi.mock("./doctor-config-preflight.js", async () => {
           exists,
           path: configPath,
           parsed,
-          includeProvenance: { agentRoster: injected?.agentRosterIncludeOwned === true },
+          agentRosterIncludeOwned: injected?.agentRosterIncludeOwned === true,
           sourceConfigBeforeMigrations,
           config: effectiveConfig,
           sourceConfig: effectiveConfig,
@@ -1514,6 +1514,7 @@ vi.mock("./doctor-state-migrations.js", () => ({
   autoMigrateLegacyState: vi.fn(async () => ({ changes: [], warnings: [] })),
   autoMigrateLegacyStateDir: vi.fn(async () => ({ changes: [], warnings: [] })),
   autoMigrateLegacyTaskStateSidecars: vi.fn(async () => ({ changes: [], warnings: [] })),
+  migrateLegacyMediaPersistence: vi.fn(() => ({ changes: [], warnings: [] })),
 }));
 
 function resetTerminalNoteMock() {

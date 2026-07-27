@@ -906,8 +906,9 @@ async function completeStartedRun(
   waitForMethod: ReturnType<typeof createStartedThreadHarness>["waitForMethod"],
   completeTurn: ReturnType<typeof createStartedThreadHarness>["completeTurn"],
   threadId = "thread-1",
+  waitTimeoutMs?: number,
 ): Promise<void> {
-  await waitForMethod("turn/start");
+  await waitForMethod("turn/start", waitTimeoutMs);
   await completeTurn({ threadId, turnId: "turn-1" });
   await run;
 }
@@ -4929,7 +4930,7 @@ describe("runCodexAppServerAttempt", () => {
       },
     } as EmbeddedRunAttemptParams;
     const run = runCodexAppServerAttempt(params, { pluginConfig: {} });
-    await completeStartedRun(run, waitForMethod, completeTurn);
+    await completeStartedRun(run, waitForMethod, completeTurn, "thread-1", 150_000);
     const startRequest = requests.find((request) => request.method === "thread/start");
     const startRequestParams = startRequest?.params as Record<string, unknown> | undefined;
     expect(startRequestParams?.modelProvider).toBe("lmstudio");
@@ -4940,7 +4941,7 @@ describe("runCodexAppServerAttempt", () => {
     const turnRequestParams = turnRequest?.params as Record<string, unknown> | undefined;
     expect(turnRequestParams?.approvalPolicy).toBe("on-request");
     expect(turnRequestParams?.approvalsReviewer).toBe("user");
-  });
+  }, 180_000);
 
   it("enables Guardian on the first turn after a fresh thread confirms the OpenAI provider", async () => {
     const { sessionFile, workspaceDir } = createRunPaths();

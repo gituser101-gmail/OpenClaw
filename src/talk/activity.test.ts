@@ -59,4 +59,66 @@ describe("Talk activity", () => {
     });
     expect(listener).not.toHaveBeenCalled();
   });
+
+  it("preserves speaking across overlapping work and ends fatal errors", async () => {
+    const events: Array<Record<string, unknown>> = [];
+    const stop = watchTalkActivity((event) => {
+      events.push(event);
+    });
+    const talk = createTalk("activity-reducer-test");
+
+    talk.emit({ type: "session.started", payload: {} });
+    talk.emit({ type: "session.ready", payload: {} });
+    const { turnId } = talk.startTurn();
+    talk.emit({ type: "input.audio.committed", turnId, payload: {}, final: true });
+    talk.startOutputAudio({ turnId });
+    talk.emit({ type: "tool.progress", turnId, payload: {} });
+    talk.finishOutputAudio({ turnId });
+    talk.emit({ type: "session.error", payload: {}, final: true });
+    talk.emit({ type: "session.started", payload: {} });
+
+    await vi.waitFor(() => {
+      expect(events.filter((event) => event.type === "started")).toHaveLength(2);
+    });
+    expect(events.filter((event) => event.type === "state").map((event) => event.state)).toEqual([
+      "idle",
+      "listening",
+      "thinking",
+      "speaking",
+      "listening",
+      "error",
+      "idle",
+    ]);
+    expect(events.filter((event) => event.type === "ended")).toHaveLength(1);
+    const activityIds = events
+      .filter((event) => event.type === "started")
+      .map((event) => event.activityId);
+    expect(new Set(activityIds).size).toBe(2);
+    stop();
+  });
+
+  it("returns to idle after cancelled capture and infers speaking from audio", async () => {
+    const events: Array<Record<string, unknown>> = [];
+    const stop = watchTalkActivity((event) => {
+      events.push(event);
+    });
+    const talk = createTalk("activity-capture-test");
+
+    talk.emit({ type: "session.started", payload: {} });
+    talk.emit({ type: "capture.started", captureId: "capture-1", payload: {} });
+    talk.emit({ type: "capture.cancelled", captureId: "capture-1", payload: {}, final: true });
+    const { turnId } = talk.startTurn();
+    talk.emit({ type: "output.audio.delta", turnId, payload: {} });
+
+    await vi.waitFor(() => expect(events.at(-1)?.type).toBe("speech"));
+    expect(events.filter((event) => event.type === "state").map((event) => event.state)).toEqual([
+      "idle",
+      "listening",
+      "idle",
+      "listening",
+      "speaking",
+    ]);
+    expect(events.slice(-2).map((event) => event.type)).toEqual(["state", "speech"]);
+    stop();
+  });
 });

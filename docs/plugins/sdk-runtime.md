@@ -674,9 +674,7 @@ two-party event loops that do not go through the shared inbound reply runner.
 
     Events report an opaque `activityId`, lifecycle, speaking state, and speech
     pulses. They never include audio, transcripts, or session identifiers. The
-    contract declaration and trusted operator approval are required because
-    lifecycle and speaking timing still span every Talk session in the Gateway
-    process.
+    activity feed spans every Talk session in the Gateway process.
 
   </Accordion>
   <Accordion title="api.runtime.system">

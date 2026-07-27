@@ -1109,6 +1109,11 @@ export function handleToolExecutionStart(
     );
 
     const shouldEmitToolEvents = ctx.shouldEmitToolResult();
+    ctx.params.trajectoryRecorder?.recordEvent("tool.call", {
+      toolCallId,
+      name: toolName,
+      args: sanitizeToolArgs(args) as Record<string, unknown>,
+    });
     emitAgentEvent({
       runId: ctx.params.runId,
       stream: "tool",
@@ -1407,6 +1412,12 @@ export async function handleToolExecutionEnd(
   const eventResult = isExecToolName(toolName)
     ? capLiveExecResult(sanitizedResult)
     : sanitizedResult;
+  ctx.params.trajectoryRecorder?.recordEvent("tool.result", {
+    toolCallId,
+    name: toolName,
+    success: !observerIsError,
+    result: eventResult,
+  });
   const toolStartKey = buildToolStartKey(runId, toolCallId);
   const startData = toolStartData.get(toolStartKey);
   toolStartData.delete(toolStartKey);

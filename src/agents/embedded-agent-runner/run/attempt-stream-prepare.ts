@@ -86,6 +86,7 @@ export function prepareEmbeddedAttemptStream(input: {
   sandboxSessionKey: string;
   builtinToolNames: ReadonlySet<string>;
   replaySafeToolNames: ReadonlySet<string>;
+  trajectoryRecorder?: EmbeddedRunAttemptParams["trajectoryRecorder"];
 }) {
   const attempt = input.attempt;
   const hookRunner = input.hookRunner;
@@ -229,6 +230,7 @@ export function prepareEmbeddedAttemptStream(input: {
       onDeliveredMessageToolOnlySourceReply: input.markSourceReplyDelivered,
       onAgentToolResult: attempt.onAgentToolResult,
       observeToolTerminal: attempt.observeToolTerminal,
+      trajectoryRecorder: input.trajectoryRecorder,
       onToolResult: attempt.onToolResult,
       onReasoningStream: attempt.onReasoningStream,
       streamReasoningInNonStreamModes: attempt.streamReasoningInNonStreamModes,

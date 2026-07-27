@@ -22,11 +22,7 @@ import {
   enforceSharedGatewaySessionGenerationForConfigWrite,
   getRequiredSharedGatewaySessionGeneration,
 } from "./server-shared-auth-generation.js";
-import {
-  getHealthCache,
-  getHealthVersion,
-  incrementPresenceVersion,
-} from "./server/health-state.js";
+import * as healthState from "./server/health-state.js";
 
 type GatewayCoreRuntime = Awaited<ReturnType<typeof startGatewayCoreRuntime>>;
 type GatewayLogger = ReturnType<typeof createSubsystemLogger>;
@@ -217,12 +213,12 @@ export async function finishGatewayStartup(params: {
       listSessionPendingApprovals: approvalSessionEvents.replay,
       loadGatewayModelCatalog,
       loadGatewayModelCatalogSnapshot,
-      getHealthCache,
+      getHealthCache: healthState.getHealthCache,
       refreshHealthSnapshot: refreshGatewayHealthSnapshotWithRuntime,
       logHealth,
       logGateway: log,
-      incrementPresenceVersion,
-      getHealthVersion,
+      incrementPresenceVersion: healthState.incrementPresenceVersion,
+      getHealthVersion: healthState.getHealthVersion,
       broadcast,
       broadcastToConnIds,
       nodeSendToSession,

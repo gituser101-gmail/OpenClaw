@@ -39,12 +39,9 @@ const readyRecordSchema = z
 
 type RestoredAdmissionReadyRecord = z.infer<typeof readyRecordSchema>;
 
-export type RestoredAdmissionHeldReason =
-  | "scheduler-reconciliation"
-  | "owner-readiness"
-  | "ready-commit";
+type RestoredAdmissionHeldReason = "scheduler-reconciliation" | "owner-readiness" | "ready-commit";
 
-export type RestoredAdmissionStatus = {
+type RestoredAdmissionStatus = {
   get: () => GatewayRestoreStatusResult;
   setHeldReason: (reason: RestoredAdmissionHeldReason) => void;
   markReady: (record: RestoredAdmissionReadyRecord) => void;

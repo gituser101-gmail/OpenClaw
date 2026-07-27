@@ -5,10 +5,7 @@ import { createPluginRecord } from "./loader-records.js";
 import { createPluginRegistry } from "./registry.js";
 import { createPluginRuntime } from "./runtime/index.js";
 
-function createRecord(
-  id: string,
-  options: { declareProcessWideActivity?: boolean; explicitlyEnabled?: boolean } = {},
-) {
+function createRecord(id: string, options: { declareProcessWideActivity?: boolean } = {}) {
   const record = createPluginRecord({
     id,
     source: `/plugins/${id}/index.js`,
@@ -19,37 +16,50 @@ function createRecord(
       ? { contracts: { talkActivityObservation: ["process-wide"] } }
       : {}),
   });
-  record.explicitlyEnabled = options.explicitlyEnabled ?? false;
   return record;
 }
 
 describe("plugin Talk runtime scope", () => {
-  it("requires trusted operator approval in addition to the manifest declaration", async () => {
+  it("requires a dedicated operator grant in addition to the manifest declaration", async () => {
     const registry = createPluginRegistry({
       logger: { info() {}, warn() {}, error() {}, debug() {} },
       runtime: createPluginRuntime(),
       activateGlobalSideEffects: false,
     });
-    const config = {} as OpenClawConfig;
     const observer = registry.createApi(
       createRecord("avatar", {
         declareProcessWideActivity: true,
-        explicitlyEnabled: true,
       }),
-      { config },
+      {
+        config: {
+          plugins: {
+            entries: {
+              avatar: { talk: { allowProcessWideActivityObservation: true } },
+            },
+          },
+        },
+      },
     );
     const selfDeclared = registry.createApi(
       createRecord("self-declared", { declareProcessWideActivity: true }),
-      { config },
+      { config: {} as OpenClawConfig },
     );
-    const unrelated = registry.createApi(createRecord("unrelated"), { config });
+    const grantedButUndeclared = registry.createApi(createRecord("undeclared"), {
+      config: {
+        plugins: {
+          entries: {
+            undeclared: { talk: { allowProcessWideActivityObservation: true } },
+          },
+        },
+      },
+    });
     const observed = vi.fn();
 
-    expect(() => unrelated.runtime.talk.onActivity(vi.fn())).toThrow(
-      'Plugin "unrelated" must declare contracts.talkActivityObservation: ["process-wide"]',
+    expect(() => grantedButUndeclared.runtime.talk.onActivity(vi.fn())).toThrow(
+      'Plugin "undeclared" must declare contracts.talkActivityObservation: ["process-wide"]',
     );
     expect(() => selfDeclared.runtime.talk.onActivity(vi.fn())).toThrow(
-      'Plugin "self-declared" must be explicitly enabled by the operator',
+      "plugins.entries.self-declared.talk.allowProcessWideActivityObservation: true",
     );
 
     const stop = observer.runtime.talk.onActivity(observed);

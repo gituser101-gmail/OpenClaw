@@ -36,6 +36,10 @@ export type PluginEntryConfig = {
     /** Explicitly allow this plugin to run completions against a non-default agent id. */
     allowAgentIdOverride?: boolean;
   };
+  talk?: {
+    /** Explicitly allow this plugin to observe anonymous activity across all Talk sessions. */
+    allowProcessWideActivityObservation?: boolean;
+  };
   config?: Record<string, unknown>;
 };
 

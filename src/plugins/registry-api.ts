@@ -4,6 +4,7 @@ import { formatErrorMessage } from "../infra/errors.js";
 import { resolveUserPath } from "../utils.js";
 import { emitPluginAgentEvent } from "./agent-event-emission.js";
 import { buildPluginApi } from "./api-builder.js";
+import { normalizePluginsConfig } from "./config-state.js";
 import { sendPluginSessionAttachment } from "./host-hook-attachments.js";
 import {
   clearPluginRunContext,
@@ -140,7 +141,11 @@ export function createPluginApiFactory(
   ): OpenClawPluginApi => {
     const registrationMode = params.registrationMode ?? "full";
     const registrationCapabilities = resolvePluginRegistrationCapabilities(registrationMode);
-    setPluginRuntimeRecord(record);
+    setPluginRuntimeRecord(record, {
+      allowProcessWideTalkActivityObservation:
+        normalizePluginsConfig(params.config.plugins).entries[record.id]?.talk
+          ?.allowProcessWideActivityObservation === true,
+    });
     const sideEffectGuard = createPluginSideEffectGuard(record.id);
     const isLoadedRecordInRegistry = () =>
       registry.plugins.some((plugin) => plugin.id === record.id && plugin.status === "loaded");

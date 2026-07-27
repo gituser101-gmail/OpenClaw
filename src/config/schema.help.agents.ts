@@ -58,6 +58,10 @@ export const AGENT_FIELD_HELP: Record<string, string> = {
     'Allowed override targets for trusted plugin LLM completions as canonical "provider/model" refs. Use "*" only when you intentionally allow any model.',
   "plugins.entries.*.llm.allowAgentIdOverride":
     "Explicitly allows this plugin to request api.runtime.llm.complete against a non-default agent id. Keep false unless the plugin is trusted for cross-agent model access.",
+  "plugins.entries.*.talk":
+    "Per-plugin Talk runtime policy for sensitive cross-session observation. Keep this unset unless the plugin requires reviewed ambient Talk activity access.",
+  "plugins.entries.*.talk.allowProcessWideActivityObservation":
+    "Explicitly allows this plugin to observe anonymous lifecycle and speaking timing across every Talk session. This is a sensitive metadata grant; keep false unless the plugin is trusted for process-wide observation.",
   "plugins.entries.*.apiKey":
     "Optional API key field consumed by plugins that accept direct key configuration in entry settings. Use secret/env substitution and avoid committing real credentials into config files.",
   "plugins.entries.*.env":

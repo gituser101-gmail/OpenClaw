@@ -35,6 +35,9 @@ export type NormalizedPluginsConfig = {
         hasAllowedModelsConfig?: boolean;
         allowAgentIdOverride?: boolean;
       };
+      talk?: {
+        allowProcessWideActivityObservation?: boolean;
+      };
       config?: unknown;
     }
   >;
@@ -196,6 +199,19 @@ function normalizePluginEntries(
               : {}),
           }
         : undefined;
+    const talkRaw = entry.talk;
+    const talk =
+      talkRaw && typeof talkRaw === "object" && !Array.isArray(talkRaw)
+        ? {
+            allowProcessWideActivityObservation: (
+              talkRaw as { allowProcessWideActivityObservation?: unknown }
+            ).allowProcessWideActivityObservation,
+          }
+        : undefined;
+    const normalizedTalk =
+      talk && typeof talk.allowProcessWideActivityObservation === "boolean"
+        ? { allowProcessWideActivityObservation: talk.allowProcessWideActivityObservation }
+        : undefined;
     normalized[normalizedKey] = {
       ...normalized[normalizedKey],
       enabled:
@@ -203,6 +219,7 @@ function normalizePluginEntries(
       hooks: normalizedHooks ?? normalized[normalizedKey]?.hooks,
       subagent: normalizedSubagent ?? normalized[normalizedKey]?.subagent,
       llm: normalizedLlm ?? normalized[normalizedKey]?.llm,
+      talk: normalizedTalk ?? normalized[normalizedKey]?.talk,
       config: "config" in entry ? entry.config : normalized[normalizedKey]?.config,
     };
   }

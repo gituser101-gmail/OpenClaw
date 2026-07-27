@@ -671,15 +671,20 @@ two-party event loops that do not go through the shared inbound reply runner.
     }
     ```
 
-    For an installed plugin, the operator must also explicitly enable the
-    plugin in OpenClaw config. A manifest declaration cannot grant this access
-    by itself:
+    For an installed plugin, the operator must also grant this specific
+    process-wide capability in OpenClaw config. Ordinary plugin enablement and
+    a manifest declaration cannot grant this access by themselves:
 
     ```json
     {
       "plugins": {
         "entries": {
-          "avatar": { "enabled": true }
+          "avatar": {
+            "enabled": true,
+            "talk": {
+              "allowProcessWideActivityObservation": true
+            }
+          }
         }
       }
     }

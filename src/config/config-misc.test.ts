@@ -768,6 +768,32 @@ describe("plugins.entries.*.llm", () => {
   });
 });
 
+describe("plugins.entries.*.talk", () => {
+  it("accepts the process-wide Talk activity grant", () => {
+    expect(
+      OpenClawSchema.safeParse({
+        plugins: {
+          entries: {
+            avatar: { talk: { allowProcessWideActivityObservation: true } },
+          },
+        },
+      }).success,
+    ).toBe(true);
+  });
+
+  it("rejects a non-boolean process-wide Talk activity grant", () => {
+    expect(
+      OpenClawSchema.safeParse({
+        plugins: {
+          entries: {
+            avatar: { talk: { allowProcessWideActivityObservation: "yes" } },
+          },
+        },
+      }).success,
+    ).toBe(false);
+  });
+});
+
 describe("web search provider config", () => {
   it("accepts kimi provider and config", () => {
     const res = validateConfigObject(

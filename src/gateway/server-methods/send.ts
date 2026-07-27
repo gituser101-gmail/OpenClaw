@@ -29,7 +29,9 @@ import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { resolveOutboundChannelPlugin } from "../../infra/outbound/channel-resolution.js";
 import { resolveMessageChannelSelection } from "../../infra/outbound/channel-selection.js";
 import {
+  collectActionMediaSourceHints,
   hydrateAttachmentParamsForAction,
+  normalizeSandboxMediaParams,
   resolveAttachmentMediaPolicy,
 } from "../../infra/outbound/message-action-params.js";
 import {
@@ -50,6 +52,7 @@ import {
 import { maybeResolveIdLikeTarget } from "../../infra/outbound/target-resolver.js";
 import { resolveOutboundTarget } from "../../infra/outbound/targets.js";
 import { getAgentScopedMediaLocalRoots } from "../../media/local-roots.js";
+import { resolveAgentScopedOutboundMediaAccess } from "../../media/read-capability.js";
 import { KeyedAsyncQueue } from "../../plugin-sdk/keyed-async-queue.js";
 import { extractToolPayload } from "../../plugin-sdk/tool-payload.js";
 import { normalizePollInput } from "../../polls.js";
@@ -534,6 +537,31 @@ export const sendHandlers: GatewayRequestHandlers = {
           normalizeOptionalString(request.agentId) ??
           (sessionKey ? resolveSessionAgentId({ sessionKey, config: cfg }) : undefined);
         const accountId = normalizeOptionalString(request.accountId) ?? undefined;
+        // Full agent-scoped access (not bare roots): workspaceDir is what lets
+        // relative media paths resolve against the agent workspace instead of
+        // the gateway cwd. Must match the in-process runner's resolution so
+        // gateway-forwarded actions cannot widen or narrow file reads.
+        const structuredAttachmentMode = request.action === "send" ? "all" : "selected";
+        const mediaAccess = resolveAgentScopedOutboundMediaAccess({
+          cfg,
+          agentId,
+          mediaSources: collectActionMediaSourceHints(request.params, undefined, {
+            structuredAttachments: structuredAttachmentMode,
+          }),
+          sessionKey,
+          messageProvider: sessionKey ? undefined : channel,
+          accountId: sessionKey ? (trustedContext.requesterAccountId ?? accountId) : accountId,
+          requesterSenderId: trustedContext.requesterSenderId,
+        });
+        // Resolve bare relative sources before dispatch: channel action
+        // handlers consume split roots/readFile fields and cannot recover the
+        // workspace base once params cross the plugin boundary (#114299).
+        await normalizeSandboxMediaParams({
+          args: request.params,
+          mediaPolicy: resolveAttachmentMediaPolicy({ mediaAccess }),
+          structuredAttachments: structuredAttachmentMode,
+          workspaceDir: mediaAccess.workspaceDir,
+        });
         if (request.action === "send") {
           await hydrateAttachmentParamsForAction({
             cfg,
@@ -541,9 +569,7 @@ export const sendHandlers: GatewayRequestHandlers = {
             accountId,
             args: request.params,
             action: "send",
-            mediaPolicy: resolveAttachmentMediaPolicy({
-              mediaLocalRoots: getAgentScopedMediaLocalRoots(cfg, agentId),
-            }),
+            mediaPolicy: resolveAttachmentMediaPolicy({ mediaAccess }),
           });
         }
         const sourceReplyMirror = {
@@ -584,7 +610,9 @@ export const sendHandlers: GatewayRequestHandlers = {
           sessionId: normalizeOptionalString(request.sessionId) ?? undefined,
           inboundEventKind: request.inboundTurnKind,
           agentId,
-          mediaLocalRoots: getAgentScopedMediaLocalRoots(cfg, agentId),
+          mediaAccess,
+          mediaLocalRoots: mediaAccess.localRoots,
+          mediaReadFile: mediaAccess.readFile,
           toolContext: trustedContext.toolContext,
           dryRun: false,
           gatewayClientScopes,

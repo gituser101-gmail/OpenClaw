@@ -124,7 +124,8 @@ function messageActionContextFromSessionKeyForTests(sessionKey: string): {
   };
 }
 
-vi.mock("../../agents/agent-scope.js", () => ({
+vi.mock("../../agents/agent-scope.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../agents/agent-scope.js")>()),
   resolveSessionAgentId: ({
     sessionKey,
   }: {
@@ -889,8 +890,9 @@ describe("gateway send mirroring", () => {
       isWebchatConnect: () => false,
     });
 
-    await Promise.resolve();
-    expect(mocks.dispatchChannelMessageAction).toHaveBeenCalledTimes(2);
+    await vi.waitFor(() => {
+      expect(mocks.dispatchChannelMessageAction).toHaveBeenCalledTimes(2);
+    });
     expect(mocks.dispatchChannelMessageAction.mock.calls[0]?.[0]).toMatchObject({
       conversationReadOrigin: "direct-operator",
     });
@@ -2973,6 +2975,35 @@ describe("gateway send mirroring", () => {
     const actionCall = lastDispatchChannelMessageActionCall();
     expect(actionCall?.mediaLocalRoots).toContain(TEST_AGENT_WORKSPACE);
     expect(actionCall?.gatewayClientScopes).toEqual(["operator.write"]);
+  });
+
+  it("passes workspace-bearing media access so relative media paths resolve (#114299)", async () => {
+    registerMessageActionPlugin({
+      action: "sendAttachment",
+      registrySuffix: "message-action-media-workspace",
+    });
+
+    // Workspace-relative source, as emitted by cron/heartbeat/subagent runs.
+    const { respond } = await runMessageActionRequest(
+      {
+        channel: "telegram",
+        action: "sendAttachment",
+        params: { chatId: "123", mediaUrl: "work/report/report.md" },
+        agentId: "work",
+        idempotencyKey: "idem-message-action-media-workspace",
+      },
+      { connect: { scopes: ["operator.write"] } },
+    );
+
+    expect(firstRespondCall(respond)[0]).toBe(true);
+    const actionCall = lastDispatchChannelMessageActionCall();
+    // Relative sources must be workspace-resolved before dispatch: channel
+    // action handlers consume split roots fields and cannot recover the
+    // workspace base once params cross the plugin boundary.
+    expect(actionCall?.params?.mediaUrl).toBe(`${TEST_AGENT_WORKSPACE}/work/report/report.md`);
+    expect(actionCall?.mediaAccess?.workspaceDir).toBe(TEST_AGENT_WORKSPACE);
+    expect(actionCall?.mediaAccess?.localRoots).toContain(TEST_AGENT_WORKSPACE);
+    expect(actionCall?.mediaLocalRoots).toContain(TEST_AGENT_WORKSPACE);
   });
 
   it("materializes buffer-only message.action sends on the gateway before plugin dispatch", async () => {

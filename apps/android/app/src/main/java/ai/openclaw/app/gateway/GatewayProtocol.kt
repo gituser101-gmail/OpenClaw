@@ -456,6 +456,7 @@ enum class GatewayMethod(
   PluginsRefresh("plugins.refresh"),
   ControlUiSessionPullRequests("controlUi.sessionPullRequests"),
   GatewaySuspendPrepare("gateway.suspend.prepare"),
+  GatewayRestoreStatus("gateway.restore.status"),
   GatewaySuspendStatus("gateway.suspend.status"),
   GatewaySuspendResume("gateway.suspend.resume"),
   ChatToolTitles("chat.toolTitles"),

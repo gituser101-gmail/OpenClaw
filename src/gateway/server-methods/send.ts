@@ -834,6 +834,7 @@ export const sendHandlers: GatewayRequestHandlers = {
           sessionKey: outboundSessionKey,
           conversationType: outboundRoute?.chatType,
         });
+        const senderLocalRoots = getAgentScopedMediaLocalRoots(cfg, effectiveAgentId);
         const send = await sendDurableMessageBatch({
           cfg,
           channel: outboundChannel,
@@ -849,6 +850,9 @@ export const sendHandlers: GatewayRequestHandlers = {
           gatewayClientScopes: client?.connect?.scopes ?? [],
           silent: request.silent,
           formatting: request.parseMode ? { parseMode: request.parseMode } : undefined,
+          mediaAccess: {
+            localRoots: senderLocalRoots,
+          },
           mirror: outboundSessionKey
             ? {
                 sessionKey: outboundSessionKey,

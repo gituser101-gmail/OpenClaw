@@ -452,7 +452,7 @@ export type PluginManifestContracts = {
   usageProviders?: string[];
   migrationProviders?: string[];
   gatewayMethodDispatch?: string[];
-  /** Reserved entitlement for observing anonymous process-wide Talk activity. */
+  /** Declares a request to observe anonymous process-wide Talk activity. */
   talkActivityObservation?: string[];
   tools?: string[];
 };

@@ -677,6 +677,14 @@ export function createPluginRuntimeResolver(state: PluginRegistryState) {
                   `Plugin "${pluginId}" must declare contracts.talkActivityObservation: ["process-wide"] to observe Talk activity.`,
                 );
               }
+              if (
+                record.origin !== "bundled" &&
+                !(record.enabled && record.explicitlyEnabled === true)
+              ) {
+                throw new Error(
+                  `Plugin "${pluginId}" must be explicitly enabled by the operator to observe process-wide Talk activity.`,
+                );
+              }
               return talk.onActivity(listener);
             },
           } satisfies PluginRuntime["talk"];

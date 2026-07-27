@@ -386,6 +386,7 @@ const CORE_GATEWAY_METHOD_SPECS: readonly CoreGatewayMethodSpec[] = [
     startup: true,
     controlPlaneWrite: true,
   },
+  { name: "gateway.restore.status", scope: "operator.read", since: "2026.7" },
   { name: "gateway.suspend.status", scope: "operator.read", since: "2026.7" },
   // Resume is the safety escape hatch and must not sit behind write-rate limiting.
   { name: "gateway.suspend.resume", scope: "operator.admin", since: "2026.7" },

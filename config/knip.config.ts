@@ -337,6 +337,9 @@ const config = {
     "scripts/**/*.d.{mts,ts}",
     "**/live-*.ts",
     "src/secrets/credential-matrix.ts",
+    // PR 112385 proves this private RFC slice before its hidden production
+    // caller lands in the next stacked PR.
+    "src/snapshot/recovery-point.ts",
     "src/shared/text/assistant-visible-text.ts",
     bundledPluginFile("telegram", "src/bot/reply-threading.ts"),
     bundledPluginFile("telegram", "src/draft-chunking.ts"),
@@ -375,6 +378,15 @@ const config = {
     // asserted by the focused Beam mirror tests; production wires only the service.
     "extensions/beam/src/mirror.ts": ["exports", "types"],
     "src/infra/heartbeat-wake.ts": ["exports"],
+    // Private RFC 0013 recovery helpers are direct unit-test contracts until
+    // their hidden host-facing caller lands in the next stacked slice.
+    "src/snapshot/recovery-point.ts": ["exports"],
+    // The hidden final-capture request contract is imported directly by its
+    // focused tests before a production host adapter exists.
+    "src/snapshot/final-recovery-point.ts": ["exports", "types"],
+    // The hidden restore request/descriptor contracts are imported directly by
+    // focused tests while production reaches them through the command/startup paths.
+    "src/snapshot/restored-recovery-point.ts": ["exports", "types"],
   },
   workspaces: {
     ".": {

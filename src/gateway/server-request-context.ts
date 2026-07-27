@@ -23,6 +23,7 @@ type GatewayRequestContextClient = GatewayClient & {
 type GatewayRequestContextParams = {
   deps: GatewayRequestContext["deps"];
   runtimeState: Pick<GatewayServerLiveState, "cronState" | "configReloader">;
+  getRestoredAdmissionStatus: GatewayRequestContext["getRestoredAdmissionStatus"];
   getRuntimeConfig: GatewayRequestContext["getRuntimeConfig"];
   sessionCompanion: SessionCompanionService;
   sessionObserver: SessionObserverService;
@@ -151,6 +152,7 @@ export function createGatewayRequestContext(
 ): GatewayRequestContextWithClientLookup {
   const context: GatewayRequestContextWithClientLookup = {
     deps: params.deps,
+    getRestoredAdmissionStatus: params.getRestoredAdmissionStatus,
     // Keep cron reads live so config hot reload can swap cron/store state without rebuilding
     // every handler closure that already holds this request context.
     get cron() {

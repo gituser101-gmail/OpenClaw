@@ -40,6 +40,7 @@ import { NODE_PAIR_GATEWAY_METHODS } from "./server-methods-node-methods.js";
 import { createLazyCoreHandlers, lazyHandlerModule } from "./server-methods/lazy-core-handlers.js";
 import { SKILLS_GATEWAY_METHOD_NAMES } from "./server-methods/skills-method-names.js";
 import type {
+  GatewayRequestContext,
   GatewayRequestHandler,
   GatewayRequestHandlers,
   GatewayRequestOptions,
@@ -209,6 +210,10 @@ const loadRestartHandlers = lazyHandlerModule(
   () => import("./server-methods/restart.js"),
   (module) => module.restartHandlers,
 );
+const loadRestoreHandlers = lazyHandlerModule(
+  () => import("./server-methods/restore.js"),
+  (module) => module.restoreHandlers,
+);
 const loadSuspendHandlers = lazyHandlerModule(
   () => import("./server-methods/suspend.js"),
   (module) => module.suspendHandlers,
@@ -370,8 +375,17 @@ const SUSPEND_CONTROL_METHODS = new Set([
   "gateway.suspend.resume",
 ]);
 
-function isGatewayMethodAllowedDuringSuspension(method: string): boolean {
-  return SUSPEND_CONTROL_METHODS.has(method);
+function isGatewayMethodAllowedDuringSuspension(
+  method: string,
+  context: GatewayRequestContext,
+): boolean {
+  if (SUSPEND_CONTROL_METHODS.has(method)) {
+    return true;
+  }
+  return (
+    method === "gateway.restore.status" &&
+    context.getRestoredAdmissionStatus().status !== "not-restored"
+  );
 }
 
 export const coreGatewayHandlers: GatewayRequestHandlers = {
@@ -825,6 +839,10 @@ export const coreGatewayHandlers: GatewayRequestHandlers = {
     loadHandlers: loadRestartHandlers,
   }),
   ...createLazyCoreHandlers({
+    methods: ["gateway.restore.status"],
+    loadHandlers: loadRestoreHandlers,
+  }),
+  ...createLazyCoreHandlers({
     methods: ["gateway.suspend.prepare", "gateway.suspend.status", "gateway.suspend.resume"],
     loadHandlers: loadSuspendHandlers,
   }),
@@ -1052,7 +1070,7 @@ export async function handleGatewayRequest(
     );
     return;
   }
-  if (!rootWorkAdmission && !isGatewayMethodAllowedDuringSuspension(req.method)) {
+  if (!rootWorkAdmission && !isGatewayMethodAllowedDuringSuspension(req.method, context)) {
     const restartDraining = isGatewayRestartDraining();
     respond(
       false,

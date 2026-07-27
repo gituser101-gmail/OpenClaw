@@ -83,7 +83,7 @@ const PHASE_SIGNAL_HALF_LIFE_DAYS = 14;
 const DREAMING_TRANSCRIPT_PROMPT_LINE_RE =
   /\[[^\]]*dreaming-narrative[^\]]*]\s*(?:User|Assistant):\s*Write a dream diary entry from these memory fragments:?/i;
 const RAW_SESSION_METADATA_RE =
-  /Session Key.{0,260}Session ID|Session ID.{0,260}Session Key/i;
+  /Session Key.{0,260}Session ID|Session ID.{0,260}Session Key/i;
 const RAW_CONVERSATION_SUMMARY_RE = /^(?:[-*+]\s*)?Conversation Summary:/i;
 const RAW_TRANSCRIPT_TURN_RE = /^(?:[-*+]\s*)?(?:user|assistant):\s/i;
 const MEMORY_FLUSH_PROMPT_RE =
@@ -416,7 +416,7 @@ function hasDreamingNarrativeLead(snippet: string): boolean {
   // the lead check to anywhere in the first 200 chars closes the leak without creating
   // false positives for ordinary durable notes that merely mention the word in prose.
   const head = withoutPrefix.slice(0, 200);
-  return /(?:Candidate|Reflections?):/i.test(head);
+  return /(?:Candidate|Reflections?):/i.test(head);
 }
 
 function isContaminatedDreamingSnippet(
@@ -440,17 +440,17 @@ function isContaminatedDreamingSnippet(
   }
 
   const hasNarrativeLead = hasDreamingNarrativeLead(snippet);
-  const hasConfidence = /confidence:\s*\d/i.test(snippet);
-  const hasEvidence = /evidence:\s*(?:memory\/\.dreams\/session-corpus\/|memory\/)/i.test(
+  const hasConfidence = /confidence:\s*\d/i.test(snippet);
+  const hasEvidence = /evidence:\s*(?:memory\/\.dreams\/session-corpus\/|memory\/)/i.test(
     snippet,
   );
-  const hasStatus = /status:\s*staged/i.test(snippet);
-  const hasRecalls = /recalls:\s*\d+/i.test(snippet);
+  const hasStatus = /status:\s*staged/i.test(snippet);
+  const hasRecalls = /recalls:\s*\d+/i.test(snippet);
   return hasNarrativeLead && hasConfidence && hasEvidence && hasStatus && hasRecalls;
 }
 
 function normalizeMemoryPath(rawPath: string): string {
-  return rawPath.replaceAll("\", "/").replace(/^\.\//, "");
+  return rawPath.replaceAll("\\", "/").replace(/^\.\//, "");
 }
 
 function buildClaimHash(snippet: string): string {
@@ -2321,8 +2321,7 @@ async function rehydratePromotionCandidate(
       throw err;
     }
 
-    const lines = rawSource.split(/?
-/);
+    const lines = rawSource.split(/\r?\n/);
     const relocated = relocateCandidateRange(lines, candidate);
     if (!relocated) {
       continue;
@@ -2366,8 +2365,7 @@ function buildPromotionSection(
   }
 
   lines.push("");
-  return lines.join("
-");
+  return lines.join("\n");
 }
 
 function resolvePromotedSnippetCharLimit(maxTokens: number): number {
@@ -2411,9 +2409,7 @@ function withTrailingNewline(content: string): string {
   if (!content) {
     return "";
   }
-  return content.endsWith("
-") ? content : `${content}
-`;
+  return content.endsWith("\n") ? content : `${content}\n`;
 }
 
 async function resolveMemoryWritePath(filePath: string): Promise<string> {
@@ -2442,9 +2438,9 @@ async function resolveMemoryWritePath(filePath: string): Promise<string> {
     }
     throw err;
   }
-  const isWindowsRootRelative = process.platform === "win32" && /^[\/](?![\/])/.test(linkTarget);
+  const isWindowsRootRelative = process.platform === "win32" && /^[\\/](?![\\/])/.test(linkTarget);
   const targetPath = isWindowsRootRelative
-    ? `${path.parse(parentPath).root.replace(/[\/]$/, "")}${linkTarget}`
+    ? `${path.parse(parentPath).root.replace(/[\\/]$/, "")}${linkTarget}`
     : path.isAbsolute(linkTarget)
       ? linkTarget
       : `${parentPath}${parentPath.endsWith(path.sep) ? "" : path.sep}${linkTarget}`;
@@ -2478,8 +2474,7 @@ function extractPromotionMarkers(memoryText: string): Set<string> {
   // Marker keys include source paths, so spaces are valid. Capture until the
   // comment close; otherwise a path like "memory/project alpha/..." is missed
   // and the same candidate can be appended again.
-  const matches = memoryText.matchAll(/<!--\s*openclaw-memory-promotion:([^
-]*?)\s*-->/gi);
+  const matches = memoryText.matchAll(/<!--\s*openclaw-memory-promotion:([^\n]*?)\s*-->/gi);
   for (const match of matches) {
     const key = match[1]?.trim();
     if (key) {
@@ -2595,9 +2590,7 @@ export async function applyShortTermPromotions(
       });
       compactedDates = compaction.droppedDates;
       const baseMemory = compaction.compacted;
-      const header = baseMemory.trim().length > 0 ? "" : "# Long-Term Memory
-
-";
+      const header = baseMemory.trim().length > 0 ? "" : "# Long-Term Memory\n\n";
       const content = `${header}${withTrailingNewline(baseMemory)}${section}`;
       const memoryDirMode = (await fs.stat(path.dirname(memoryWritePath))).mode & 0o7777;
       let atomicRenameCommitted = false;

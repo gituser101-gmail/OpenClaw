@@ -350,6 +350,7 @@ async function getSupplementMemoryReadResult(params: {
   agentSessionKey?: string;
   sandboxed?: boolean;
   corpus?: "memory" | "wiki" | "all";
+  workspaceDir?: string;
 }) {
   const supplement = await getMemoryCorpusSupplementResult({
     lookup: params.relPath,
@@ -416,7 +417,6 @@ async function executeMemoryReadResult(params: {
   agentId?: string;
   agentSessionKey?: string;
   sandboxed?: boolean;
-  workspaceDir?: string;
 }) {
   try {
     const result = await params.read();

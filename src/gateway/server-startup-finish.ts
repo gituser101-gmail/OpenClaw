@@ -142,6 +142,7 @@ export async function finishGatewayStartup(params: {
     nodeReapprovalCoordinator,
     preauthHandshakeTimeoutMs,
     isGatewayStartupPending,
+    getReadiness,
     attachedGatewayExtraHandlers,
     startListening,
     loadStartupPluginsModule,
@@ -214,6 +215,7 @@ export async function finishGatewayStartup(params: {
       loadGatewayModelCatalog,
       loadGatewayModelCatalogSnapshot,
       getHealthCache,
+      getReadiness,
       refreshHealthSnapshot: refreshGatewayHealthSnapshotWithRuntime,
       logHealth,
       logGateway: log,
@@ -617,14 +619,14 @@ export async function finishGatewayStartup(params: {
     onCronRestart: () => {
       cronStartState.handled = true;
     },
-    prepareTerminalConfig: (plan, nextConfig) => {
-      terminalLaunchPolicy.prepareConfig(nextConfig, { restartPending: plan.restartGateway });
-    },
+    prepareTerminalConfig: (plan, nextConfig) =>
+      terminalLaunchPolicy.prepareConfig(nextConfig, { restartPending: plan.restartGateway }),
     reconcileTerminalSessions: () => {
       terminalSessions.closeDisallowedAgents((agentId) => terminalLaunchPolicy.resolve(agentId).ok);
     },
     commitTerminalConfig: (nextConfig) => {
       terminalLaunchPolicy.commitConfig();
+      pluginRuntime.readinessSnapshot = { config: nextConfig, registry: pluginRuntime.registry };
       workerLiveEvents?.rebindAll(nextConfig);
     },
     acceptTerminalConfig: terminalLaunchPolicy.acceptConfig,

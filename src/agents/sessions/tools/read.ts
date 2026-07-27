@@ -1,5 +1,5 @@
 import { constants } from "node:fs";
-import { access as fsAccess, readFile as fsReadFile } from "node:fs/promises";
+import { access as fsAccess, readFile as fsReadFile, stat as fsStat } from "node:fs/promises";
 import { basename, dirname, isAbsolute, relative, resolve as resolvePath, sep } from "node:path";
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
@@ -137,8 +137,10 @@ export interface ReadOperations {
   decodeText?: (params: { buffer: Buffer; absolutePath: string }) => string;
   /** Read file contents as a Buffer */
   readFile: (absolutePath: string) => Promise<Buffer>;
-  /** Check if file is readable (throw if not) */
+  /** Check if file is readable (throw if not). Directories also pass. */
   access: (absolutePath: string) => Promise<void>;
+  /** Stat a path. Default local backend rejects directories before readFile. */
+  stat?: (absolutePath: string) => Promise<{ isDirectory: () => boolean }>;
   /** Detect image MIME type, return null or undefined for non-images */
   detectImageMimeType?: (absolutePath: string) => Promise<string | null | undefined>;
 }
@@ -148,6 +150,7 @@ const defaultReadOperations: ReadOperations = {
   decodeText: ({ buffer }) => decodeWindowsTextFileBuffer({ buffer }),
   readFile: (path) => fsReadFile(path),
   access: (path) => fsAccess(path, constants.R_OK),
+  stat: (path) => fsStat(path),
   detectImageMimeType: detectSupportedImageMimeTypeFromFile,
 };
 
@@ -374,6 +377,16 @@ export function createReadToolDefinition(
             await ops.access(absolutePath);
             if (aborted) {
               return;
+            }
+            // Reject directories early so the model gets a useful error
+            // instead of a raw EISDIR from readFile.
+            if (ops.stat) {
+              const fileStat = await ops.stat(absolutePath);
+              if (fileStat.isDirectory()) {
+                throw new Error(
+                  `Path is a directory, not a file: ${path}. Use ls or tree to list directory contents.`,
+                );
+              }
             }
             const mimeType = ops.detectImageMimeType
               ? await ops.detectImageMimeType(absolutePath)

@@ -1780,6 +1780,7 @@
                 "group": "CLI commands",
                 "pages": [
                   "cli/index",
+                  "cli/commands",
                   {
                     "group": "Gateway and service",
                     "pages": [
@@ -1837,6 +1838,7 @@
                     "pages": [
                       "cli/approvals",
                       "cli/browser",
+                      "cli/commands",
                       "cli/cron",
                       "cli/flows",
                       "cli/node",

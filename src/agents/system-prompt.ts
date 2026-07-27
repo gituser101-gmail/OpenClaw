@@ -41,6 +41,10 @@ import {
   buildFullBootstrapPromptLines,
   buildLimitedBootstrapPromptLines,
 } from "./bootstrap-prompt.js";
+import {
+  buildCommandInventoryPromptSection,
+  type CommandInventoryPromptInput,
+} from "./command-inventory-prompt.js";
 import type { ResolvedTimeFormat } from "./date-time.js";
 import type { EmbeddedContextFile } from "./embedded-agent-helpers.js";
 import type {
@@ -750,6 +754,8 @@ export function buildAgentSystemPrompt(params: {
   nativeCommandNames?: string[];
   /** Plugin-owned prompt guidance for registered native slash commands. */
   nativeCommandGuidanceLines?: string[];
+  /** Run-scoped command inventory supplied by a trusted runtime caller. */
+  commandInventory?: CommandInventoryPromptInput;
   runtimeInfo?: {
     agentId?: string;
     sessionKey?: string;
@@ -1019,6 +1025,14 @@ export function buildAgentSystemPrompt(params: {
   const skillWorkshopSection = availableTools.has(SKILL_WORKSHOP_TOOL_NAME)
     ? buildSkillWorkshopPromptSection()
     : [];
+  const commandInventorySection =
+    isMinimal || !params.commandInventory
+      ? []
+      : buildCommandInventoryPromptSection({
+          availableTools,
+          hostCliAvailable: !sandboxedRuntime,
+          ...params.commandInventory,
+        });
   const memorySection = buildMemorySection({
     isMinimal,
     includeMemorySection: params.includeMemorySection,
@@ -1327,6 +1341,7 @@ export function buildAgentSystemPrompt(params: {
   // Channel/session-specific guidance lives below the cache boundary so large
   // stable workspace context can remain a byte-identical prefix across turns.
   lines.push(
+    ...commandInventorySection,
     // Approval UI and owner identity vary by turn, so keep both below the stable prefix.
     // A tool_call_style override owns the complete section and suppresses default guidance.
     ...(providerSectionOverrides.tool_call_style

@@ -1407,6 +1407,12 @@ Do not edit it by hand; run `pnpm docs:map:gen`.
   - H2: Command reference
   - H2: See also
 
+## cli/commands.md
+
+- Route: /cli/commands
+- Headings:
+  - H1: Command inventory
+
 ## cli/commitments.md
 
 - Route: /cli/commitments
@@ -1674,6 +1680,7 @@ Do not edit it by hand; run `pnpm docs:map:gen`.
 
 - Route: /cli
 - Headings:
+  - H2: Command inventory
   - H2: Command pages
   - H2: Global flags
   - H2: Output modes

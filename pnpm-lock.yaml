@@ -590,6 +590,19 @@ importers:
         specifier: workspace:*
         version: link:../../packages/plugin-sdk
 
+  extensions/claude:
+    dependencies:
+      '@zeroaltitude/openclaw-claude-bridge':
+        specifier: 0.7.1
+        version: 0.7.1(@anthropic-ai/sdk@0.112.3(zod@4.4.3))(supports-color@10.2.2)(zod@4.4.3)
+      zod:
+        specifier: 4.4.3
+        version: 4.4.3
+    devDependencies:
+      '@openclaw/plugin-sdk':
+        specifier: workspace:*
+        version: link:../../packages/plugin-sdk
+
   extensions/clawrouter:
     devDependencies:
       '@openclaw/plugin-sdk':
@@ -927,6 +940,12 @@ importers:
       '@clack/prompts':
         specifier: 1.7.0
         version: 1.7.0
+    devDependencies:
+      '@openclaw/plugin-sdk':
+        specifier: workspace:*
+        version: link:../../packages/plugin-sdk
+
+  extensions/glm-bridge:
     devDependencies:
       '@openclaw/plugin-sdk':
         specifier: workspace:*
@@ -2261,13 +2280,13 @@ importers:
 
   packages/retry: {}
 
-  packages/session-url-contract: {}
-
   packages/sdk:
     dependencies:
       '@openclaw/gateway-client':
         specifier: workspace:*
         version: link:../gateway-client
+
+  packages/session-url-contract: {}
 
   packages/speech-core:
     dependencies:
@@ -2452,13 +2471,29 @@ packages:
     cpu: [arm64]
     os: [darwin]
 
+  '@anthropic-ai/claude-agent-sdk-darwin-arm64@0.3.220':
+    resolution: {integrity: sha512-7VxlbEosK7DODiOnsjoVd0DSJzbnaPrM2jelMHI0y8zx1UnLS3WC6EFUXbvy74F2sXqEznh2tzn7EKWInaRN6Q==}
+    cpu: [arm64]
+    os: [darwin]
+
   '@anthropic-ai/claude-agent-sdk-darwin-x64@0.3.207':
     resolution: {integrity: sha512-1o7K4EYqyCixZ/oeOZSh7AzSy6TM86xoOuf4VuORjPSS31hBnoqY0NGZd27+2VDs9LGtsdksmsTqcNGx9xd1hA==}
     cpu: [x64]
     os: [darwin]
 
+  '@anthropic-ai/claude-agent-sdk-darwin-x64@0.3.220':
+    resolution: {integrity: sha512-X9RwDsSmbF6ultKZroaip+DL8WRgC64gHbrAwrRlAFSPNZV7zmJyP2ur8rW7KrxqmtuehdMMkw8+SAC/6hD2PA==}
+    cpu: [x64]
+    os: [darwin]
+
   '@anthropic-ai/claude-agent-sdk-linux-arm64-musl@0.3.207':
     resolution: {integrity: sha512-oPj+g2DslhH4Y9nCTs7al4t9wZv78FZwLFQwOCg99BXuz1o0ZOpKmxyvR7J9eBR+GPszeMMS8gYplQTiZC9o2w==}
+    cpu: [arm64]
+    os: [linux]
+    libc: [musl]
+
+  '@anthropic-ai/claude-agent-sdk-linux-arm64-musl@0.3.220':
+    resolution: {integrity: sha512-OHoZOZ8Cf2TBr6oXIXPwyvUxj9jrq2w8E4poA8dMpacXszcPSPiCQCMuuOh4aWJzfeJE1+TtWxhKMVb2csXyZQ==}
     cpu: [arm64]
     os: [linux]
     libc: [musl]
@@ -2469,8 +2504,20 @@ packages:
     os: [linux]
     libc: [glibc]
 
+  '@anthropic-ai/claude-agent-sdk-linux-arm64@0.3.220':
+    resolution: {integrity: sha512-WkROPwWskqhKR9XgnmseHQ6rLi9zM9qt57IWoToIjL/eXOqDWipp7JXZ1L5ud+LrA42dunHPZfBwD/vXZ+A7LA==}
+    cpu: [arm64]
+    os: [linux]
+    libc: [glibc]
+
   '@anthropic-ai/claude-agent-sdk-linux-x64-musl@0.3.207':
     resolution: {integrity: sha512-uRv+D5oG/7EYr41FAJ9IPo2pZYBe2ZMaA6nSHCeizsgPxCSMtl5bNppmU21+jZJvo4hivObEgkGFERAhdGqygg==}
+    cpu: [x64]
+    os: [linux]
+    libc: [musl]
+
+  '@anthropic-ai/claude-agent-sdk-linux-x64-musl@0.3.220':
+    resolution: {integrity: sha512-K+FWj+LcGhC1Z7wqeWoLxm1iemcba5xKpLLFVwYm4V6HyMx3ruYd/2r2TiQtjT+JWeNFWIys0ScHiItR6vWAiA==}
     cpu: [x64]
     os: [linux]
     libc: [musl]
@@ -2481,8 +2528,19 @@ packages:
     os: [linux]
     libc: [glibc]
 
+  '@anthropic-ai/claude-agent-sdk-linux-x64@0.3.220':
+    resolution: {integrity: sha512-tkTJFnpR9VifvWX2fmkCAPkT6+8Wk/gVu8B5jsVekKZPiZoWRHmMXO30BnZn+f0TZhgYP+82PSX3S8crH1kn+w==}
+    cpu: [x64]
+    os: [linux]
+    libc: [glibc]
+
   '@anthropic-ai/claude-agent-sdk-win32-arm64@0.3.207':
     resolution: {integrity: sha512-9fWpUzfkXlPAg2tf8JpQe7w9avFaomAUbfAwyAmykQgSIf66LwaJjvI5hNqhNqczRKyfsXPn3ei2S5HKlmFP+Q==}
+    cpu: [arm64]
+    os: [win32]
+
+  '@anthropic-ai/claude-agent-sdk-win32-arm64@0.3.220':
+    resolution: {integrity: sha512-rIwgq0UwQExWl6KrHUyC4w5KwpL9l6nd95aUTx6RitexaAuEw//xtfTVLnuE4hDDQZFkzEwpdKc3nxDWoGcUbA==}
     cpu: [arm64]
     os: [win32]
 
@@ -2491,8 +2549,21 @@ packages:
     cpu: [x64]
     os: [win32]
 
+  '@anthropic-ai/claude-agent-sdk-win32-x64@0.3.220':
+    resolution: {integrity: sha512-MuOuXhbr66HlGaWXD2f3w0k2PsvmnbkwcUZ0dAe2poFLdl72GC2dapwwOBefxm9QmoNqk9+jmv/dSKGOVWyvLw==}
+    cpu: [x64]
+    os: [win32]
+
   '@anthropic-ai/claude-agent-sdk@0.3.207':
     resolution: {integrity: sha512-y0PkQRmQBi96MHiN5Xzfq+GaddxCZCqI/cXEQBLYBLXGa4i1nDSlulQqkMBj2RorrrSGQJ6Wdw+uhu6OfHNPzA==}
+    engines: {node: '>=18.0.0'}
+    peerDependencies:
+      '@anthropic-ai/sdk': 0.112.3
+      '@modelcontextprotocol/sdk': ^1.29.0
+      zod: ^4.0.0
+
+  '@anthropic-ai/claude-agent-sdk@0.3.220':
+    resolution: {integrity: sha512-glc7SdwPkOkLw8oxwLo9PKTdLJGqW/PIR4urWXFoRtX9YllwozsEVc5Tc1+EvLSkfrsxPJqQWqOgpjUOQXf1oA==}
     engines: {node: '>=18.0.0'}
     peerDependencies:
       '@anthropic-ai/sdk': 0.112.3
@@ -5307,6 +5378,11 @@ packages:
 
   '@wasm-audio-decoders/opus-ml@0.0.2':
     resolution: {integrity: sha512-58rWEqDGg+CKCyEeKm2KoxxSwTWtHh/NLTW9ObR4K8CGF6VwuuGudEI1CtniS/oSRmL1nJq/eh8MKARiluw4DQ==}
+
+  '@zeroaltitude/openclaw-claude-bridge@0.7.1':
+    resolution: {integrity: sha512-OC3wDC9B++7pV63a7c4bCICMKBSO+vuWH2pl33BTpaNAvp8pCnZU2Bs9J8LXlekVvNwuGTd/DEV8JuBCxAzyAg==}
+    engines: {node: '>=22.0.0'}
+    hasBin: true
 
   abort-controller@3.0.0:
     resolution: {integrity: sha512-h8lQ8tacZYnR3vNQTgibj+tODHI5/+l06Au2Pcriv/Gmet0eaj4TwWH41sO9wnHDiQsEj19q0drzdWdeAHtweg==}
@@ -9046,25 +9122,49 @@ snapshots:
   '@anthropic-ai/claude-agent-sdk-darwin-arm64@0.3.207':
     optional: true
 
+  '@anthropic-ai/claude-agent-sdk-darwin-arm64@0.3.220':
+    optional: true
+
   '@anthropic-ai/claude-agent-sdk-darwin-x64@0.3.207':
+    optional: true
+
+  '@anthropic-ai/claude-agent-sdk-darwin-x64@0.3.220':
     optional: true
 
   '@anthropic-ai/claude-agent-sdk-linux-arm64-musl@0.3.207':
     optional: true
 
+  '@anthropic-ai/claude-agent-sdk-linux-arm64-musl@0.3.220':
+    optional: true
+
   '@anthropic-ai/claude-agent-sdk-linux-arm64@0.3.207':
+    optional: true
+
+  '@anthropic-ai/claude-agent-sdk-linux-arm64@0.3.220':
     optional: true
 
   '@anthropic-ai/claude-agent-sdk-linux-x64-musl@0.3.207':
     optional: true
 
+  '@anthropic-ai/claude-agent-sdk-linux-x64-musl@0.3.220':
+    optional: true
+
   '@anthropic-ai/claude-agent-sdk-linux-x64@0.3.207':
+    optional: true
+
+  '@anthropic-ai/claude-agent-sdk-linux-x64@0.3.220':
     optional: true
 
   '@anthropic-ai/claude-agent-sdk-win32-arm64@0.3.207':
     optional: true
 
+  '@anthropic-ai/claude-agent-sdk-win32-arm64@0.3.220':
+    optional: true
+
   '@anthropic-ai/claude-agent-sdk-win32-x64@0.3.207':
+    optional: true
+
+  '@anthropic-ai/claude-agent-sdk-win32-x64@0.3.220':
     optional: true
 
   '@anthropic-ai/claude-agent-sdk@0.3.207(@anthropic-ai/sdk@0.112.3(zod@4.4.3))(@modelcontextprotocol/sdk@1.29.0(supports-color@10.2.2)(zod@4.4.3))(zod@4.4.3)':
@@ -9081,6 +9181,21 @@ snapshots:
       '@anthropic-ai/claude-agent-sdk-linux-x64-musl': 0.3.207
       '@anthropic-ai/claude-agent-sdk-win32-arm64': 0.3.207
       '@anthropic-ai/claude-agent-sdk-win32-x64': 0.3.207
+
+  '@anthropic-ai/claude-agent-sdk@0.3.220(@anthropic-ai/sdk@0.112.3(zod@4.4.3))(@modelcontextprotocol/sdk@1.29.0(supports-color@10.2.2)(zod@4.4.3))(zod@4.4.3)':
+    dependencies:
+      '@anthropic-ai/sdk': 0.112.3(zod@4.4.3)
+      '@modelcontextprotocol/sdk': 1.29.0(supports-color@10.2.2)(zod@4.4.3)
+      zod: 4.4.3
+    optionalDependencies:
+      '@anthropic-ai/claude-agent-sdk-darwin-arm64': 0.3.220
+      '@anthropic-ai/claude-agent-sdk-darwin-x64': 0.3.220
+      '@anthropic-ai/claude-agent-sdk-linux-arm64': 0.3.220
+      '@anthropic-ai/claude-agent-sdk-linux-arm64-musl': 0.3.220
+      '@anthropic-ai/claude-agent-sdk-linux-x64': 0.3.220
+      '@anthropic-ai/claude-agent-sdk-linux-x64-musl': 0.3.220
+      '@anthropic-ai/claude-agent-sdk-win32-arm64': 0.3.220
+      '@anthropic-ai/claude-agent-sdk-win32-x64': 0.3.220
 
   '@anthropic-ai/sdk@0.112.3(zod@4.4.3)':
     dependencies:
@@ -12214,6 +12329,17 @@ snapshots:
   '@wasm-audio-decoders/opus-ml@0.0.2':
     dependencies:
       '@wasm-audio-decoders/common': 9.0.7
+
+  '@zeroaltitude/openclaw-claude-bridge@0.7.1(@anthropic-ai/sdk@0.112.3(zod@4.4.3))(supports-color@10.2.2)(zod@4.4.3)':
+    dependencies:
+      '@anthropic-ai/claude-agent-sdk': 0.3.220(@anthropic-ai/sdk@0.112.3(zod@4.4.3))(@modelcontextprotocol/sdk@1.29.0(supports-color@10.2.2)(zod@4.4.3))(zod@4.4.3)
+      '@modelcontextprotocol/sdk': 1.29.0(supports-color@10.2.2)(zod@4.4.3)
+      ajv: 8.20.0
+    transitivePeerDependencies:
+      - '@anthropic-ai/sdk'
+      - '@cfworker/json-schema'
+      - supports-color
+      - zod
 
   abort-controller@3.0.0:
     dependencies:

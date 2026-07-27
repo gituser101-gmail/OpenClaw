@@ -213,6 +213,65 @@ describe("persistFollowupQueues / restoreFollowupQueues", () => {
     expect(restored?.currentInboundContext).toEqual(inboundContext);
   });
 
+  it("round-trips chat delivery identity and execution context through persist+restore", () => {
+    const run = makeRun();
+    run.chatType = "direct";
+    run.clientCaps = ["images", "voice"];
+    run.channelContext = { channelId: "telegram", to: "12345" };
+    run.spawnedBy = "agent:main:telegram:direct:seed";
+    run.approvalReviewerDeviceId = "device-7";
+    run.taskSuggestionDeliveryMode = "inline";
+    run.modelSelectionLocked = true;
+    run.fastMode = true;
+    run.fastModeAutoOnSeconds = 15;
+    run.fastModeOverride = true;
+    run.fastModeAutoOnSecondsOverride = true;
+    run.runTimeoutOverrideMs = 45_000;
+    run.cliSessionBindingFacts = { sessionKey: "agent:main:telegram:direct:12345" };
+    run.toolBindings = { search: { enabled: true } };
+    const queue = getFollowupQueue(TEST_KEY, SETTINGS);
+    queue.items.push({
+      ...makeFollowupRun("full route context"),
+      originatingChatId: "telegram-chat-1",
+      originatingReplyToMode: "quoted_reply",
+      run,
+    });
+
+    persistFollowupQueues();
+    FOLLOWUP_QUEUES.delete(TEST_KEY);
+    clearFollowupQueuesRestoredFlagForTest();
+    restoreFollowupQueues();
+
+    const restored = FOLLOWUP_QUEUES.get(TEST_KEY)?.items[0];
+    expect(restored?.originatingChatId).toBe("telegram-chat-1");
+    expect(restored?.originatingReplyToMode).toBe("quoted_reply");
+    expect(restored?.run.chatType).toBe("direct");
+    expect(restored?.run.clientCaps).toEqual(["images", "voice"]);
+    expect(restored?.run.channelContext).toEqual({ channelId: "telegram", to: "12345" });
+    expect(restored?.run.spawnedBy).toBe("agent:main:telegram:direct:seed");
+    expect(restored?.run.approvalReviewerDeviceId).toBe("device-7");
+    expect(restored?.run.taskSuggestionDeliveryMode).toBe("inline");
+    expect(restored?.run.modelSelectionLocked).toBe(true);
+    expect(restored?.run.fastMode).toBe(true);
+    expect(restored?.run.fastModeAutoOnSeconds).toBe(15);
+    expect(restored?.run.fastModeOverride).toBe(true);
+    expect(restored?.run.fastModeAutoOnSecondsOverride).toBe(true);
+    expect(restored?.run.runTimeoutOverrideMs).toBe(45_000);
+    expect(restored?.run.cliSessionBindingFacts).toEqual({
+      sessionKey: "agent:main:telegram:direct:12345",
+    });
+    expect(restored?.run.toolBindings).toEqual({ search: { enabled: true } });
+  });
+
+  it("skips malformed persisted queue rows during restore", () => {
+    replaceFollowupQueueEntries({
+      entries: [[TEST_KEY, { items: [{ prompt: 7, run: {} }], mode: "steer" }]],
+    });
+
+    expect(() => restoreFollowupQueues()).not.toThrow();
+    expect(FOLLOWUP_QUEUES.get(TEST_KEY)).toBeUndefined();
+  });
+
   it("round-trips bare session-reset transcript without current-turn context", () => {
     const queue = getFollowupQueue(TEST_KEY, SETTINGS);
     queue.items.push({

@@ -82,7 +82,16 @@ export function loadFollowupQueueEntries(stateDir?: string): Array<[string, unkn
       .orderBy("updated_at", "asc")
       .orderBy("queue_key", "asc"),
   ).rows as FollowupQueueRow[];
-  return rows.map((row) => [row.queue_key, JSON.parse(row.queue_json) as unknown]);
+  const entries: Array<[string, unknown]> = [];
+  for (const row of rows) {
+    try {
+      entries.push([row.queue_key, JSON.parse(row.queue_json) as unknown]);
+    } catch (err) {
+      // Skip only the corrupt row so one bad payload does not block restoring the rest.
+      console.warn(`Skipping corrupt followup queue entry ${row.queue_key}: ${String(err)}`);
+    }
+  }
+  return entries;
 }
 
 export function hasFollowupQueueEntries(stateDir?: string): boolean {

@@ -10,6 +10,33 @@ export function resolveLegacyFollowupQueueStatePath(stateDir: string): string {
   return path.join(stateDir, LEGACY_FOLLOWUP_QUEUE_STATE_FILENAME);
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isLegacyPersistedRun(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    typeof value.agentId === "string" &&
+    typeof value.sessionId === "string" &&
+    typeof value.provider === "string" &&
+    typeof value.model === "string"
+  );
+}
+
+function isLegacyPersistedItem(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    typeof value.prompt === "string" &&
+    typeof value.enqueuedAt === "number" &&
+    isLegacyPersistedRun(value.run)
+  );
+}
+
+function isLegacyQueueData(value: unknown): boolean {
+  return isRecord(value) && Array.isArray(value.items) && value.items.every(isLegacyPersistedItem);
+}
+
 /** Detect a retired followup-queue JSON sidecar left over from before SQLite persistence. */
 export function detectLegacyFollowupQueueSidecar(params: {
   stateDir: string;
@@ -57,7 +84,7 @@ export async function migrateLegacyFollowupQueueSidecar(params: {
       continue;
     }
     const key = typeof entry[0] === "string" ? entry[0] : undefined;
-    if (!key) {
+    if (!key || !isLegacyQueueData(entry[1])) {
       continue;
     }
     jsonEntries.set(key, entry[1]);

@@ -81,4 +81,25 @@ describe("followup-queue-sqlite", () => {
     replaceFollowupQueueEntries({ stateDir: tmpDir, entries: [] });
     expect(hasFollowupQueueEntries(tmpDir)).toBe(false);
   });
+
+  it("skips corrupt rows and still returns valid followup queue entries", () => {
+    replaceFollowupQueueEntries({
+      stateDir: tmpDir,
+      entries: [["agent:main:dm:good", { items: [{ prompt: "stored", enqueuedAt: 1 }] }]],
+    });
+    const databasePath = resolveOpenClawStateSqlitePath(process.env);
+    const { DatabaseSync } = requireNodeSqlite();
+    const db = new DatabaseSync(databasePath);
+    try {
+      db.prepare(
+        "INSERT INTO followup_queue_entries(queue_key, queue_json, updated_at) VALUES (?, ?, ?)",
+      ).run("agent:main:dm:bad", "{not-json", Date.now());
+    } finally {
+      db.close();
+    }
+
+    const entries = loadFollowupQueueEntries(tmpDir);
+    expect(entries).toHaveLength(1);
+    expect(entries[0][0]).toBe("agent:main:dm:good");
+  });
 });

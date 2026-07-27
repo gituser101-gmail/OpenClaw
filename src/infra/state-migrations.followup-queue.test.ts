@@ -122,7 +122,18 @@ describe("legacy followup queue sidecar doctor migration", () => {
         [
           queueKey,
           {
-            items: [{ prompt: "already in sqlite", enqueuedAt: 1, run: { agentId: "main" } }],
+            items: [
+              {
+                prompt: "already in sqlite",
+                enqueuedAt: 1,
+                run: {
+                  agentId: "main",
+                  sessionId: "sess-existing",
+                  provider: "anthropic",
+                  model: "claude",
+                },
+              },
+            ],
             mode: "steer",
             lastEnqueuedAt: 1,
             droppedCount: 0,
@@ -137,7 +148,18 @@ describe("legacy followup queue sidecar doctor migration", () => {
         [
           queueKey,
           {
-            items: [{ prompt: "stale json prompt", enqueuedAt: 2, run: { agentId: "main" } }],
+            items: [
+              {
+                prompt: "stale json prompt",
+                enqueuedAt: 2,
+                run: {
+                  agentId: "main",
+                  sessionId: "sess-sidecar",
+                  provider: "anthropic",
+                  model: "claude",
+                },
+              },
+            ],
             mode: "steer",
             lastEnqueuedAt: 2,
             droppedCount: 0,
@@ -158,6 +180,21 @@ describe("legacy followup queue sidecar doctor migration", () => {
     expect(entries).toHaveLength(1);
     const sqliteQueue = entries[0]?.[1] as { items?: Array<{ prompt?: string }> };
     expect(sqliteQueue.items?.[0]?.prompt).toBe("already in sqlite");
+  });
+
+  it("skips malformed legacy followup queue entries", async () => {
+    const stateDir = await useStateDir();
+    const sourcePath = await writeLegacySidecar(stateDir, {
+      version: 1,
+      entries: [["agent:main:dm:bad", { items: [{ prompt: 7, run: {} }] }]],
+    });
+
+    const detected = detectLegacyFollowupQueueSidecar({ stateDir });
+    const result = await migrateLegacyFollowupQueueSidecar({ detected, stateDir });
+
+    expect(result.warnings).toStrictEqual([]);
+    expect(result.changes).toContain(`Removed empty followup queue sidecar ${sourcePath}`);
+    expect(loadFollowupQueueEntries(stateDir)).toStrictEqual([]);
   });
 
   it("is a no-op when no legacy sidecar exists", async () => {

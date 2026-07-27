@@ -100,16 +100,22 @@ type PersistedRunFields = Pick<
   | "sessionKey"
   | "runtimePolicySessionKey"
   | "messageProvider"
+  | "clientCaps"
+  | "toolBindings"
+  | "chatType"
   | "agentAccountId"
   | "groupId"
   | "groupChannel"
   | "groupSpace"
+  | "spawnedBy"
   | "senderId"
+  | "channelContext"
   | "senderName"
   | "senderUsername"
   | "senderE164"
   | "senderIsOwner"
   | "traceAuthorized"
+  | "approvalReviewerDeviceId"
   | "sessionFile"
   | "workspaceDir"
   | "cwd"
@@ -119,20 +125,28 @@ type PersistedRunFields = Pick<
   | "modelOverrideSource"
   | "hasAutoFallbackProvenance"
   | "autoFallbackPrimaryProbe"
+  | "modelSelectionLocked"
   | "authProfileId"
   | "authProfileIdSource"
   | "thinkLevel"
+  | "fastMode"
+  | "fastModeAutoOnSeconds"
+  | "fastModeOverride"
+  | "fastModeAutoOnSecondsOverride"
   | "verboseLevel"
   | "reasoningLevel"
   | "elevatedLevel"
   | "execOverrides"
   | "bashElevated"
   | "timeoutMs"
+  | "runTimeoutOverrideMs"
   | "blockReplyBreak"
   | "ownerNumbers"
   | "inputProvenance"
   | "sourceReplyDeliveryMode"
+  | "taskSuggestionDeliveryMode"
   | "silentReplyPromptMode"
+  | "cliSessionBindingFacts"
   | "enforceFinalTag"
   | "skipProviderRuntimeHints"
   | "silentExpected"
@@ -165,6 +179,8 @@ type PersistedFollowupRun = Pick<
   | "originatingAccountId"
   | "originatingThreadId"
   | "originatingReplyToId"
+  | "originatingChatId"
+  | "originatingReplyToMode"
   | "originatingChatType"
 > & {
   run: PersistedRunFields;
@@ -189,16 +205,22 @@ const PERSISTED_RUN_FIELDS = [
   "sessionKey",
   "runtimePolicySessionKey",
   "messageProvider",
+  "clientCaps",
+  "toolBindings",
+  "chatType",
   "agentAccountId",
   "groupId",
   "groupChannel",
   "groupSpace",
+  "spawnedBy",
   "senderId",
+  "channelContext",
   "senderName",
   "senderUsername",
   "senderE164",
   "senderIsOwner",
   "traceAuthorized",
+  "approvalReviewerDeviceId",
   "sessionFile",
   "workspaceDir",
   "cwd",
@@ -208,20 +230,28 @@ const PERSISTED_RUN_FIELDS = [
   "modelOverrideSource",
   "hasAutoFallbackProvenance",
   "autoFallbackPrimaryProbe",
+  "modelSelectionLocked",
   "authProfileId",
   "authProfileIdSource",
   "thinkLevel",
+  "fastMode",
+  "fastModeAutoOnSeconds",
+  "fastModeOverride",
+  "fastModeAutoOnSecondsOverride",
   "verboseLevel",
   "reasoningLevel",
   "elevatedLevel",
   "execOverrides",
   "bashElevated",
   "timeoutMs",
+  "runTimeoutOverrideMs",
   "blockReplyBreak",
   "ownerNumbers",
   "inputProvenance",
   "sourceReplyDeliveryMode",
+  "taskSuggestionDeliveryMode",
   "silentReplyPromptMode",
+  "cliSessionBindingFacts",
   "enforceFinalTag",
   "skipProviderRuntimeHints",
   "silentExpected",
@@ -269,6 +299,37 @@ function resolveCurrentRunConfig(): OpenClawConfig {
   }
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isPersistedRunFields(value: unknown): value is PersistedRunFields {
+  return (
+    isRecord(value) &&
+    typeof value.agentId === "string" &&
+    typeof value.sessionId === "string" &&
+    typeof value.sessionFile === "string" &&
+    typeof value.workspaceDir === "string" &&
+    typeof value.provider === "string" &&
+    typeof value.model === "string" &&
+    typeof value.timeoutMs === "number" &&
+    (value.blockReplyBreak === "text_end" || value.blockReplyBreak === "message_end")
+  );
+}
+
+function isPersistedFollowupRun(value: unknown): value is PersistedFollowupRun {
+  return (
+    isRecord(value) &&
+    typeof value.prompt === "string" &&
+    typeof value.enqueuedAt === "number" &&
+    isPersistedRunFields(value.run)
+  );
+}
+
+function isPersistedQueueEntry(value: unknown): value is PersistedQueueEntry {
+  return isRecord(value) && Array.isArray(value.items) && value.items.every(isPersistedFollowupRun);
+}
+
 function rehydrateRun(run: PersistedRunFields, currentConfig: OpenClawConfig): FollowupRun["run"] {
   return { ...run, config: currentConfig };
 }
@@ -301,6 +362,10 @@ function toPersistedRun(item: FollowupRun): PersistedFollowupRun {
       : {}),
     ...(item.originatingReplyToId !== undefined
       ? { originatingReplyToId: item.originatingReplyToId }
+      : {}),
+    ...(item.originatingChatId !== undefined ? { originatingChatId: item.originatingChatId } : {}),
+    ...(item.originatingReplyToMode !== undefined
+      ? { originatingReplyToMode: item.originatingReplyToMode }
       : {}),
     ...(item.originatingChatType !== undefined
       ? { originatingChatType: item.originatingChatType }
@@ -364,10 +429,11 @@ export function restoreFollowupQueues(): void {
     const currentConfig = resolveCurrentRunConfig();
     for (const entry of entries) {
       const key = normalizeOptionalString(Array.isArray(entry) ? entry[0] : undefined);
-      const data = Array.isArray(entry) ? (entry[1] as Partial<PersistedQueueEntry>) : undefined;
-      if (!key || !data || !Array.isArray(data.items)) {
+      const rawData = Array.isArray(entry) ? entry[1] : undefined;
+      if (!key || !isPersistedQueueEntry(rawData)) {
         continue;
       }
+      const data = rawData;
       const rehydratedItems: FollowupRun[] = data.items.map((persisted) => ({
         ...persisted,
         run: rehydrateRun(persisted.run, currentConfig),
@@ -393,7 +459,7 @@ export function restoreFollowupQueues(): void {
         activeSummarySources: new WeakSet(),
         summaryElisions: [],
         evictedSummaryCount: 0,
-        ...(data.lastRun !== undefined
+        ...(isPersistedRunFields(data.lastRun)
           ? { lastRun: rehydrateRun(data.lastRun, currentConfig) }
           : {}),
       };

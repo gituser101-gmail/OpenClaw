@@ -452,8 +452,6 @@ export type PluginManifestContracts = {
   usageProviders?: string[];
   migrationProviders?: string[];
   gatewayMethodDispatch?: string[];
-  /** Declares a request to observe anonymous process-wide Talk activity. */
-  talkActivityObservation?: string[];
   tools?: string[];
 };
 

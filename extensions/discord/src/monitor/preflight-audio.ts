@@ -58,8 +58,8 @@ function collectAudioAttachments(
 export async function resolveDiscordPreflightAudioMentionContext(params: {
   message: {
     attachments?: DiscordAudioAttachment[];
-    content?: string;
   };
+  hasTypedText: boolean;
   isDirectMessage: boolean;
   shouldRequireMention: boolean;
   mentionRegexes: RegExp[];
@@ -72,7 +72,7 @@ export async function resolveDiscordPreflightAudioMentionContext(params: {
 }> {
   const audioAttachments = collectAudioAttachments(params.message.attachments);
   const hasAudioAttachment = audioAttachments.length > 0;
-  const hasTypedText = Boolean(params.message.content?.trim());
+  const hasTypedText = params.hasTypedText;
   const needsPreflightTranscription =
     hasAudioAttachment &&
     // Caption text suppresses preflight; media-only messages remain eligible.

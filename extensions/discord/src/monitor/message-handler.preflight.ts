@@ -67,6 +67,7 @@ import { resolveDiscordPreflightRoute } from "./message-handler.routing-prefligh
 import {
   resolveDiscordChannelInfo,
   resolveDiscordMessageChannelId,
+  resolveDiscordPrimaryContentText,
   resolveDiscordMessageText,
   resolveForwardedMediaList,
   resolveMediaList,
@@ -366,6 +367,7 @@ export async function preflightDiscordMessage(
   const baseText = resolveDiscordMessageText(message, {
     includeForwarded: false,
   });
+  const hasTypedText = Boolean(resolveDiscordPrimaryContentText(message));
 
   recordChannelActivity({
     channel: "discord",
@@ -580,15 +582,15 @@ export async function preflightDiscordMessage(
 
   // Only authorized guild senders should reach the expensive transcription path.
   const { resolveDiscordPreflightAudioMentionContext } = await loadPreflightAudioRuntime();
-  const { hasTypedText, transcript: preflightTranscript } =
-    await resolveDiscordPreflightAudioMentionContext({
-      message,
-      isDirectMessage,
-      shouldRequireMention,
-      mentionRegexes,
-      cfg: params.cfg,
-      abortSignal: params.abortSignal,
-    });
+  const { transcript: preflightTranscript } = await resolveDiscordPreflightAudioMentionContext({
+    message,
+    hasTypedText,
+    isDirectMessage,
+    shouldRequireMention,
+    mentionRegexes,
+    cfg: params.cfg,
+    abortSignal: params.abortSignal,
+  });
   if (isPreflightAborted(params.abortSignal)) {
     return null;
   }

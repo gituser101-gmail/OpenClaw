@@ -29,6 +29,7 @@ export type * from "./schema/exec-approvals.js";
 export type * from "./schema/devices.js";
 export type * from "./schema/frames.js";
 export type * from "./schema/fs.js";
+export type * from "./schema/gateway-restore.js";
 export type * from "./schema/gateway-suspend.js";
 export type * from "./schema/logs-chat.js";
 export type * from "./schema/migrations.js";

@@ -512,6 +512,33 @@ describe("runDoctorConfigPreflight state migration", () => {
     expect(startupMigrationLeaseRelease).toHaveBeenCalledOnce();
   });
 
+  it("checkpoints readiness when the state-dir migration skips over an existing target (#112395)", async () => {
+    needsStartupMigrationCheckpoint.mockReturnValue(true);
+    const skipNotice =
+      "State dir migration skipped: target already exists (/home/user/.openclaw). Remove or merge manually.";
+    autoMigrateLegacyStateDir.mockResolvedValueOnce({
+      migrated: false,
+      skipped: false,
+      changes: [],
+      warnings: [],
+      notices: [skipNotice],
+    });
+
+    await runDoctorConfigPreflight({
+      migrateLegacyConfig: false,
+      invalidConfigNote: false,
+      requireStartupMigrationCheckpoint: true,
+    });
+
+    const pinnedEnv = acquireStartupMigrationLease.mock.calls[0]?.[0]?.env;
+    expect(recordSuccessfulStartupMigrations).toHaveBeenCalledWith({
+      env: pinnedEnv,
+      lease: startupMigrationLease,
+    });
+    expect(note).toHaveBeenCalledWith(`- ${skipNotice}`, "Doctor notices");
+    expect(startupMigrationLeaseRelease).toHaveBeenCalledOnce();
+  });
+
   it("maps active payload failures into refreshed plugin quarantine", () => {
     const result = mapStartupPluginQuarantineRefresh({
       cfg: {
@@ -721,11 +748,15 @@ describe("runDoctorConfigPreflight state migration", () => {
 
   it("blocks gateway readiness when startup migrations leave warnings", async () => {
     needsStartupMigrationCheckpoint.mockReturnValue(true);
+    // The uninitialized-target state-dir skip stays in `warnings` (#112395), so this
+    // also proves non-equivalent legacy contents cannot checkpoint readiness.
     autoMigrateLegacyStateDir.mockResolvedValueOnce({
       migrated: false,
       skipped: false,
       changes: [],
-      warnings: ["Left legacy config health state in place."],
+      warnings: [
+        "State dir migration skipped: target already exists (/home/user/.openclaw). Remove or merge manually.",
+      ],
     });
 
     await expect(

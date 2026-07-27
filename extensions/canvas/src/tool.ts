@@ -33,8 +33,6 @@ type CanvasImageSanitizationLimits = {
   maxDimensionPx?: number;
 };
 
-export const CANVAS_JSONL_MAX_BYTES = 16 * 1024 * 1024;
-
 function readGatewayCallOptions(params: Record<string, unknown>) {
   return {
     gatewayUrl: readStringParam(params, "gatewayUrl", { trim: false }),

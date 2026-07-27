@@ -910,7 +910,7 @@ export class EmbeddedTuiBackend implements TuiBackend {
 
     switch (parsed.action) {
       case "status": {
-        const snapshot = await getSessionGoal({ sessionKey, storePath });
+        const snapshot = await getSessionGoal({ sessionKey, storePath, persist: false });
         return { text: formatSessionGoalStatus(snapshot.goal) };
       }
       case "start":

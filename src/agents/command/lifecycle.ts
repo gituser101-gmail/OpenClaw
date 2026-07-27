@@ -129,7 +129,9 @@ export function createAgentCommandLifecycle(params: {
           startedAt: params.startedAt,
           endedAt: Date.now(),
           aborted: terminal.metadata.aborted ?? false,
-          stopReason,
+          // Consumers need yielded/liveness metadata to distinguish a paused
+          // continuation from an ordinary successful terminal event.
+          ...terminal.metadata,
           ...resolveAgentRunAbortLifecycleFields(params.abortSignal),
         },
       });

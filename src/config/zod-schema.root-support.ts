@@ -195,11 +195,6 @@ export const PluginEntrySchema = z.strictObject({
       allowAgentIdOverride: z.boolean().optional(),
     })
     .optional(),
-  talk: z
-    .strictObject({
-      allowProcessWideActivityObservation: z.boolean().optional(),
-    })
-    .optional(),
   config: z.record(z.string(), z.unknown()).optional(),
 });
 

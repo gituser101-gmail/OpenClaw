@@ -307,8 +307,6 @@ export const TARGET_KEYS = [
   "plugins.entries.*.llm.allowModelOverride",
   "plugins.entries.*.llm.allowedModels",
   "plugins.entries.*.llm.allowAgentIdOverride",
-  "plugins.entries.*.talk",
-  "plugins.entries.*.talk.allowProcessWideActivityObservation",
   "plugins.entries.*.apiKey",
   "plugins.entries.*.env",
   "plugins.entries.*.config",

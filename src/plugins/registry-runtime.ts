@@ -71,7 +71,6 @@ export function createPluginRuntimeResolver(state: PluginRegistryState) {
   const { registry, registryParams } = state;
   const pluginRuntimeById = new Map<string, PluginRuntime>();
   const pluginRuntimeRecordById = new Map<string, PluginRecord>();
-  const pluginTalkActivityApprovalById = new Map<string, boolean>();
 
   const addPluginRuntimeResolutionContext = (params: {
     error: unknown;
@@ -680,10 +679,10 @@ export function createPluginRuntimeResolver(state: PluginRegistryState) {
               }
               if (
                 record.origin !== "bundled" &&
-                pluginTalkActivityApprovalById.get(pluginId) !== true
+                !(record.enabled && record.explicitlyEnabled === true)
               ) {
                 throw new Error(
-                  `Plugin "${pluginId}" requires plugins.entries.${pluginId}.talk.allowProcessWideActivityObservation: true to observe process-wide Talk activity.`,
+                  `Plugin "${pluginId}" must be explicitly enabled by the operator to observe process-wide Talk activity.`,
                 );
               }
               return talk.onActivity(listener);
@@ -908,15 +907,8 @@ export function createPluginRuntimeResolver(state: PluginRegistryState) {
 
   return {
     resolvePluginRuntime,
-    setPluginRuntimeRecord: (
-      record: PluginRecord,
-      policy?: { allowProcessWideTalkActivityObservation?: boolean },
-    ) => {
+    setPluginRuntimeRecord: (record: PluginRecord) => {
       pluginRuntimeRecordById.set(record.id, record);
-      pluginTalkActivityApprovalById.set(
-        record.id,
-        policy?.allowProcessWideTalkActivityObservation === true,
-      );
     },
   };
 }

@@ -165,14 +165,6 @@ describe("normalizePluginsConfig", () => {
     });
   });
 
-  it("normalizes the process-wide Talk activity grant", () => {
-    expect(
-      normalizeVoiceCallEntry({
-        talk: { allowProcessWideActivityObservation: true },
-      })?.talk,
-    ).toEqual({ allowProcessWideActivityObservation: true });
-  });
-
   it("normalizes legacy plugin ids to their merged bundled plugin id", () => {
     const result = normalizePluginsConfig({
       allow: ["openai", "google-gemini-cli", "minimax-portal-auth"],

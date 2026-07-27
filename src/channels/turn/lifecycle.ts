@@ -1,3 +1,5 @@
+import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
+import { preparePrivateOwnerModelSpendAlertBestEffort } from "../../agents/model-spend-alerts.js";
 import { dispatchInboundMessageWithRoutedChannelDispatcher } from "../../auto-reply/dispatch.js";
 import type { ReplyPayload } from "../../auto-reply/reply-payload.js";
 import type { DispatchFromConfigResult } from "../../auto-reply/reply/dispatch-from-config.types.js";
@@ -522,7 +524,26 @@ async function dispatchChannelTurnWithDeliveryOwner(
                         return durable.delivery;
                       }
                     }
-                    let effectivePayload = preparedPayload;
+                    const fallbackSpendAlert =
+                      info.kind === "final" && params.admission?.kind !== "observeOnly"
+                        ? preparePrivateOwnerModelSpendAlertBestEffort({
+                            cfg: params.cfg,
+                            agentId: params.agentId,
+                            channel: params.channel,
+                            to:
+                              normalizeOptionalString(params.ctxPayload.OriginatingTo) ??
+                              params.ctxPayload.To,
+                            chatType: params.ctxPayload.ChatType,
+                          })
+                        : undefined;
+                    let effectivePayload = fallbackSpendAlert
+                      ? {
+                          ...preparedPayload,
+                          text: [preparedPayload.text, fallbackSpendAlert.text]
+                            .filter(Boolean)
+                            .join("\n\n"),
+                        }
+                      : preparedPayload;
                     let result: ChannelDeliveryResult | void = undefined;
                     try {
                       if (

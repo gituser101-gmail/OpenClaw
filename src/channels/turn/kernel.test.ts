@@ -48,10 +48,19 @@ const dispatchReplyWithBufferedBlockDispatcherCore = vi.hoisted(() => vi.fn());
 const dispatchReplyWithRoutedChannelDispatcherCore = vi.hoisted(() => vi.fn());
 const emitMessageSent = vi.hoisted(() => vi.fn());
 const getGlobalHookRunner = vi.hoisted(() => vi.fn());
+const preparePrivateOwnerModelSpendAlertBestEffort = vi.hoisted(() => vi.fn());
 const createMessageSentEmitter = vi.hoisted(() =>
   vi.fn(() => ({ emitMessageSent, hasMessageSentHooks: true })),
 );
 const readRecentUserAssistantTextForSession = vi.hoisted(() => vi.fn());
+
+vi.mock("../../agents/model-spend-alerts.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../agents/model-spend-alerts.js")>();
+  return {
+    ...actual,
+    preparePrivateOwnerModelSpendAlertBestEffort,
+  };
+});
 
 vi.mock("../../auto-reply/reply/provider-dispatcher.js", async (importOriginal) => {
   const actual =
@@ -966,6 +975,42 @@ describe("channel turn kernel", () => {
     const delivered = deliveryResult(deliveredResult);
     expect(delivered.messageIds).toEqual(["local-1"]);
     expect(delivered.visibleReplySent).toBe(true);
+  });
+
+  it("delivers best-effort spend alerts through compatibility channel delivery", async () => {
+    preparePrivateOwnerModelSpendAlertBestEffort.mockReturnValueOnce({
+      text: "Warning: Model spend alert: [redacted]",
+    });
+    const deliver = vi.fn(async () => ({ messageIds: ["local-1"], visibleReplySent: true }));
+
+    await dispatchAssembledChannelTurn({
+      cfg,
+      channel: "qa-channel",
+      agentId: "main",
+      routeSessionKey: "agent:main:qa-channel:direct:owner",
+      storePath: "/tmp/sessions.json",
+      ctxPayload: createCtx({
+        ChatType: "direct",
+        OriginatingTo: "   ",
+        To: "dm:owner",
+        SessionKey: "agent:main:qa-channel:direct:owner",
+      }),
+      recordInboundSession: createRecordInboundSession(),
+      dispatchReplyWithBufferedBlockDispatcher: createDispatch(),
+      delivery: { deliver },
+    });
+
+    expect(preparePrivateOwnerModelSpendAlertBestEffort).toHaveBeenCalledWith({
+      cfg,
+      agentId: "main",
+      channel: "qa-channel",
+      to: "dm:owner",
+      chatType: "direct",
+    });
+    expect(deliver).toHaveBeenCalledWith(
+      { text: "reply\n\nWarning: Model spend alert: [redacted]" },
+      { kind: "final" },
+    );
   });
 
   it("observes provider-finalized content and identity after deferred delivery settles", async () => {

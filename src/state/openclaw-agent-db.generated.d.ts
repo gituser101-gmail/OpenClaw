@@ -167,6 +167,18 @@ export interface MemoryIndexState {
   revision: number;
 }
 
+export interface ModelSpendDaily {
+  day_key: string;
+  last_alerted_threshold_microusd: Generated<number>;
+  provider: string;
+  spend_microusd: Generated<number>;
+  spend_nanousd_remainder: Generated<number>;
+  timezone: string;
+  tracking_incomplete: Generated<number>;
+  tracking_incomplete_alerted: Generated<number>;
+  updated_at: number;
+}
+
 export interface SchemaMeta {
   agent_id: string | null;
   app_version: string | null;
@@ -372,6 +384,7 @@ export interface DB {
   memory_index_meta: MemoryIndexMeta;
   memory_index_sources: MemoryIndexSources;
   memory_index_state: MemoryIndexState;
+  model_spend_daily: ModelSpendDaily;
   schema_meta: SchemaMeta;
   session_conversations: SessionConversations;
   session_members: SessionMembers;

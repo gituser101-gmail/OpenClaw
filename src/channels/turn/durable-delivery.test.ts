@@ -4,6 +4,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   resolveOutboundDurableFinalDeliverySupport: vi.fn(),
   sendDurableMessageBatch: vi.fn(),
+  preparePrivateOwnerModelSpendAlertBestEffort: vi.fn(),
+}));
+
+vi.mock("../../agents/model-spend-alerts.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../agents/model-spend-alerts.js")>()),
+  preparePrivateOwnerModelSpendAlertBestEffort: mocks.preparePrivateOwnerModelSpendAlertBestEffort,
 }));
 
 vi.mock("../../infra/outbound/deliver.js", async (importOriginal) => {
@@ -33,6 +39,7 @@ type SendDurableMessageBatchRequest = {
   durability?: string;
   requireUnknownSendReconciliation?: boolean;
   gatewayClientScopes?: readonly string[];
+  payloads?: Array<{ text?: string }>;
 };
 
 type DeliverySupportRequest = {
@@ -73,6 +80,7 @@ describe("durable inbound reply delivery", () => {
   beforeEach(() => {
     mocks.resolveOutboundDurableFinalDeliverySupport.mockReset();
     mocks.sendDurableMessageBatch.mockReset();
+    mocks.preparePrivateOwnerModelSpendAlertBestEffort.mockReset();
     mocks.resolveOutboundDurableFinalDeliverySupport.mockResolvedValue({ ok: true });
     mocks.sendDurableMessageBatch.mockResolvedValue({
       status: "sent",
@@ -129,6 +137,27 @@ describe("durable inbound reply delivery", () => {
     expect(mocks.sendDurableMessageBatch).toHaveBeenCalledTimes(1);
     expect(latestSendDurableMessageBatchRequest().durability).toBe("best_effort");
     expect(latestSendDurableMessageBatchRequest().requireUnknownSendReconciliation).toBeUndefined();
+  });
+
+  it("appends a best-effort spend alert to the final payload", async () => {
+    mocks.preparePrivateOwnerModelSpendAlertBestEffort.mockReturnValueOnce({
+      text: "Warning: deepseek reached $1.40.",
+    });
+    await deliverInboundReplyWithMessageSendContext({
+      cfg: { commands: { ownerAllowFrom: ["telegram:chat-1"] } },
+      channel: "telegram",
+      agentId: "main",
+      info: { kind: "final" },
+      payload: { text: "model reply" },
+      ctxPayload: ctxPayload({
+        ChatType: "direct",
+        OriginatingTo: "chat-1",
+        SessionKey: "agent:main:telegram:chat-1",
+      }),
+    });
+
+    const request = latestSendDurableMessageBatchRequest();
+    expect(request.payloads).toEqual([{ text: "model reply\n\nWarning: deepseek reached $1.40." }]);
   });
 
   it("uses required durability when a caller explicitly requires unknown-send reconciliation", async () => {

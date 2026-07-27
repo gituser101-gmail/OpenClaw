@@ -1293,5 +1293,42 @@ describe("wrapStreamFnWithDiagnosticModelCallEvents", () => {
     expectNumberField(completedEvent, "durationMs");
     expect(events[1]).not.toHaveProperty("errorCategory");
   });
+
+  it("reports raw terminal usage for each provider call", async () => {
+    const onTerminal = vi.fn();
+    const usage = {
+      input: 10,
+      output: 2,
+      total: 12,
+      cost: {
+        total: 1.5,
+        totalOrigin: "provider-billed",
+      },
+    };
+    async function* stream() {
+      yield { type: "done", message: { role: "assistant", content: [], usage } };
+    }
+    const wrapped = wrapStreamFnWithDiagnosticModelCallEvents(
+      (() => stream()) as unknown as StreamFn,
+      {
+        runId: "run-retry",
+        provider: "deepseek",
+        model: "deepseek-chat",
+        trace: createDiagnosticTraceContext(),
+        nextCallId: () => "call-1",
+        onTerminal,
+      },
+    );
+    const model = { provider: "deepseek", id: "deepseek-chat" } as never;
+
+    await drain(wrapped(model, {} as never, {} as never) as AsyncIterable<unknown>);
+
+    expect(onTerminal).toHaveBeenCalledOnce();
+    expect(onTerminal).toHaveBeenCalledWith({
+      model,
+      outcome: "completed",
+      usage,
+    });
+  });
 });
 /* oxlint-disable max-lines -- TODO: split this grandfathered oversized file. */

@@ -1,5 +1,6 @@
 // Durable final-reply delivery for inbound channel turns.
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
+import { preparePrivateOwnerModelSpendAlertBestEffort } from "../../agents/model-spend-alerts.js";
 import type { ReplyPayload } from "../../auto-reply/reply-payload.js";
 import type { FinalizedMsgContext } from "../../auto-reply/templating.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
@@ -204,13 +205,28 @@ export async function deliverInboundReplyWithMessageSendContext(
     requesterSenderUsername: params.ctxPayload.SenderUsername,
     requesterSenderE164: params.ctxPayload.SenderE164,
   });
+  // Agent-wide billing totals are private operator data. Only attempt alerts
+  // when a final reply targets a configured owner in an explicit direct chat.
+  const spendAlert = preparePrivateOwnerModelSpendAlertBestEffort({
+    cfg: params.cfg,
+    agentId: params.agentId,
+    channel,
+    to,
+    chatType: session?.conversationKind,
+  });
+  const deliveryPayload = spendAlert
+    ? {
+        ...params.payload,
+        text: [params.payload.text, spendAlert.text].filter(Boolean).join("\n\n"),
+      }
+    : params.payload;
 
   const send = await sendDurableMessageBatch({
     cfg: params.cfg,
     channel,
     to,
     accountId: params.accountId,
-    payloads: [params.payload],
+    payloads: [deliveryPayload],
     threadId,
     replyToId,
     replyToMode: params.replyToMode,

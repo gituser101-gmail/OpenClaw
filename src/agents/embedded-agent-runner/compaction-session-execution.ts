@@ -19,6 +19,7 @@ import {
   isSilentOverflowProneModel,
 } from "../agent-settings.js";
 import { pickFallbackThinkingLevel } from "../embedded-agent-helpers.js";
+import { recordConfiguredModelSpendCall } from "../model-spend-alerts.js";
 import { repairSessionFileIfNeeded } from "../session-file-repair.js";
 import { guardSessionManager } from "../session-tool-result-guard-wrapper.js";
 import { sanitizeToolUseResultPairing } from "../session-transcript-repair.js";
@@ -286,6 +287,9 @@ export async function executePreparedCompactionSession(runtime: PreparedCompacti
             senderUsername: params.senderUsername,
             senderE164: params.senderE164,
           });
+          // Standalone compaction sessions do not install the normal attempt stream guards.
+          // This wrapper is therefore their sole terminal accounting owner.
+          const compactionConfig = params.config;
           session.agent.streamFn = wrapStreamFnWithDiagnosticModelCallEvents(
             session.agent.streamFn,
             {
@@ -298,8 +302,25 @@ export async function executePreparedCompactionSession(runtime: PreparedCompacti
               transport: session.agent.transport,
               contextTokenBudget,
               trace: compactionModelCallTrace,
-              contentCapture: resolveDiagnosticModelContentCapturePolicy(params.config),
+              contentCapture: resolveDiagnosticModelContentCapturePolicy(compactionConfig),
               nextCallId: nextDiagnosticModelCallId,
+              ...(compactionConfig
+                ? {
+                    onTerminal: (event) => {
+                      try {
+                        recordConfiguredModelSpendCall({
+                          cfg: compactionConfig,
+                          agentId: sessionAgentId,
+                          call: event,
+                        });
+                      } catch (accountingError) {
+                        log.warn(
+                          `model-spend compaction accounting failed: ${String(accountingError)}`,
+                        );
+                      }
+                    },
+                  }
+                : {}),
             },
           );
 

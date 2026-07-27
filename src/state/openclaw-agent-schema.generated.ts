@@ -533,4 +533,22 @@ CREATE INDEX IF NOT EXISTS idx_memory_index_chunks_path
   ON memory_index_chunks(path);
 
 CREATE INDEX IF NOT EXISTS idx_memory_index_chunks_source
-  ON memory_index_chunks(source);\n`;
+  ON memory_index_chunks(source);
+
+-- Additive per-agent model-spend alert state. Existing databases create this
+-- section lazily on first use and the next natural schema bump folds it in.
+CREATE TABLE IF NOT EXISTS model_spend_daily (
+  day_key TEXT NOT NULL,
+  timezone TEXT NOT NULL,
+  provider TEXT NOT NULL,
+  spend_microusd INTEGER NOT NULL DEFAULT 0 CHECK (spend_microusd >= 0),
+  spend_nanousd_remainder INTEGER NOT NULL DEFAULT 0
+    CHECK (spend_nanousd_remainder >= 0 AND spend_nanousd_remainder < 1000),
+  last_alerted_threshold_microusd INTEGER NOT NULL DEFAULT 0
+    CHECK (last_alerted_threshold_microusd >= 0),
+  tracking_incomplete INTEGER NOT NULL DEFAULT 0 CHECK (tracking_incomplete IN (0, 1)),
+  tracking_incomplete_alerted INTEGER NOT NULL DEFAULT 0
+    CHECK (tracking_incomplete_alerted IN (0, 1)),
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY (day_key, timezone, provider)
+) STRICT;\n`;

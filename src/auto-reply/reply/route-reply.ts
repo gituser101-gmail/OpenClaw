@@ -10,6 +10,7 @@
 import { normalizeOptionalLowercaseString } from "@openclaw/normalization-core/string-coerce";
 import { resolveSessionAgentId } from "../../agents/agent-scope.js";
 import { resolveEffectiveMessagesConfig } from "../../agents/identity.js";
+import { preparePrivateOwnerModelSpendAlertBestEffort } from "../../agents/model-spend-alerts.js";
 import { normalizeChatType } from "../../channels/chat-type.js";
 import { getBundledChannelPlugin } from "../../channels/plugins/bundled.js";
 import { getLoadedChannelPlugin, normalizeChannelId } from "../../channels/plugins/index.js";
@@ -147,13 +148,13 @@ export async function routeReply(params: RouteReplyParams): Promise<RouteReplyRe
         config: cfg,
       })
     : undefined;
+  const effectiveAgentId = resolvedAgentId ?? resolveSessionAgentId({ config: cfg });
 
   // Debug: `pnpm test src/auto-reply/reply/route-reply.test.ts`
-  const responsePrefix = resolveEffectiveMessagesConfig(
-    cfg,
-    resolvedAgentId ?? resolveSessionAgentId({ config: cfg }),
-    { channel: normalizedChannel, accountId },
-  ).responsePrefix;
+  const responsePrefix = resolveEffectiveMessagesConfig(cfg, effectiveAgentId, {
+    channel: normalizedChannel,
+    accountId,
+  }).responsePrefix;
   const normalized = normalizeReplyPayload(payload, {
     responsePrefix,
     responsePrefixContext: params.responsePrefixContext,
@@ -219,6 +220,31 @@ export async function routeReply(params: RouteReplyParams): Promise<RouteReplyRe
     return { ok: false, error: "Reply routing aborted" };
   }
 
+  const outboundSession = buildOutboundSessionContext({
+    cfg,
+    agentId: resolvedAgentId,
+    sessionKey: params.sessionKey,
+    policySessionKey: params.policySessionKey,
+    conversationType: params.policyConversationType,
+    isGroup: params.policySessionKey || params.policyConversationType ? undefined : params.isGroup,
+    requesterSenderId: params.requesterSenderId,
+    requesterSenderName: params.requesterSenderName,
+    requesterSenderUsername: params.requesterSenderUsername,
+    requesterSenderE164: params.requesterSenderE164,
+  });
+  // Agent-wide billing totals are private operator data. Only attempt alerts
+  // when a final reply targets a configured owner in an explicit direct chat.
+  const spendAlert =
+    params.replyKind === "final"
+      ? preparePrivateOwnerModelSpendAlertBestEffort({
+          cfg,
+          agentId: effectiveAgentId,
+          channel: channelId,
+          to,
+          chatType: outboundSession?.conversationKind,
+        })
+      : undefined;
+
   const payloadMetadata = getReplyPayloadMetadata(normalized);
   const payloadReplyDelivery = payloadMetadata?.replyDelivery;
   const payloadPolicyMatchesRoute =
@@ -255,6 +281,9 @@ export async function routeReply(params: RouteReplyParams): Promise<RouteReplyRe
       : (threadId ?? null);
   const deliveryPayload = {
     ...externalPayload,
+    ...(spendAlert
+      ? { text: [externalPayload.text, spendAlert.text].filter(Boolean).join("\n\n") }
+      : {}),
     replyToId: resolvedReplyToId,
   };
 
@@ -262,19 +291,6 @@ export async function routeReply(params: RouteReplyParams): Promise<RouteReplyRe
     // Provider docking: this is an execution boundary (we're about to send).
     // Keep the module cheap to import by loading outbound plumbing lazily.
     const { sendDurableMessageBatch } = await loadDeliverRuntime();
-    const outboundSession = buildOutboundSessionContext({
-      cfg,
-      agentId: resolvedAgentId,
-      sessionKey: params.sessionKey,
-      policySessionKey: params.policySessionKey,
-      conversationType: params.policyConversationType,
-      isGroup:
-        params.policySessionKey || params.policyConversationType ? undefined : params.isGroup,
-      requesterSenderId: params.requesterSenderId,
-      requesterSenderName: params.requesterSenderName,
-      requesterSenderUsername: params.requesterSenderUsername,
-      requesterSenderE164: params.requesterSenderE164,
-    });
     const send = await sendDurableMessageBatch({
       cfg,
       channel: channelId,

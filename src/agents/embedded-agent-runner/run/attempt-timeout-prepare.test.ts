@@ -104,6 +104,86 @@ describe("prepareEmbeddedAttemptTimeout", () => {
     harness.timeout.clearTimers();
   });
 
+  it("noteActivity resets the deadline forward on activity", async () => {
+    const harness = createTimeoutHarness({ timeoutMs: 200 });
+
+    // Deadline starts at now + 200
+    expect(harness.timeout.getRunAbortDeadlineAtMs()).toBe(200);
+
+    // After 100ms of activity, noteActivity slides the deadline to now + 200
+    await vi.advanceTimersByTimeAsync(100);
+    harness.timeout.noteActivity();
+    expect(harness.timeout.getRunAbortDeadlineAtMs()).toBe(300);
+
+    // The old timer (set at t=0 for t=200) was cleared — it should not fire
+    await vi.advanceTimersByTimeAsync(100);
+    expect(harness.abortRun).not.toHaveBeenCalled();
+
+    // The new timer fires at t=300
+    await vi.advanceTimersByTimeAsync(100);
+    expect(harness.abortRun).toHaveBeenCalledWith(true);
+    harness.timeout.clearTimers();
+  });
+
+  it("noteActivity enforces hard cap on extension count", async () => {
+    const harness = createTimeoutHarness({ timeoutMs: 10 });
+
+    // First 10 calls extend the deadline
+    for (let i = 0; i < 10; i++) {
+      const deadlineBefore = harness.timeout.getRunAbortDeadlineAtMs();
+      await vi.advanceTimersByTimeAsync(5);
+      harness.timeout.noteActivity();
+      expect(harness.timeout.getRunAbortDeadlineAtMs()).toBeGreaterThan(deadlineBefore);
+    }
+
+    // 11th call is silently ignored (hard cap hit)
+    const deadlineAfterCaps = harness.timeout.getRunAbortDeadlineAtMs();
+    harness.timeout.noteActivity();
+    expect(harness.timeout.getRunAbortDeadlineAtMs()).toBe(deadlineAfterCaps);
+
+    // The timer fires on schedule
+    await vi.advanceTimersByTimeAsync(10);
+    expect(harness.abortRun).toHaveBeenCalledWith(true);
+    harness.timeout.clearTimers();
+  });
+
+  it("noteActivity clears the previous timer to prevent premature firing", async () => {
+    const harness = createTimeoutHarness({ timeoutMs: 100 });
+
+    // At t=0: timer set for t=100
+    // At t=50: noteActivity creates new timer for t=150
+    await vi.advanceTimersByTimeAsync(50);
+    harness.timeout.noteActivity();
+    expect(harness.timeout.getRunAbortDeadlineAtMs()).toBe(150);
+
+    // The old timer (t=100) should have been cleared — advance past it
+    await vi.advanceTimersByTimeAsync(55); // now at t=105
+    expect(harness.abortRun).not.toHaveBeenCalled();
+
+    // Only the new timer fires at t=150
+    await vi.advanceTimersByTimeAsync(50); // now at t=155
+    expect(harness.abortRun).toHaveBeenCalledWith(true);
+    harness.timeout.clearTimers();
+  });
+
+  it("noteActivity totalExtendedMs uses actual wall-clock elapsed time", async () => {
+    const harness = createTimeoutHarness({ timeoutMs: 1000 });
+
+    // After 500ms of inactivity, noteActivity slides deadline to now + 1000
+    await vi.advanceTimersByTimeAsync(500);
+    harness.timeout.noteActivity();
+    // deadline = 500 + 1000 = 1500
+    expect(harness.timeout.getRunAbortDeadlineAtMs()).toBe(1500);
+
+    // After 100ms, noteActivity slides deadline to now + 1000 from current time
+    await vi.advanceTimersByTimeAsync(100);
+    harness.timeout.noteActivity();
+    // deadline = 600 + 1000 = 1600 (not 1100 — it slides from current wall clock)
+    expect(harness.timeout.getRunAbortDeadlineAtMs()).toBe(1600);
+
+    harness.timeout.clearTimers();
+  });
+
   it("cleans up both the timer and external abort listener", async () => {
     const harness = createTimeoutHarness();
 

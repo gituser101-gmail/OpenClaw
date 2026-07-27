@@ -39,8 +39,16 @@ export function prepareEmbeddedAttemptTimeout(input: {
   let abortTimer: NodeJS.Timeout | undefined;
   let runAbortDeadlineAtMs = Date.now() + attempt.timeoutMs;
   let compactionGraceUsed = false;
+  let extensionCount = 0;
+  let totalExtendedMs = 0;
+  let lastActivityAtMs = Date.now();
+  const MAX_EXTENSIONS = 10;
+  const MAX_EXTENSION_TOTAL_MS = 120_000;
 
   const scheduleAbortTimer = (delayMs: number, reason: "initial" | "compaction-grace") => {
+    if (abortTimer) {
+      clearTimeout(abortTimer);
+    }
     runAbortDeadlineAtMs = Date.now() + Math.max(1, delayMs);
     abortTimer = setTimeout(
       () => {
@@ -122,8 +130,25 @@ export function prepareEmbeddedAttemptTimeout(input: {
     }
   }
 
+  /** Resets the run budget deadline on activity, subject to hard caps.
+   * Uses actual wall-clock elapsed time since last activity for the total
+   * extension cap, making MAX_EXTENSION_TOTAL_MS a meaningful timeout ceiling
+   * rather than a fixed multiple of the initial timeoutMs. */
+  const noteActivity = () => {
+    if (extensionCount >= MAX_EXTENSIONS || totalExtendedMs > MAX_EXTENSION_TOTAL_MS) {
+      return;
+    }
+    extensionCount++;
+    const now = Date.now();
+    const elapsedSinceLastActivity = Math.max(0, now - lastActivityAtMs);
+    lastActivityAtMs = now;
+    totalExtendedMs += elapsedSinceLastActivity;
+    scheduleAbortTimer(attempt.timeoutMs, "initial");
+  };
+
   return {
     getRunAbortDeadlineAtMs: () => runAbortDeadlineAtMs,
+    noteActivity,
     clearTimers: () => {
       if (abortTimer) {
         clearTimeout(abortTimer);

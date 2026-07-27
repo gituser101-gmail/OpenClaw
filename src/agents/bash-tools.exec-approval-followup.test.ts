@@ -457,6 +457,32 @@ describe("exec approval followup", () => {
     expect(callGatewayTool).not.toHaveBeenCalled();
   });
 
+  it("parses a redaction warning inside the finished wrapper body", async () => {
+    const body = [
+      "Warning: redacted secret-shaped output; masked values are not real source data and must not be written back.",
+      "",
+      "OPENAI_API_KEY=sk-pro…7890",
+    ].join("\n");
+    await sendExecApprovalFollowup({
+      approvalId: "req-redacted",
+      sessionKey: "agent:main:telegram:direct:123",
+      turnSourceChannel: "telegram",
+      turnSourceTo: "123",
+      turnSourceAccountId: "default",
+      resultText: `Exec finished (gateway id=req-redacted, session=sess_1, code 0)\n${body}`,
+      direct: true,
+    });
+
+    expectDirectSend({
+      channel: "telegram",
+      to: "123",
+      accountId: "default",
+      content: body,
+      idempotencyKey: "exec-approval-followup:req-redacted",
+    });
+    expect(callGatewayTool).not.toHaveBeenCalled();
+  });
+
   it("falls back to sanitized direct delivery without alarming prefix for successful completions", async () => {
     vi.mocked(callGatewayTool).mockRejectedValueOnce(new Error("session missing"));
 

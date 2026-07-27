@@ -45,7 +45,12 @@ import {
   markExited,
   tail,
 } from "./bash-process-registry.js";
-import { appendExecTimeoutRetryGuidance, renderExecUpdateText } from "./bash-tools.exec-output.js";
+import {
+  appendExecTimeoutRetryGuidance,
+  buildExecUpdateResult,
+  prependRedactionWarning,
+  redactExecOutputText,
+} from "./bash-tools.exec-output.js";
 import {
   buildDockerExecArgs,
   chunkString,
@@ -319,19 +324,22 @@ function maybeNotifyOnExit(session: ProcessSession, status: "completed" | "faile
   const exitLabel = session.exitSignal
     ? `signal ${session.exitSignal}`
     : `code ${session.exitCode ?? 0}`;
-  const output = compactNotifyOutput(
-    tail(session.tail || session.aggregated || "", DEFAULT_NOTIFY_TAIL_CHARS),
+  const output = redactExecOutputText(
+    compactNotifyOutput(tail(session.tail || session.aggregated || "", DEFAULT_NOTIFY_TAIL_CHARS)),
   );
-  if (status === "failed" && session.exitReason === "manual-cancel" && !output) {
+  if (status === "failed" && session.exitReason === "manual-cancel" && !output.text) {
     return;
   }
-  if (status === "completed" && !output && session.notifyOnExitEmptySuccess !== true) {
+  if (status === "completed" && !output.text && session.notifyOnExitEmptySuccess !== true) {
     return;
   }
-  const summary = output
-    ? `Exec ${status} (${session.id.slice(0, 8)}, ${exitLabel}) :: ${output}`
+  const summary = output.text
+    ? `Exec ${status} (${session.id.slice(0, 8)}, ${exitLabel}) :: ${output.text}`
     : `Exec ${status} (${session.id.slice(0, 8)}, ${exitLabel})`;
-  const eventText = appendExecTimeoutRetryGuidance(summary, session.exitReason);
+  const eventText = prependRedactionWarning(
+    appendExecTimeoutRetryGuidance(summary, session.exitReason),
+    output.redacted,
+  );
   const eventRouting = session.eventRouting ?? {
     mainKey: session.mainKey,
     sessionScope: session.sessionScope,
@@ -669,8 +677,7 @@ export async function runExecProcess(opts: {
     if (session.backgrounded || session.exited || updatesDisabled) {
       return;
     }
-    const tailText = session.tail || session.aggregated;
-    // Note: opts.onUpdate() is provided by agent runtime's agent-loop and
+    // Note: opts.onUpdate() is provided by pi-agent-core's agent-loop and
     // internally pushes Promise.resolve(emit(event)) into an updateEvents
     // array.  Because emit → processEvents is async, any failure (e.g.
     // activeRun cleared) produces a *rejected Promise*, not a synchronous
@@ -679,19 +686,18 @@ export async function runExecProcess(opts: {
     // chain on process exit (Layer 1) and by `disableUpdates()` on abort
     // signal (Layer 2) — both of which prevent this call from ever being
     // reached after the agent run has ended.
-    opts.onUpdate({
-      content: [
-        { type: "text", text: renderExecUpdateText({ tailText, warnings: opts.warnings }) },
-      ],
-      details: {
+    opts.onUpdate(
+      buildExecUpdateResult({
         status: "running",
         sessionId,
         pid: session.pid ?? undefined,
         startedAt,
         cwd: session.cwd,
+        tailText: session.tail || session.aggregated,
         tail: session.tail,
-      },
-    });
+        warnings: opts.warnings,
+      }),
+    );
   };
 
   // One parser per stream so ESC sequences split across chunks are not mangled.

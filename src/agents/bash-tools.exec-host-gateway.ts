@@ -66,7 +66,11 @@ import {
   sendExecApprovalFollowupResult,
   shouldResolveExecApprovalUnavailableInline,
 } from "./bash-tools.exec-host-shared.js";
-import { appendExecTimeoutRetryGuidance } from "./bash-tools.exec-output.js";
+import {
+  appendExecTimeoutRetryGuidance,
+  insertExecApprovalRedactionWarning,
+  redactExecOutputText,
+} from "./bash-tools.exec-output.js";
 import {
   DEFAULT_NOTIFY_TAIL_CHARS,
   createApprovalSlug,
@@ -409,7 +413,9 @@ function buildGatewayExecApprovalFollowupSummary(params: {
       ? `Exec finished (gateway id=${params.approvalId}, session=${params.sessionId}, ${exitLabel})\n${output}`
       : `Exec finished (gateway id=${params.approvalId}, session=${params.sessionId}, ${exitLabel})`;
   }
-  return appendExecTimeoutRetryGuidance(summary, params.outcome.exitReason);
+  const withTimeoutGuidance = appendExecTimeoutRetryGuidance(summary, params.outcome.exitReason);
+  const redacted = redactExecOutputText(withTimeoutGuidance);
+  return insertExecApprovalRedactionWarning(redacted.text, redacted.redacted);
 }
 
 function shouldAwaitGatewayApprovalInline(params: {

@@ -2004,6 +2004,49 @@ EOF`,
     expect(approvalInput?.outcome?.exitCode).toBe(0);
   });
 
+  it("redacts secret-shaped output before sending gateway approval followups", async () => {
+    const fakeSecretOutput = "OPENAI_API_KEY=sk-proj-gateway-followup-canary-1234567890";
+    buildExecApprovalFollowupTargetMock.mockImplementation((value) => value);
+    requiresExecApprovalMock.mockReturnValue(true);
+    resolveExecHostApprovalContextMock.mockReturnValue({
+      approvals: { allowlist: [], file: { version: 1, agents: {} } },
+      hostSecurity: "allowlist",
+      hostAsk: "always",
+      askFallback: "deny",
+    });
+    resolveApprovalDecisionOrUndefinedMock.mockResolvedValue("allow-once");
+    createExecApprovalDecisionStateMock.mockReturnValue({
+      baseDecision: { timedOut: false },
+      approvedByAsk: true,
+      deniedReason: null,
+    });
+    runExecProcessMock.mockResolvedValue({
+      session: { id: "sess-redaction" },
+      promise: Promise.resolve({
+        status: "completed",
+        exitCode: 0,
+        exitSignal: null,
+        durationMs: 12,
+        timedOut: false,
+        aggregated: fakeSecretOutput,
+      }),
+    });
+
+    await runGatewayAllowlist({
+      command: "printf secret",
+      approvalFollowupMode: "direct",
+      turnSourceChannel: "webchat",
+    });
+
+    await vi.waitFor(() => {
+      expect(sendExecApprovalFollowupResultMock).toHaveBeenCalledTimes(1);
+    });
+    const followupText = requireSentFollowupText(0);
+    expect(followupText).toMatch(/^Exec finished \(/);
+    expect(followupText).toContain("Warning: redacted secret-shaped output");
+    expect(followupText).not.toContain(fakeSecretOutput);
+  });
+
   it("uses async agent followups for explicit webchat approval mode", async () => {
     buildExecApprovalFollowupTargetMock.mockImplementation((value) => value);
     resolveExecHostApprovalContextMock.mockReturnValue({

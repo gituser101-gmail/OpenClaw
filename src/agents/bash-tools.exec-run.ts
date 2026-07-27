@@ -28,6 +28,10 @@ import {
   resolvePreparedExecEnvironment,
 } from "./bash-tools.exec-request-preparation.js";
 import {
+  buildExecForegroundResult,
+  buildExecRunningResult,
+} from "./bash-tools.exec-result-format.js";
+import {
   DEFAULT_MAX_OUTPUT,
   DEFAULT_PENDING_MAX_OUTPUT,
   type ExecProcessHandle,
@@ -43,11 +47,7 @@ import {
   shouldSkipExecScriptPreflight,
   validateScriptFileForShellBleed,
 } from "./bash-tools.exec-script-preflight.js";
-import {
-  buildExecForegroundResult,
-  createExecHostResolver,
-  resolveExecReviewerDefaults,
-} from "./bash-tools.exec-support.js";
+import { createExecHostResolver, resolveExecReviewerDefaults } from "./bash-tools.exec-support.js";
 import {
   type BackgroundExecTaskHandle,
   createBackgroundExecTask,
@@ -585,24 +585,16 @@ export function createExecTool(
       return new Promise<AgentToolResult<ExecToolDetails>>((resolve, reject) => {
         const resolveRunning = () => {
           cleanupToolRunListeners();
-          resolve({
-            content: [
-              {
-                type: "text",
-                text: `${getWarningText()}Command still running (session ${run.session.id}, pid ${
-                  run.session.pid ?? "n/a"
-                }). Use process (list/poll/log/write/send-keys/submit/paste/kill/clear/remove) for follow-up.`,
-              },
-            ],
-            details: {
-              status: "running",
+          resolve(
+            buildExecRunningResult({
+              warningText: getWarningText(),
               sessionId: run.session.id,
               pid: run.session.pid ?? undefined,
               startedAt: run.startedAt,
               cwd: run.session.cwd,
               tail: run.session.tail,
-            },
-          });
+            }),
+          );
         };
 
         const onYieldNow = () => {

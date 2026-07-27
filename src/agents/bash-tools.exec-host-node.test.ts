@@ -8,6 +8,9 @@ import { expectDefined } from "@openclaw/normalization-core";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ExecAllowlistEntry } from "../infra/exec-approvals.types.js";
 import { MAX_SAFE_TIMEOUT_DELAY_MS } from "../utils/timer-delay.js";
+import { prependRedactionWarning } from "./bash-tools.exec-output.js";
+
+const EXEC_REDACTION_WARNING = prependRedactionWarning("", true).trimEnd();
 
 type StrictInlineEvalBoundary =
   typeof import("./bash-tools.exec-host-shared.js").enforceStrictInlineEvalApprovalBoundary;
@@ -71,6 +74,7 @@ const INLINE_EVAL_HIT = {
   flag: "-c",
   argv: ["python3", "-c", "print(1)"],
 };
+const fakeSecretOutput = "OPENAI_API_KEY=sk-proj-redaction-canary-1234567890";
 
 const preparedPlan = vi.hoisted(() => ({
   argv: ["bun", "./script.ts"],
@@ -1208,6 +1212,73 @@ describe("executeNodeHostCommand", () => {
     expect(message).not.toMatch(loneSurrogate);
     expect(message).not.toContain("�");
     expect(message).toContain(`Exec finished (node=node-1 id=approval-1, code 0)\n${tailHead}`);
+  });
+
+  it("redacts stdout, stderr, and errors in async node approval follow-ups", async () => {
+    resolveExecHostApprovalContextMock.mockReturnValue({
+      approvals: { allowlist: [], file: { version: 1, agents: {} } },
+      hostSecurity: "full",
+      hostAsk: "always",
+      askFallback: "deny",
+    });
+    const secrets = [
+      "OPENAI_API_KEY=sk-proj-node-stdout-canary-1234567890",
+      "ANTHROPIC_API_KEY=sk-ant-node-stderr-canary-1234567890",
+      "Bearer sk-proj-node-error-canary-1234567890",
+    ];
+    callGatewayToolMock.mockImplementation(
+      async (method: string, _options: unknown, params: MockNodeInvokeParams | undefined) => {
+        if (method === "exec.approvals.node.get") {
+          return { file: { version: 1, agents: {} } };
+        }
+        if (method !== "node.invoke") {
+          throw new Error(`unexpected gateway method: ${method}`);
+        }
+        if (params?.command === "system.run.prepare") {
+          return { payload: { plan: preparedPlan } };
+        }
+        if (params?.command === "system.run") {
+          return {
+            payload: {
+              success: false,
+              stdout: secrets[0],
+              stderr: secrets[1],
+              error: secrets[2],
+              exitCode: 1,
+              timedOut: false,
+            },
+          };
+        }
+        throw new Error(`unexpected node invoke command: ${String(params?.command)}`);
+      },
+    );
+
+    const result = await executeNodeHostCommand({
+      command: "bun ./script.ts",
+      workdir: "/tmp/work",
+      env: {},
+      security: "full",
+      ask: "off",
+      defaultTimeoutSec: 30,
+      approvalRunningNoticeMs: 0,
+      warnings: [],
+      agentId: "requested-agent",
+      sessionKey: "requested-session",
+    });
+
+    expect(result.details?.status).toBe("approval-pending");
+    await vi.waitFor(() => {
+      expect(sendExecApprovalFollowupResultMock).toHaveBeenCalled();
+    });
+    const message = sendExecApprovalFollowupResultMock.mock.calls[0]?.[1];
+    if (typeof message !== "string") {
+      throw new Error("expected follow-up message");
+    }
+    expect(message).toMatch(/^Exec finished \(/);
+    expect(message).toContain("Warning: redacted secret-shaped output");
+    for (const secret of secrets) {
+      expect(message).not.toContain(secret);
+    }
   });
 
   it("does not build a human approval prompt for node auto-review allows", async () => {
@@ -3457,6 +3528,91 @@ describe("executeNodeHostCommand", () => {
       "exec host=node requires a connected node (node-1 is currently disconnected)",
     );
     expect(callGatewayToolMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["stdout", { stdout: `${fakeSecretOutput}\n`, stderr: "", error: "" }],
+    ["stderr", { stdout: "", stderr: `${fakeSecretOutput}\n`, error: "" }],
+    ["error", { stdout: "", stderr: "", error: `${fakeSecretOutput}\n` }],
+  ] as const)("redacts secret-shaped node %s before returning results", async (_field, payload) => {
+    callGatewayToolMock.mockImplementationOnce(
+      async (method: string, _options: unknown, params: MockNodeInvokeParams | undefined) => {
+        if (method === "node.invoke" && params?.command === "system.run") {
+          return {
+            payload: {
+              success: true,
+              stdout: payload.stdout,
+              stderr: payload.stderr,
+              error: payload.error,
+              exitCode: 0,
+              timedOut: false,
+            },
+          };
+        }
+        throw new Error(`unexpected node invoke command: ${String(params?.command)}`);
+      },
+    );
+
+    const result = await executeNodeHostCommand({
+      command: "echo fake-secret",
+      workdir: "/tmp/work",
+      env: {},
+      security: "full",
+      ask: "off",
+      defaultTimeoutSec: 30,
+      approvalRunningNoticeMs: 0,
+      warnings: [],
+      agentId: "requested-agent",
+      sessionKey: "requested-session",
+    });
+
+    const text = (result.content[0] as { text?: string }).text ?? "";
+    const details = result.details as { aggregated?: string };
+    expect(text).not.toContain(fakeSecretOutput);
+    expect(details.aggregated).not.toContain(fakeSecretOutput);
+    expect(text).toContain("OPENAI_API_KEY=sk-pro…7890");
+    expect(details.aggregated).toContain("OPENAI_API_KEY=***");
+    expect(text).toContain(EXEC_REDACTION_WARNING);
+    expect((result.details as { redacted?: boolean }).redacted).toBe(true);
+  });
+
+  it("redacts secret-shaped node warnings before returning results", async () => {
+    callGatewayToolMock.mockImplementationOnce(
+      async (method: string, _options: unknown, params: MockNodeInvokeParams | undefined) => {
+        if (method === "node.invoke" && params?.command === "system.run") {
+          return {
+            payload: {
+              success: true,
+              stdout: "ok\n",
+              stderr: "",
+              error: "",
+              exitCode: 0,
+              timedOut: false,
+            },
+          };
+        }
+        throw new Error(`unexpected node invoke command: ${String(params?.command)}`);
+      },
+    );
+
+    const result = await executeNodeHostCommand({
+      command: "echo fake-secret",
+      workdir: "/tmp/work",
+      env: {},
+      security: "full",
+      ask: "off",
+      defaultTimeoutSec: 30,
+      approvalRunningNoticeMs: 0,
+      warnings: [`warning leaked ${fakeSecretOutput}`],
+      agentId: "requested-agent",
+      sessionKey: "requested-session",
+    });
+
+    const text = (result.content[0] as { text?: string }).text ?? "";
+    expect(text).not.toContain(fakeSecretOutput);
+    expect(text).toContain("OPENAI_API_KEY=sk-pro…7890");
+    expect(text).toContain(EXEC_REDACTION_WARNING);
+    expect((result.details as { redacted?: boolean }).redacted).toBe(true);
   });
 
   it("returns a non-empty placeholder for silent node exec results", async () => {

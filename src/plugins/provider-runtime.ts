@@ -95,6 +95,21 @@ import type {
   PluginTextTransforms,
 } from "./types.js";
 
+/** Resolves canonical provider ids through the active provider plugin's alias contract. */
+export function resolveProviderCanonicalIdWithPlugin(params: {
+  provider: string;
+  config?: OpenClawConfig;
+  workspaceDir?: string;
+  env?: NodeJS.ProcessEnv;
+}): string {
+  const normalized = normalizeProviderId(params.provider);
+  if (!normalized) {
+    return "";
+  }
+  const plugin = resolveProviderRuntimePlugin({ ...params, provider: normalized });
+  return plugin ? normalizeProviderId(plugin.id) : normalized;
+}
+
 function resolveProviderHookRefs(
   provider: string,
   providerConfig?: ModelProviderConfig,

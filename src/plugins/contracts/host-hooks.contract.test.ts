@@ -45,6 +45,10 @@ import { buildPluginAgentTurnPrepareContext, isPluginJsonValue } from "../host-h
 import { createEmptyPluginRegistry } from "../registry-empty.js";
 import { createPluginRegistry } from "../registry.js";
 import { setActivePluginRegistry } from "../runtime.js";
+import {
+  getPluginRuntimeGatewayRequestScope,
+  withPluginRuntimePluginScope,
+} from "../runtime/gateway-request-scope.js";
 import type { PluginRuntime } from "../runtime/types.js";
 import { createPluginRecord } from "../status.test-helpers.js";
 import { runTrustedToolPolicies } from "../trusted-tool-policy.js";
@@ -312,6 +316,103 @@ describe("host-hook fixture plugin contract", () => {
         message: "plugin must be explicitly enabled to register agent tool result middleware",
       },
     ]);
+  });
+
+  it("runs tool-result middleware with the owning plugin and active agent scopes", async () => {
+    const { config, registry } = createPluginRegistryFixture();
+    let observedScope: ReturnType<typeof getPluginRuntimeGatewayRequestScope>;
+    registerTestPlugin({
+      registry,
+      config,
+      record: createPluginRecord({
+        id: "usage-middleware",
+        name: "Usage Middleware",
+        origin: "bundled",
+        contracts: { agentToolResultMiddleware: ["openclaw"] },
+      }),
+      register(api) {
+        api.registerAgentToolResultMiddleware(
+          async (event) => {
+            await Promise.resolve();
+            observedScope = getPluginRuntimeGatewayRequestScope();
+            return { result: event.result };
+          },
+          { runtimes: ["openclaw"] },
+        );
+      },
+    });
+    const registration = registry.registry.agentToolResultMiddlewares[0];
+    expect(registration).toBeDefined();
+    if (!registration) {
+      throw new Error("expected tool-result middleware registration");
+    }
+
+    await withPluginRuntimePluginScope(
+      { pluginId: "ambient-plugin", agentId: "ambient-agent" },
+      async () =>
+        await registration.handler(
+          {
+            toolCallId: "call-1",
+            toolName: "read",
+            args: {},
+            result: { content: [{ type: "text", text: "ok" }], details: {} },
+          },
+          { runtime: "openclaw", agentId: "work" },
+        ),
+    );
+
+    expect(observedScope).toMatchObject({
+      pluginId: "usage-middleware",
+      agentId: "work",
+    });
+  });
+
+  it("runs trusted policies with the owning plugin and active agent scopes", async () => {
+    const { config, registry } = createPluginRegistryFixture();
+    const observedScopes: Array<ReturnType<typeof getPluginRuntimeGatewayRequestScope>> = [];
+    registerTestPlugin({
+      registry,
+      config,
+      record: createPluginRecord({
+        id: "usage-policy",
+        name: "Usage Policy",
+        origin: "bundled",
+      }),
+      register(api) {
+        api.registerTrustedToolPolicy({
+          id: "inspect-usage",
+          description: "Read scoped provider usage",
+          async evaluate() {
+            await Promise.resolve();
+            observedScopes.push(getPluginRuntimeGatewayRequestScope());
+          },
+        });
+      },
+    });
+    setActivePluginRegistry(registry.registry);
+
+    await withPluginRuntimePluginScope(
+      { pluginId: "ambient-plugin", agentId: "ambient-agent" },
+      async () =>
+        await runTrustedToolPolicies(
+          { toolName: "read", params: {} },
+          { toolName: "read", agentId: "work" },
+        ),
+    );
+
+    expect(observedScopes[0]).toMatchObject({
+      pluginId: "usage-policy",
+      agentId: "work",
+    });
+
+    await withPluginRuntimePluginScope(
+      { pluginId: "ambient-plugin", agentId: "ambient-agent" },
+      async () =>
+        await runTrustedToolPolicies({ toolName: "read", params: {} }, { toolName: "read" }),
+    );
+
+    expect(observedScopes[1]).toMatchObject({ pluginId: "usage-policy" });
+    expect(observedScopes[1]?.agentId).toBeUndefined();
   });
 
   it("diagnoses malformed trusted policy registrations", () => {
@@ -2140,6 +2241,76 @@ describe("host-hook fixture plugin contract", () => {
         get: { runId: "run-1", namespace: "lastToolEvent" },
       }),
     ).toBeUndefined();
+  });
+
+  it("runs registered agent event handlers with plugin and event agent scope", async () => {
+    const observedScopes: Array<ReturnType<typeof getPluginRuntimeGatewayRequestScope>> = [];
+    let resolveObservedScopes: (
+      scopes: Array<ReturnType<typeof getPluginRuntimeGatewayRequestScope>>,
+    ) => void;
+    const allObservedScopes = new Promise<
+      Array<ReturnType<typeof getPluginRuntimeGatewayRequestScope>>
+    >((resolve) => {
+      resolveObservedScopes = resolve;
+    });
+    const { config, registry } = createPluginRegistryFixture();
+    registerTestPlugin({
+      registry,
+      config,
+      record: createPluginRecord({
+        id: "agent-event-scope-fixture",
+        name: "Agent Event Scope Fixture",
+        source: "/plugins/agent-event-scope-fixture/index.js",
+        origin: "bundled",
+        trustedOfficialInstall: true,
+      }),
+      register(api) {
+        api.agent.events.registerAgentEventSubscription({
+          id: "scope",
+          async handle() {
+            await Promise.resolve();
+            observedScopes.push(getPluginRuntimeGatewayRequestScope());
+            if (observedScopes.length === 2) {
+              resolveObservedScopes(observedScopes);
+            }
+          },
+        });
+      },
+    });
+    setActivePluginRegistry(registry.registry);
+
+    await withPluginRuntimePluginScope(
+      { pluginId: "ambient-plugin", agentId: "ambient-agent" },
+      async () => {
+        emitAgentEvent({
+          runId: "run-agent-event-scope",
+          stream: "tool",
+          data: {},
+          agentId: "event-agent",
+        });
+        emitAgentEvent({
+          runId: "run-without-agent-scope",
+          stream: "tool",
+          data: {},
+        });
+      },
+    );
+
+    const [scopedEvent, unscopedEvent] = await allObservedScopes;
+    expect(scopedEvent).toMatchObject({
+      pluginId: "agent-event-scope-fixture",
+      pluginSource: "/plugins/agent-event-scope-fixture/index.js",
+      pluginOrigin: "bundled",
+      pluginTrustedOfficialInstall: true,
+      agentId: "event-agent",
+    });
+    expect(unscopedEvent).toMatchObject({
+      pluginId: "agent-event-scope-fixture",
+      pluginSource: "/plugins/agent-event-scope-fixture/index.js",
+      pluginOrigin: "bundled",
+      pluginTrustedOfficialInstall: true,
+    });
+    expect(unscopedEvent?.agentId).toBeUndefined();
   });
 
   it("clears run context on terminal events even when no plugin subscribes to agent events", async () => {

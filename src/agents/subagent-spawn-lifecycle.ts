@@ -41,6 +41,7 @@ export function createSubagentSpawnLifecycleEmitter(params: {
             childSessionKey: params.childSessionKey,
             requesterSessionKey: params.requesterInternalKey,
           },
+          { agentId: params.targetAgentId },
         );
       } catch {
         // Presentation hooks are best-effort after durable registration.

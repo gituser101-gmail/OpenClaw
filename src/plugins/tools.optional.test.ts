@@ -531,12 +531,13 @@ describe("resolvePluginTools optional tools", () => {
     vi.useRealTimers();
   });
 
-  it("runs plugin tool factories, prepare callbacks, and execute callbacks under the owning plugin scope", async () => {
-    const context = createContext();
+  it("runs every plugin tool lifecycle callback under the owning plugin and agent scope", async () => {
+    const context = { ...createContext(), agentId: "work" };
     const observed: Array<{
-      phase: "factory" | "prepare" | "execute";
+      phase: "factory" | "prepare" | "prepare-before" | "finalize-before" | "execute";
       pluginId?: string;
       pluginSource?: string;
+      agentId?: string;
     }> = [];
 
     setRegistry(
@@ -551,6 +552,7 @@ describe("resolvePluginTools optional tools", () => {
             phase: "factory",
             pluginId: scope?.pluginId,
             pluginSource: scope?.pluginSource,
+            agentId: scope?.agentId,
           });
           return {
             name: `${pluginId}_tool`,
@@ -562,8 +564,29 @@ describe("resolvePluginTools optional tools", () => {
                 phase: "prepare",
                 pluginId: prepareScope?.pluginId,
                 pluginSource: prepareScope?.pluginSource,
+                agentId: prepareScope?.agentId,
               });
               return args;
+            },
+            prepareBeforeToolCallParams(params: unknown) {
+              const prepareBeforeScope = getPluginRuntimeGatewayRequestScope();
+              observed.push({
+                phase: "prepare-before",
+                pluginId: prepareBeforeScope?.pluginId,
+                pluginSource: prepareBeforeScope?.pluginSource,
+                agentId: prepareBeforeScope?.agentId,
+              });
+              return params;
+            },
+            finalizeBeforeToolCallParams(params: unknown) {
+              const finalizeBeforeScope = getPluginRuntimeGatewayRequestScope();
+              observed.push({
+                phase: "finalize-before",
+                pluginId: finalizeBeforeScope?.pluginId,
+                pluginSource: finalizeBeforeScope?.pluginSource,
+                agentId: finalizeBeforeScope?.agentId,
+              });
+              return params;
             },
             async execute() {
               const executeScope = getPluginRuntimeGatewayRequestScope();
@@ -571,6 +594,7 @@ describe("resolvePluginTools optional tools", () => {
                 phase: "execute",
                 pluginId: executeScope?.pluginId,
                 pluginSource: executeScope?.pluginSource,
+                agentId: executeScope?.agentId,
               });
               return { content: [{ type: "text", text: pluginId }] };
             },
@@ -589,7 +613,15 @@ describe("resolvePluginTools optional tools", () => {
         const tools = resolvePluginTools(createResolveToolsParams({ context }));
         expect(tools.map((tool) => tool.name)).toEqual(["multi_tool", "optional-demo_tool"]);
         for (const tool of tools) {
-          await tool.execute(`call-${tool.name}`, tool.prepareArguments?.({}) ?? {}, undefined);
+          const preparedArguments = tool.prepareArguments?.({}) ?? {};
+          const preparedBefore = await tool.prepareBeforeToolCallParams?.(preparedArguments, {
+            toolCallId: `call-${tool.name}`,
+          });
+          const finalizedBefore = tool.finalizeBeforeToolCallParams?.(
+            preparedBefore,
+            preparedBefore,
+          );
+          await tool.execute(`call-${tool.name}`, finalizedBefore ?? preparedArguments, undefined);
           expect(getPluginRuntimeGatewayRequestScope()).toMatchObject({
             pluginId: "outer",
             pluginSource: "/tmp/outer.js",
@@ -600,23 +632,65 @@ describe("resolvePluginTools optional tools", () => {
 
     expect(getPluginRuntimeGatewayRequestScope()).toBeUndefined();
     expect(observed).toEqual([
-      { phase: "factory", pluginId: "multi", pluginSource: "/tmp/multi.js" },
+      {
+        phase: "factory",
+        pluginId: "multi",
+        pluginSource: "/tmp/multi.js",
+        agentId: "work",
+      },
       {
         phase: "factory",
         pluginId: "optional-demo",
         pluginSource: "/tmp/optional-demo.js",
+        agentId: "work",
       },
-      { phase: "prepare", pluginId: "multi", pluginSource: "/tmp/multi.js" },
-      { phase: "execute", pluginId: "multi", pluginSource: "/tmp/multi.js" },
+      {
+        phase: "prepare",
+        pluginId: "multi",
+        pluginSource: "/tmp/multi.js",
+        agentId: "work",
+      },
+      {
+        phase: "prepare-before",
+        pluginId: "multi",
+        pluginSource: "/tmp/multi.js",
+        agentId: "work",
+      },
+      {
+        phase: "finalize-before",
+        pluginId: "multi",
+        pluginSource: "/tmp/multi.js",
+        agentId: "work",
+      },
+      {
+        phase: "execute",
+        pluginId: "multi",
+        pluginSource: "/tmp/multi.js",
+        agentId: "work",
+      },
       {
         phase: "prepare",
         pluginId: "optional-demo",
         pluginSource: "/tmp/optional-demo.js",
+        agentId: "work",
+      },
+      {
+        phase: "prepare-before",
+        pluginId: "optional-demo",
+        pluginSource: "/tmp/optional-demo.js",
+        agentId: "work",
+      },
+      {
+        phase: "finalize-before",
+        pluginId: "optional-demo",
+        pluginSource: "/tmp/optional-demo.js",
+        agentId: "work",
       },
       {
         phase: "execute",
         pluginId: "optional-demo",
         pluginSource: "/tmp/optional-demo.js",
+        agentId: "work",
       },
     ]);
   });

@@ -9,6 +9,7 @@ import { clampPositiveTimerTimeoutMs } from "@openclaw/normalization-core/number
 import { copyReplyPayloadMetadata, type ReplyPayload } from "../auto-reply/reply-payload.js";
 import { formatHookErrorForLog } from "../hooks/fire-and-forget.js";
 import { formatErrorMessage } from "../infra/errors.js";
+import { parseAgentSessionKey } from "../routing/session-key.js";
 import { concatOptionalTextSegments } from "../shared/text/join-segments.js";
 import {
   type GateHookResult,
@@ -92,6 +93,7 @@ import type {
   PluginHookResolveExecEnvContext,
   PluginHookResolveExecEnvEvent,
 } from "./hook-types.js";
+import { withPluginRuntimePluginScope } from "./runtime/gateway-request-scope.js";
 
 // Re-export types for consumers
 
@@ -104,6 +106,12 @@ type HookRunnerLogger = {
 type HookFailurePolicy = "fail-open" | "fail-closed";
 export type VoidHookRunOptions = {
   unrefTimeout?: boolean;
+};
+
+// Some host identities stay nested or encoded in public hook payloads. Callers pass the
+// already-resolved agent so plugin runtime scope never inherits an unrelated ambient agent.
+type PluginHookInvocationScope = {
+  agentId?: string;
 };
 
 type BeforeAgentFinalizeRetry = NonNullable<PluginHookBeforeAgentFinalizeResult["retry"]>;
@@ -198,6 +206,61 @@ type SyncHookHandler<K extends SyncHookName> = NonNullable<PluginHookRegistratio
 type SyncHookEvent<K extends SyncHookName> = Parameters<SyncHookHandler<K>>[0];
 type SyncHookContext<K extends SyncHookName> = Parameters<SyncHookHandler<K>>[1];
 type SyncHookResult<K extends SyncHookName> = ReturnType<SyncHookHandler<K>>;
+
+function resolvePluginHookAgentId(...sources: unknown[]): string | undefined {
+  for (const source of sources) {
+    const rawAgentId =
+      typeof source === "object" && source !== null && "agentId" in source
+        ? (source as { agentId?: unknown }).agentId
+        : undefined;
+    if (typeof rawAgentId === "string" && rawAgentId.trim()) {
+      return rawAgentId.trim();
+    }
+  }
+  // Some hook owners carry only canonical session identities under lifecycle-specific fields.
+  // Parse them after checking every explicit agent; opaque legacy keys stay unscoped.
+  for (const source of sources) {
+    if (typeof source !== "object" || source === null) {
+      continue;
+    }
+    const sessionKeys = source as {
+      sessionKey?: unknown;
+      targetSessionKey?: unknown;
+      childSessionKey?: unknown;
+    };
+    for (const rawSessionKey of [
+      sessionKeys.sessionKey,
+      sessionKeys.targetSessionKey,
+      sessionKeys.childSessionKey,
+    ]) {
+      if (typeof rawSessionKey !== "string" || !rawSessionKey.trim()) {
+        continue;
+      }
+      const sessionAgentId = parseAgentSessionKey(rawSessionKey)?.agentId;
+      if (sessionAgentId) {
+        return sessionAgentId;
+      }
+    }
+  }
+  return undefined;
+}
+
+function runWithPluginHookScope<K extends PluginHookName, T>(
+  hook: PluginHookRegistration<K>,
+  agentId: string | undefined,
+  run: () => T,
+): T {
+  // Registration owns plugin identity; host context/event owns explicit agent identity.
+  // Omitting agentId preserves an already established host scope for replay paths.
+  return withPluginRuntimePluginScope(
+    {
+      pluginId: hook.pluginId,
+      ...(agentId ? { agentId } : {}),
+      pluginSource: hook.source,
+    },
+    run,
+  );
+}
 
 /**
  * Get hooks for a specific hook name, sorted by priority (higher first).
@@ -523,9 +586,12 @@ export function createHookRunner(
     hook: PluginHookRegistration<K>,
     event: SyncHookEvent<K>,
     ctx: SyncHookContext<K>,
+    agentId: string | undefined,
   ): SyncHookResult<K> | PromiseLike<unknown> => {
     const handler = hook.handler as SyncHookHandler<K>;
-    return handler(event, ctx) as SyncHookResult<K> | PromiseLike<unknown>;
+    return runWithPluginHookScope(hook, agentId, () => handler(event, ctx)) as
+      | SyncHookResult<K>
+      | PromiseLike<unknown>;
   };
 
   /**
@@ -537,18 +603,22 @@ export function createHookRunner(
     event: Parameters<NonNullable<PluginHookRegistration<K>["handler"]>>[0],
     ctx: Parameters<NonNullable<PluginHookRegistration<K>["handler"]>>[1],
     optionsValue: VoidHookRunOptions = {},
+    invocationScope?: PluginHookInvocationScope,
   ): Promise<void> {
     const hooks = getHooksForName(registry, hookName);
     if (hooks.length === 0) {
       return;
     }
 
+    const agentId = resolvePluginHookAgentId(invocationScope, ctx, event);
     logger?.debug?.(`[hooks] running ${hookName} (${hooks.length} handlers)`);
 
     const promises = hooks.map(async (hook) => {
       try {
         const promise = Promise.resolve(
-          (hook.handler as (event: unknown, ctx: unknown) => Promise<void> | void)(event, ctx),
+          runWithPluginHookScope(hook, agentId, () =>
+            (hook.handler as (event: unknown, ctx: unknown) => Promise<void> | void)(event, ctx),
+          ),
         );
         const timeoutMs = getVoidHookTimeoutMs(hookName, hook);
         if (timeoutMs) {
@@ -579,6 +649,7 @@ export function createHookRunner(
       return undefined;
     }
 
+    const agentId = resolvePluginHookAgentId(ctx, event);
     logger?.debug?.(`[hooks] running ${hookName} (${hooks.length} handlers, sequential)`);
 
     let result: TResult | undefined;
@@ -586,7 +657,9 @@ export function createHookRunner(
     for (const hook of hooks) {
       try {
         const handler = hook.handler as (event: unknown, ctx: unknown) => Promise<TResult>;
-        const promise = Promise.resolve(handler(event, ctx));
+        const promise = Promise.resolve(
+          runWithPluginHookScope(hook, agentId, () => handler(event, ctx)),
+        );
         const timeoutMs = getModifyingHookTimeoutMs(hookName, hook);
         const handlerResult = timeoutMs ? await withHookTimeout(promise, timeoutMs) : await promise;
 
@@ -623,6 +696,7 @@ export function createHookRunner(
     hookName: K,
     event: Parameters<NonNullable<PluginHookRegistration<K>["handler"]>>[0],
     ctx: Parameters<NonNullable<PluginHookRegistration<K>["handler"]>>[1],
+    invocationScope?: PluginHookInvocationScope,
   ): Promise<TResult | undefined> {
     const hooks = getHooksForName(registry, hookName);
     if (hooks.length === 0) {
@@ -631,7 +705,7 @@ export function createHookRunner(
 
     logger?.debug?.(`[hooks] running ${hookName} (${hooks.length} handlers, first-claim wins)`);
 
-    return await runClaimingHooksList(hooks, hookName, event, ctx);
+    return await runClaimingHooksList(hooks, hookName, event, ctx, invocationScope);
   }
 
   async function runClaimingHookForPlugin<
@@ -663,11 +737,15 @@ export function createHookRunner(
     hookName: K,
     event: Parameters<NonNullable<PluginHookRegistration<K>["handler"]>>[0],
     ctx: Parameters<NonNullable<PluginHookRegistration<K>["handler"]>>[1],
+    invocationScope?: PluginHookInvocationScope,
   ): Promise<TResult | undefined> {
+    const agentId = resolvePluginHookAgentId(invocationScope, ctx, event);
     for (const hook of hooks) {
       try {
         const promise = Promise.resolve(
-          (hook.handler as (event: unknown, ctx: unknown) => Promise<TResult | void>)(event, ctx),
+          runWithPluginHookScope(hook, agentId, () =>
+            (hook.handler as (event: unknown, ctx: unknown) => Promise<TResult | void>)(event, ctx),
+          ),
         );
         const timeoutMs = getClaimingHookTimeoutMs(hookName, hook);
         const handlerResult = timeoutMs ? await withHookTimeout(promise, timeoutMs) : await promise;
@@ -714,11 +792,14 @@ export function createHookRunner(
       `[hooks] running ${hookName} for ${pluginId} (${hooks.length} handlers, targeted outcome)`,
     );
 
+    const agentId = resolvePluginHookAgentId(ctx, event);
     let firstError: string | null = null;
     for (const hook of hooks) {
       try {
         const promise = Promise.resolve(
-          (hook.handler as (event: unknown, ctx: unknown) => Promise<TResult | void>)(event, ctx),
+          runWithPluginHookScope(hook, agentId, () =>
+            (hook.handler as (event: unknown, ctx: unknown) => Promise<TResult | void>)(event, ctx),
+          ),
         );
         const timeoutMs = getClaimingHookTimeoutMs(hookName, hook);
         const handlerResult = timeoutMs ? await withHookTimeout(promise, timeoutMs) : await promise;
@@ -967,8 +1048,9 @@ export function createHookRunner(
   async function runMessageReceived(
     event: PluginHookMessageReceivedEvent,
     ctx: PluginHookMessageContext,
+    invocationScope?: PluginHookInvocationScope,
   ): Promise<void> {
-    return runVoidHook("message_received", event, ctx);
+    return runVoidHook("message_received", event, ctx, {}, invocationScope);
   }
 
   /**
@@ -1006,11 +1088,13 @@ export function createHookRunner(
   async function runReplyDispatch(
     event: PluginHookReplyDispatchEvent,
     ctx: PluginHookReplyDispatchContext,
+    invocationScope?: PluginHookInvocationScope,
   ): Promise<PluginHookReplyDispatchResult | undefined> {
     return runClaimingHook<"reply_dispatch", PluginHookReplyDispatchResult>(
       "reply_dispatch",
       event,
       ctx,
+      invocationScope,
     );
   }
 
@@ -1030,6 +1114,9 @@ export function createHookRunner(
 
     logger?.debug?.(`[hooks] running reply_payload_sending (${hooks.length} handlers, sequential)`);
 
+    // Live reply delivery carries host-owned agent identity on the per-turn usage event;
+    // durable/replay paths may omit it and preserve an already established host scope.
+    const agentId = resolvePluginHookAgentId(ctx, event, event.usageState);
     let currentPayload: ReplyPayload = event.payload;
     let result: PluginHookReplyPayloadSendingResult | undefined;
 
@@ -1040,7 +1127,9 @@ export function createHookRunner(
           ctx: PluginHookReplyPayloadSendingContext,
         ) => Promise<PluginHookReplyPayloadSendingResult | void>;
         const promise = Promise.resolve(
-          handler({ ...event, payload: toPluginReplyPayload(currentPayload) }, ctx),
+          runWithPluginHookScope(hook, agentId, () =>
+            handler({ ...event, payload: toPluginReplyPayload(currentPayload) }, ctx),
+          ),
         );
         const timeoutMs = getModifyingHookTimeoutMs("reply_payload_sending", hook);
         const handlerResult = timeoutMs ? await withHookTimeout(promise, timeoutMs) : await promise;
@@ -1240,11 +1329,12 @@ export function createHookRunner(
       return undefined;
     }
 
+    const agentId = resolvePluginHookAgentId(ctx, event);
     let current = event.message;
 
     for (const hook of hooks) {
       try {
-        const out = runSyncHookHandler(hook, { ...event, message: current }, ctx);
+        const out = runSyncHookHandler(hook, { ...event, message: current }, ctx, agentId);
 
         // Guard against accidental async handlers (this hook is sync-only).
         if (isPromiseLike(out)) {
@@ -1300,11 +1390,12 @@ export function createHookRunner(
       return undefined;
     }
 
+    const agentId = resolvePluginHookAgentId(ctx, event);
     let current = event.message;
 
     for (const hook of hooks) {
       try {
-        const out = runSyncHookHandler(hook, { ...event, message: current }, ctx);
+        const out = runSyncHookHandler(hook, { ...event, message: current }, ctx, agentId);
 
         // Guard against accidental async handlers (this hook is sync-only).
         if (isPromiseLike(out)) {
@@ -1421,8 +1512,9 @@ export function createHookRunner(
   async function runSubagentProgress(
     event: PluginHookSubagentProgressEvent,
     ctx: PluginHookSubagentContext,
+    invocationScope?: PluginHookInvocationScope,
   ): Promise<void> {
-    return runVoidHook("subagent_progress", event, ctx);
+    return runVoidHook("subagent_progress", event, ctx, {}, invocationScope);
   }
 
   /**

@@ -134,9 +134,9 @@ describe("persistFollowupQueues / restoreFollowupQueues", () => {
     const restored = FOLLOWUP_QUEUES.get(TEST_KEY);
     expect(restored).toBeDefined();
     expect(restored!.items.length).toBe(1);
-    expect(restored!.items[0].prompt).toBe("queued message");
-    expect(restored!.items[0].originatingChannel).toBe("telegram");
-    expect(restored!.items[0].originatingTo).toBe("12345");
+    expect(restored!.items[0]?.prompt).toBe("queued message");
+    expect(restored!.items[0]?.originatingChannel).toBe("telegram");
+    expect(restored!.items[0]?.originatingTo).toBe("12345");
     expect(restored!.draining).toBe(false);
   });
 
@@ -158,8 +158,8 @@ describe("persistFollowupQueues / restoreFollowupQueues", () => {
     FOLLOWUP_QUEUES.delete(TEST_KEY);
     restoreFollowupQueues();
     const restored = FOLLOWUP_QUEUES.get(TEST_KEY);
-    expect(restored?.items[0].originatingReplyToId).toBe("telegram-msg-99");
-    expect(restored?.items[0].run.inputProvenance).toEqual({
+    expect(restored?.items[0]?.originatingReplyToId).toBe("telegram-msg-99");
+    expect(restored?.items[0]?.run.inputProvenance).toEqual({
       kind: "external_user",
       sourceChannel: "telegram",
       sourceSessionKey: "agent:main:dm:999",
@@ -217,23 +217,23 @@ describe("persistFollowupQueues / restoreFollowupQueues", () => {
     const run = makeRun();
     run.chatType = "direct";
     run.clientCaps = ["images", "voice"];
-    run.channelContext = { channelId: "telegram", to: "12345" };
+    run.channelContext = { chat: { id: "12345" } };
     run.spawnedBy = "agent:main:telegram:direct:seed";
     run.approvalReviewerDeviceId = "device-7";
-    run.taskSuggestionDeliveryMode = "inline";
+    run.taskSuggestionDeliveryMode = "gateway";
     run.modelSelectionLocked = true;
     run.fastMode = true;
     run.fastModeAutoOnSeconds = 15;
     run.fastModeOverride = true;
     run.fastModeAutoOnSecondsOverride = true;
     run.runTimeoutOverrideMs = 45_000;
-    run.cliSessionBindingFacts = { sessionKey: "agent:main:telegram:direct:12345" };
+    run.cliSessionBindingFacts = { requireExplicitMessageTarget: true };
     run.toolBindings = { search: { enabled: true } };
     const queue = getFollowupQueue(TEST_KEY, SETTINGS);
     queue.items.push({
       ...makeFollowupRun("full route context"),
       originatingChatId: "telegram-chat-1",
-      originatingReplyToMode: "quoted_reply",
+      originatingReplyToMode: "first",
       run,
     });
 
@@ -244,13 +244,13 @@ describe("persistFollowupQueues / restoreFollowupQueues", () => {
 
     const restored = FOLLOWUP_QUEUES.get(TEST_KEY)?.items[0];
     expect(restored?.originatingChatId).toBe("telegram-chat-1");
-    expect(restored?.originatingReplyToMode).toBe("quoted_reply");
+    expect(restored?.originatingReplyToMode).toBe("first");
     expect(restored?.run.chatType).toBe("direct");
     expect(restored?.run.clientCaps).toEqual(["images", "voice"]);
-    expect(restored?.run.channelContext).toEqual({ channelId: "telegram", to: "12345" });
+    expect(restored?.run.channelContext).toEqual({ chat: { id: "12345" } });
     expect(restored?.run.spawnedBy).toBe("agent:main:telegram:direct:seed");
     expect(restored?.run.approvalReviewerDeviceId).toBe("device-7");
-    expect(restored?.run.taskSuggestionDeliveryMode).toBe("inline");
+    expect(restored?.run.taskSuggestionDeliveryMode).toBe("gateway");
     expect(restored?.run.modelSelectionLocked).toBe(true);
     expect(restored?.run.fastMode).toBe(true);
     expect(restored?.run.fastModeAutoOnSeconds).toBe(15);
@@ -258,7 +258,7 @@ describe("persistFollowupQueues / restoreFollowupQueues", () => {
     expect(restored?.run.fastModeAutoOnSecondsOverride).toBe(true);
     expect(restored?.run.runTimeoutOverrideMs).toBe(45_000);
     expect(restored?.run.cliSessionBindingFacts).toEqual({
-      sessionKey: "agent:main:telegram:direct:12345",
+      requireExplicitMessageTarget: true,
     });
     expect(restored?.run.toolBindings).toEqual({ search: { enabled: true } });
   });
@@ -303,7 +303,7 @@ describe("persistFollowupQueues / restoreFollowupQueues", () => {
     FOLLOWUP_QUEUES.delete(TEST_KEY);
     restoreFollowupQueues();
     const restored = FOLLOWUP_QUEUES.get(TEST_KEY);
-    expect(restored?.items[0].abortSignal).toBeUndefined();
+    expect(restored?.items[0]?.abortSignal).toBeUndefined();
   });
 
   it("is a no-op when no persisted queue rows exist", () => {
@@ -320,7 +320,7 @@ describe("persistFollowupQueues / restoreFollowupQueues", () => {
     clearFollowupQueuesRestoredFlagForTest();
 
     restoreFollowupQueues();
-    expect(FOLLOWUP_QUEUES.get(TEST_KEY)?.items[0].prompt).toBe("originally queued");
+    expect(FOLLOWUP_QUEUES.get(TEST_KEY)?.items[0]?.prompt).toBe("originally queued");
 
     FOLLOWUP_QUEUES.set(TEST_KEY, {
       abortController: new AbortController(),
@@ -342,7 +342,7 @@ describe("persistFollowupQueues / restoreFollowupQueues", () => {
 
     restoreFollowupQueues();
     const afterSecondRestore = FOLLOWUP_QUEUES.get(TEST_KEY);
-    expect(afterSecondRestore?.items[0].prompt).toBe("arrived during drain");
+    expect(afterSecondRestore?.items[0]?.prompt).toBe("arrived during drain");
     expect(afterSecondRestore?.draining).toBe(true);
   });
 
@@ -353,7 +353,7 @@ describe("persistFollowupQueues / restoreFollowupQueues", () => {
     FOLLOWUP_QUEUES.delete(TEST_KEY);
     clearFollowupQueuesRestoredFlagForTest();
     restoreFollowupQueues();
-    expect(FOLLOWUP_QUEUES.get(TEST_KEY)?.items[0].prompt).toBe("first round");
+    expect(FOLLOWUP_QUEUES.get(TEST_KEY)?.items[0]?.prompt).toBe("first round");
 
     FOLLOWUP_QUEUES.delete(TEST_KEY);
     restoreFollowupQueues();
@@ -361,7 +361,7 @@ describe("persistFollowupQueues / restoreFollowupQueues", () => {
 
     clearFollowupQueuesRestoredFlagForTest();
     restoreFollowupQueues();
-    expect(FOLLOWUP_QUEUES.get(TEST_KEY)?.items[0].prompt).toBe("first round");
+    expect(FOLLOWUP_QUEUES.get(TEST_KEY)?.items[0]?.prompt).toBe("first round");
   });
 
   it("registers restored keys in the pending-drain set when queue has items", () => {
@@ -440,7 +440,7 @@ describe("persistFollowupQueues / restoreFollowupQueues", () => {
       items: Array<{ originatingReplyToId?: string; run: Record<string, unknown> }>;
       lastRun?: Record<string, unknown>;
     };
-    const persistedItem = persisted.items[0];
+    const persistedItem = persisted.items[0]!;
     const persistedRun = persistedItem.run;
     expect(persistedItem.originatingReplyToId).toBe("msg-42");
     expect(persistedRun.config).toBeUndefined();
@@ -479,8 +479,8 @@ describe("persistFollowupQueues / restoreFollowupQueues", () => {
     restoreFollowupQueues();
 
     const restored = FOLLOWUP_QUEUES.get(TEST_KEY);
-    expect(restored?.items[0].run.authProfileId).toBe("anthropic:work");
-    expect(restored?.items[0].run.authProfileIdSource).toBe("user");
+    expect(restored?.items[0]?.run.authProfileId).toBe("anthropic:work");
+    expect(restored?.items[0]?.run.authProfileIdSource).toBe("user");
     expect(restored?.lastRun?.authProfileId).toBe("anthropic:work");
     expect(restored?.lastRun?.authProfileIdSource).toBe("user");
   });
@@ -500,7 +500,7 @@ describe("persistFollowupQueues / restoreFollowupQueues", () => {
     restoreFollowupQueues();
     const restored = FOLLOWUP_QUEUES.get(TEST_KEY);
     expect(restored).toBeDefined();
-    const rerun = restored!.items[0].run;
+    const rerun = restored!.items[0]!.run;
     expect(rerun.config).toBe(liveConfig);
     expect(restored!.lastRun?.config).toBe(liveConfig);
     expect(rerun.skillsSnapshot).toBeUndefined();
@@ -523,7 +523,7 @@ describe("persistFollowupQueues / restoreFollowupQueues", () => {
     persistFollowupQueues();
     FOLLOWUP_QUEUES.delete(TEST_KEY);
     restoreFollowupQueues();
-    expect(FOLLOWUP_QUEUES.get(TEST_KEY)!.items[0].run.config).toBe(oldConfig);
+    expect(FOLLOWUP_QUEUES.get(TEST_KEY)!.items[0]?.run.config).toBe(oldConfig);
 
     FOLLOWUP_QUEUES.delete(TEST_KEY);
     const newConfig = {
@@ -532,7 +532,7 @@ describe("persistFollowupQueues / restoreFollowupQueues", () => {
     setRuntimeConfigSnapshot(newConfig);
     clearFollowupQueuesRestoredFlagForTest();
     restoreFollowupQueues();
-    expect(FOLLOWUP_QUEUES.get(TEST_KEY)!.items[0].run.config).toBe(newConfig);
+    expect(FOLLOWUP_QUEUES.get(TEST_KEY)!.items[0]?.run.config).toBe(newConfig);
   });
 
   it("skips entries with missing or invalid items array", () => {
@@ -543,7 +543,7 @@ describe("persistFollowupQueues / restoreFollowupQueues", () => {
       ],
     });
     restoreFollowupQueues();
-    expect(FOLLOWUP_QUEUES.get(TEST_KEY)?.items[0].prompt).toBe("ok");
+    expect(FOLLOWUP_QUEUES.get(TEST_KEY)?.items[0]?.prompt).toBe("ok");
     expect(FOLLOWUP_QUEUES.get("agent:bad")).toBeUndefined();
   });
 });

@@ -1462,6 +1462,7 @@ describe("runHeartbeatOnce", () => {
     | "actionable"
     | "fenced-empty"
     | "fenced-actionable"
+    | "legacy-comment-only"
     | "missing";
 
   async function runHeartbeatScratchScenario(params: {
@@ -1501,7 +1502,9 @@ describe("runHeartbeatOnce", () => {
 - Check server logs
 \`\`\`
 `
-              : null;
+              : params.fileState === "legacy-comment-only"
+                ? "# Heartbeat scratch\n\n<!-- no heartbeat tasks -->\n"
+                : null;
 
     const cfg: OpenClawConfig = {
       agents: {

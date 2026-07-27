@@ -12,45 +12,11 @@ import {
 import { persistFollowupQueues, restoreFollowupQueues } from "./persist.js";
 import {
   completeFollowupRunLifecycle,
+  type FollowupQueueState,
   type FollowupRun,
   type QueueDropPolicy,
-  type QueueMode,
   type QueueSettings,
 } from "./types.js";
-
-/**
- * Exported so persistence (persist.ts) and cross-cutting readers can reference
- * the canonical runtime shape without duplicating it. Runtime-only fields
- * (abortController, inFlight, activeSummarySources) are never persisted —
- * persist.ts reconstructs them fresh when restoring from disk.
- */
-export type FollowupQueueState = {
-  abortController: AbortController;
-  items: FollowupRun[];
-  draining: boolean;
-  /** Identities retained in `items` while delivery awaits; pending cap and depth must exclude them. */
-  inFlight: Set<FollowupRun>;
-  lastEnqueuedAt: number;
-  mode: QueueMode;
-  debounceMs: number;
-  cap: number;
-  dropPolicy: QueueDropPolicy;
-  droppedCount: number;
-  summaryLines: string[];
-  summarySources: FollowupRun[];
-  /** Sources currently used by an async summary delivery cannot be evicted mid-run. */
-  activeSummarySources: WeakSet<FollowupRun>;
-  summaryElisions: Array<{
-    contextKey: string;
-    count: number;
-    /** Compact sources stay strong so cancellation follows summarized content until delivery. */
-    sources: FollowupRun[];
-    /** Weak source mapping keeps concurrent summary consumption identity-safe. */
-    sourceRefs: WeakMap<FollowupRun, FollowupRun>;
-  }>;
-  evictedSummaryCount: number;
-  lastRun?: FollowupRun["run"];
-};
 
 export const DEFAULT_QUEUE_DEBOUNCE_MS = 500;
 export const DEFAULT_QUEUE_CAP = 20;

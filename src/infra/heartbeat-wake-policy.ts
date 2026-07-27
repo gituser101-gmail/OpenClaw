@@ -57,9 +57,9 @@ export function isTargetedImmediateSystemEventWake(params: {
   sessionKey?: string;
 }): boolean {
   return (
-    params.source === "notifications-event" &&
+    (params.source === "notifications-event" || params.source === "followup-queue-restore") &&
     params.intent === "immediate" &&
-    params.reason?.trim() === "wake" &&
+    (params.reason?.trim() === "wake" || params.source === "followup-queue-restore") &&
     normalizeOptionalString(params.sessionKey) !== undefined
   );
 }

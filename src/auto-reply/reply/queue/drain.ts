@@ -598,10 +598,6 @@ function collectRuntimeMetadata(
   };
 }
 
-function collectSummaryRuntimeMetadata(items: FollowupRun[]): FollowupRuntimeMetadata {
-  return collectRuntimeMetadata(items, items.length === 1 ? items[0] : undefined);
-}
-
 type FollowupQueueSummaryState = {
   cap: number;
   dropPolicy: "summarize" | "old" | "new";

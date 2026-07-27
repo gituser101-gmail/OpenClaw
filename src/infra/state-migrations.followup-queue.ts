@@ -6,7 +6,7 @@ import { loadFollowupQueueEntries, replaceFollowupQueueEntries } from "./followu
 import { fileExists } from "./state-migrations.fs.js";
 import type { LegacyStateDetection, MigrationMessages } from "./state-migrations.types.js";
 
-export function resolveLegacyFollowupQueueStatePath(stateDir: string): string {
+function resolveLegacyFollowupQueueStatePath(stateDir: string): string {
   return path.join(stateDir, LEGACY_FOLLOWUP_QUEUE_STATE_FILENAME);
 }
 

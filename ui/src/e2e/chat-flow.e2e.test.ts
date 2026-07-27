@@ -2801,6 +2801,12 @@ describeControlUiE2e("Control UI mocked Gateway E2E", () => {
         message: queuedPrompt,
         sessionKey: "main",
       });
+      await queue.getByText("Steered").waitFor({ timeout: 10_000 });
+      await gateway.emitChatFinal({
+        runId: String(requireRecord(steerRequest.params).idempotencyKey),
+        sessionKey: "main",
+        text: "The restored queued message was steered.",
+      });
       await queue.getByText(queuedPrompt).waitFor({ state: "detached", timeout: 10_000 });
     } finally {
       await closeBrowserContext(context);
@@ -3771,7 +3777,7 @@ describeControlUiE2e("Control UI mocked Gateway E2E", () => {
           timeout: 10_000,
         });
       await expect.poll(() => sidebarSessionOrder(page)).toEqual(createdOrder.slice(0, 11));
-      await page.getByRole("button", { name: "Load more" }).click();
+      await page.getByRole("button", { name: "Show more" }).click();
       await expect.poll(() => sidebarSessionOrder(page)).toEqual(createdOrder);
 
       await page

@@ -82,6 +82,7 @@ describe("subagent registry persistence resume", () => {
         requesterOrigin: { channel: "whatsapp", accountId: "acct-main" },
         requesterDisplayKey: "main",
         task: "do the thing",
+        announceTarget: "parent",
         cleanup: "keep",
         createdAt: Date.now(),
       };
@@ -103,17 +104,20 @@ describe("subagent registry persistence resume", () => {
       const announce = (announceSpy.mock.calls as unknown as Array<[unknown]>).at(-1)?.[0] as
         | {
             childRunId?: string;
+            announceTarget?: string;
             requesterOrigin?: { channel?: string; accountId?: string };
             outcome?: { status?: string };
           }
         | undefined;
       expect(announce).toMatchObject({
         childRunId: "run-1",
+        announceTarget: "parent",
         requesterOrigin: { channel: "whatsapp", accountId: "acct-main" },
         outcome: { status: "ok" },
       });
       expect(mod.listSubagentRunsForRequester("agent:main:main")[0]).toMatchObject({
         childSessionKey: run.childSessionKey,
+        announceTarget: "parent",
         requesterOrigin: { channel: "whatsapp", accountId: "acct-main" },
       });
     });

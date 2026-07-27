@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import { buildSessionCreationStamp } from "../config/sessions/session-entry-provenance.js";
 import type { SessionEntry } from "../config/sessions/types.js";
@@ -72,6 +73,9 @@ function buildDirectChildSessionPatch(patch: Record<string, unknown>): Partial<S
   if (patch.swarmOutputSchema && typeof patch.swarmOutputSchema === "object") {
     entry.swarmOutputSchema = patch.swarmOutputSchema as Record<string, unknown>;
   }
+  if (typeof patch.sessionId === "string" && patch.sessionId.trim()) {
+    entry.sessionId = patch.sessionId.trim();
+  }
   if (typeof patch.model === "string" && patch.model.trim()) {
     const { provider, model } = splitModelRef(patch.model.trim());
     if (model) {
@@ -135,6 +139,12 @@ export async function createInitialSubagentSession(params: {
     ...(params.outputSchema ? { swarmOutputSchema: params.outputSchema } : {}),
     ...(params.incognito ? { incognito: true } : {}),
   };
+  const childSessionId =
+    typeof initialChildSessionPatch.sessionId === "string" &&
+    initialChildSessionPatch.sessionId.trim()
+      ? initialChildSessionPatch.sessionId.trim()
+      : randomUUID();
+  initialChildSessionPatch.sessionId = childSessionId;
   try {
     const target = params.incognito
       ? {

@@ -190,7 +190,7 @@ export async function applySqliteSessionEntryReplacements<T>(params: {
         });
       }
     }
-    finalizeSqliteSessionEntryMaintenancePlansBestEffort(resolved, maintenancePlans);
+    await finalizeSqliteSessionEntryMaintenancePlansBestEffort(resolved, maintenancePlans);
     return operation.result;
   });
 }
@@ -277,7 +277,7 @@ export async function applySqliteSessionStoreProjection<T>(params: {
       toDatabaseOptions(resolved),
       { operationLabel: "session.store-projection" },
     );
-    finalizeSqliteSessionEntryMaintenancePlansBestEffort(resolved, maintenancePlans);
+    await finalizeSqliteSessionEntryMaintenancePlansBestEffort(resolved, maintenancePlans);
     return operation.result;
   });
 }
@@ -324,7 +324,9 @@ export async function applySqliteSessionEntryLifecycleMutation(params: {
     });
     let materializedRemovalPlans: MaterializedSqliteSessionStateDeletePlan[] = [];
     try {
-      materializedRemovalPlans = materializeSqliteSessionStateDeletePlans(projected.deletePlans);
+      materializedRemovalPlans = await materializeSqliteSessionStateDeletePlans(
+        projected.deletePlans,
+      );
     } catch (error) {
       captureArtifactCleanupError(error);
     }
@@ -458,10 +460,8 @@ export async function applySqliteSessionEntryLifecycleMutation(params: {
       );
     }, toDatabaseOptions(resolved));
     emitCommittedLifecycleIdentityMutations({ projected, removedSessionKeys });
-    const maintenanceArchivedTranscripts = finalizeSqliteSessionEntryMaintenancePlansBestEffort(
-      resolved,
-      maintenancePlans,
-    );
+    const maintenanceArchivedTranscripts =
+      await finalizeSqliteSessionEntryMaintenancePlansBestEffort(resolved, maintenancePlans);
     archivedTranscripts = [...archivedTranscripts, ...maintenanceArchivedTranscripts];
     const afterCount = readSqliteSessionEntryCount(
       openOpenClawAgentDatabase(toDatabaseOptions(resolved)),
@@ -536,7 +536,7 @@ export async function purgeSqliteDeletedAgentSessionEntries(
         referencedSessionIds,
       }),
     );
-    const materializedPlans = materializeSqliteSessionStateDeletePlans(deletePlans);
+    const materializedPlans = await materializeSqliteSessionStateDeletePlans(deletePlans);
     const removedSessionKeys = entryRemovals.map((removal) => removal.sessionKey);
     let archivedTranscripts: SessionLifecycleArchivedTranscript[] = [];
     const maintenancePlans: SqliteSessionEntryMaintenancePlan[] = [];
@@ -560,7 +560,7 @@ export async function purgeSqliteDeletedAgentSessionEntries(
     emitCommittedSessionEntryRemovals(entryRemovals);
     archivedTranscripts = [
       ...archivedTranscripts,
-      ...finalizeSqliteSessionEntryMaintenancePlansBestEffort(resolved, maintenancePlans),
+      ...(await finalizeSqliteSessionEntryMaintenancePlansBestEffort(resolved, maintenancePlans)),
     ];
     const afterCount = readSqliteSessionEntryCount(
       openOpenClawAgentDatabase(toDatabaseOptions(resolved)),

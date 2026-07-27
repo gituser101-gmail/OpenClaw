@@ -334,6 +334,13 @@ import {
 } from "./frames.js";
 import { FsDirEntrySchema, FsListDirParamsSchema, FsListDirResultSchema } from "./fs.js";
 import {
+  GatewayRestoreStatusHeldResultSchema,
+  GatewayRestoreStatusNotRestoredResultSchema,
+  GatewayRestoreStatusParamsSchema,
+  GatewayRestoreStatusReadyResultSchema,
+  GatewayRestoreStatusResultSchema,
+} from "./gateway-restore.js";
+import {
   GatewaySuspendBlockerSchema,
   GatewaySuspendPrepareBusyResultSchema,
   GatewaySuspendPrepareParamsSchema,
@@ -724,6 +731,11 @@ export const ProtocolSchemas = {
   UnknownAgentIdErrorDetails: UnknownAgentIdErrorDetailsSchema,
   WizardNotFoundErrorDetails: WizardNotFoundErrorDetailsSchema,
   GatewayErrorDetails: GatewayErrorDetailsSchema,
+  GatewayRestoreStatusParams: GatewayRestoreStatusParamsSchema,
+  GatewayRestoreStatusNotRestoredResult: GatewayRestoreStatusNotRestoredResultSchema,
+  GatewayRestoreStatusHeldResult: GatewayRestoreStatusHeldResultSchema,
+  GatewayRestoreStatusReadyResult: GatewayRestoreStatusReadyResultSchema,
+  GatewayRestoreStatusResult: GatewayRestoreStatusResultSchema,
   GatewaySuspendTaskBlocker: GatewaySuspendTaskBlockerSchema,
   GatewaySuspendBlocker: GatewaySuspendBlockerSchema,
   GatewaySuspendPrepareParams: GatewaySuspendPrepareParamsSchema,

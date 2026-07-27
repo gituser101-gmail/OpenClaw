@@ -8,6 +8,7 @@ import {
   WORKER_TRANSCRIPT_MAX_JSON_DEPTH,
   WorkerTranscriptCommitParamsSchema,
   WorkerLiveEventParamsSchema,
+  GatewayRestoreStatusParamsSchema,
   GatewaySuspendPrepareParamsSchema,
   GatewaySuspendStatusParamsSchema,
   GatewaySuspendResumeParamsSchema,
@@ -363,6 +364,7 @@ export const validateWorkerLiveEventParams = lazyCompile(
   WorkerLiveEventParamsSchema,
   checkWorkerProtocolJson,
 );
+export const validateGatewayRestoreStatusParams = lazyCompile(GatewayRestoreStatusParamsSchema);
 export const validateGatewaySuspendPrepareParams = lazyCompile(GatewaySuspendPrepareParamsSchema);
 export const validateGatewaySuspendStatusParams = lazyCompile(GatewaySuspendStatusParamsSchema);
 export const validateGatewaySuspendResumeParams = lazyCompile(GatewaySuspendResumeParamsSchema);

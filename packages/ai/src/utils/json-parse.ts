@@ -85,9 +85,9 @@ export function repairJson(json: string): string {
       // Windows path prefix, it might be a malformed path component rather than
       // an intentional escape. Only apply the path heuristic when:
       //   1. The entire prefix is a pure drive-letter path (not mixed content), AND
-      //   2. The character after the escape continues a path segment (lowercase/digit).
+      //   2. The character after the escape continues a path segment (alphanumeric).
       // This prevents double-escaping \\n in code content (like Python scripts)
-      // while preserving \\n in paths like C:\\newfolder.
+      // while preserving \\n in paths like C:\\newfolder or C:\\nFOO.
       if (
         JSON_CONTROL_ESCAPES.has(nextChar) &&
         looksLikeWindowsPathPrefix(stringValuePrefix) &&
@@ -132,14 +132,11 @@ function looksLikeWindowsPathPrefix(prefix: string): boolean {
 
 /**
  * Returns true when the character after a control escape looks like it
- * continues a path segment (lowercase letter, digit, dash, underscore, or dot).
- * Code constructs like \\nprint( or \\nimport start with a lowercase letter
- * too, but the pure-path prefix guard in looksLikeWindowsPathPrefix already
- * rules those out — mixed content like "import sys\\nC:\\\\path" won't have a
- * pure path prefix before the \\n.
+ * continues a path segment (letter, digit, dash, underscore, or dot).
+ * Accepts both upper and lowercase to handle paths like C:\\nFOO.
  */
 function looksLikePathContinuation(after: string): boolean {
-  return /^[a-z0-9._\-]$/.test(after);
+  return /^[a-zA-Z0-9._\-]$/.test(after);
 }
 
 function asStreamingJsonRecord(value: unknown): Record<string, unknown> {

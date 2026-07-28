@@ -556,8 +556,6 @@ function buildRequestBody(
       options?.cacheRetention === "none"
         ? undefined
         : clampOpenAIPromptCacheKey(options?.promptCacheKey ?? options?.sessionId),
-    tool_choice: "auto",
-    parallel_tool_calls: true,
   };
 
   if (options?.temperature !== undefined && supportsOpenAITemperature(model)) {
@@ -570,13 +568,10 @@ function buildRequestBody(
 
   if (context.tools) {
     const converted = convertResponsesToolPayload(context.tools, { strict: null });
-    if (converted.projection.inputToolCount > 0 || converted.projection.diagnostics.length > 0) {
+    if (converted.tools.length > 0) {
       body.tools = converted.tools;
-      if (body.tools.length === 0) {
-        delete body.tools;
-        delete body.tool_choice;
-        delete body.parallel_tool_calls;
-      }
+      body.tool_choice = "auto";
+      body.parallel_tool_calls = true;
     }
   }
 

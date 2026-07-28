@@ -24,6 +24,10 @@ type GeminiPrepareContext = Parameters<
     key?: string;
     email?: string;
   };
+  isolatedCompletionCwd?: string;
+  isolatedCompletionPrompt?: string;
+  isolatedCompletionSystemPrompt?: string;
+  isolatedCompletionModelId?: string;
 };
 type GeminiPreparedExecution = Awaited<
   ReturnType<NonNullable<ReturnType<typeof buildGoogleGeminiCliBackend>["prepareExecution"]>>
@@ -147,6 +151,13 @@ describe("google gemini cli backend config", () => {
       kind: "bundled-package-tree",
       packageName: "@google/gemini-cli",
       entrypoint: "command",
+      exactToolAvailabilityVersionPolicy: {
+        stableMinimum: "0.39.1",
+        prereleaseMinimums: {
+          preview: "0.40.0-preview.3",
+          nightly: "0.41.0-nightly.20260427.g42587de73",
+        },
+      },
     });
     expect(backend.nativeToolMode).toBe("selectable");
     expect(backend.toolAvailabilityEnforcement).toBe("prepare-execution");
@@ -194,6 +205,188 @@ describe("google gemini cli backend config", () => {
 });
 
 describe("google gemini cli backend auth bridge", () => {
+  it("rejects a selected OAuth profile for isolated completion", async () => {
+    await withTempDir("openclaw-test-workspace-", async (workspaceDir) => {
+      await expect(
+        buildGoogleGeminiCliBackend().prepareExecution?.({
+          ...buildGeminiOAuthPrepareContext(workspaceDir),
+          toolAvailability: { native: [], openClaw: [], mcp: [] },
+          isolatedCompletionModelId: "gemini-3.1-flash-preview",
+          isolatedCompletionSystemPrompt: "Return only JSON.",
+        } as GeminiPrepareContext),
+      ).rejects.toThrow("Code Assist auth can inject administrator-required tools");
+    });
+  });
+
+  it("preserves only auth variables from ambient Gemini dotenv files", async () => {
+    await withTempDir("openclaw-test-workspace-", async (workspaceDir) => {
+      const ambientHome = path.join(workspaceDir, "ambient-home");
+      const ambientGeminiDir = path.join(ambientHome, ".gemini");
+      await fs.mkdir(ambientGeminiDir, { recursive: true });
+      await fs.writeFile(
+        path.join(ambientGeminiDir, "settings.json"),
+        `${JSON.stringify({
+          security: { auth: { selectedType: "gemini-api-key" } },
+          privacy: { usageStatisticsEnabled: false },
+        })}\n`,
+      );
+      await fs.writeFile(
+        path.join(ambientGeminiDir, ".env"),
+        'GEMINI_API_KEY="ambient-api-key"\nGEMINI_TELEMETRY_ENABLED="true"\nGEMINI_TELEMETRY_LOG_PROMPTS="true"\nUNRELATED_USER_SETTING="must-not-cross"\n',
+      );
+      await fs.writeFile(
+        path.join(ambientHome, ".env"),
+        'GOOGLE_CLOUD_PROJECT="ambient-project"\nANOTHER_SETTING="must-not-cross"\n',
+      );
+
+      const originalGeminiCliHome = process.env.GEMINI_CLI_HOME;
+      process.env.GEMINI_CLI_HOME = ambientHome;
+      const prepared = await buildGoogleGeminiCliBackend().prepareExecution?.({
+        workspaceDir,
+        provider: "google-gemini-cli",
+        modelId: "gemini-3.1-flash-preview",
+        toolAvailability: { native: [], openClaw: [], mcp: [] },
+        isolatedCompletionModelId: "gemini-3.1-flash-preview",
+        isolatedCompletionSystemPrompt: "Return only JSON.",
+      } as GeminiPrepareContext);
+      const isolatedHome = prepared?.env?.GEMINI_CLI_HOME ?? "";
+      try {
+        await stageGeminiPreparedExecution(prepared);
+        expect(prepared?.env?.GEMINI_API_KEY).toBe("ambient-api-key");
+        expect(prepared?.clearEnv).toContain("GEMINI_API_KEY");
+        await expect(fs.access(path.join(isolatedHome, ".gemini", ".env"))).rejects.toThrow();
+        await expect(fs.access(path.join(isolatedHome, ".env"))).rejects.toThrow();
+        const systemSettings = JSON.parse(
+          await fs.readFile(prepared?.env?.GEMINI_CLI_SYSTEM_SETTINGS_PATH ?? "", "utf8"),
+        ) as Record<string, unknown>;
+        expect(systemSettings).toMatchObject({
+          security: { auth: { selectedType: "gemini-api-key" } },
+          privacy: { usageStatisticsEnabled: false },
+          telemetry: { logPrompts: false },
+        });
+      } finally {
+        restoreEnv("GEMINI_CLI_HOME", originalGeminiCliHome);
+        await prepared?.cleanup?.();
+      }
+    });
+  });
+
+  it("does not import auth from the untrusted project dotenv", async () => {
+    await withTempDir("openclaw-test-workspace-", async (workspaceDir) => {
+      const ambientHome = path.join(workspaceDir, "ambient-home");
+      await fs.mkdir(path.join(ambientHome, ".gemini"), { recursive: true });
+      await fs.writeFile(path.join(ambientHome, ".gemini", ".env"), 'GEMINI_API_KEY="home-key"\n');
+      const projectDir = path.join(workspaceDir, "project", "nested");
+      await fs.mkdir(path.join(projectDir, ".gemini"), { recursive: true });
+      await fs.writeFile(
+        path.join(projectDir, ".gemini", ".env"),
+        'GEMINI_API_KEY="project-key"\nUNRELATED_PROJECT_SETTING="must-not-cross"\n',
+      );
+
+      const originalGeminiCliHome = process.env.GEMINI_CLI_HOME;
+      process.env.GEMINI_CLI_HOME = ambientHome;
+      const prepared = await buildGoogleGeminiCliBackend().prepareExecution?.({
+        workspaceDir: projectDir,
+        provider: "google-gemini-cli",
+        modelId: "gemini-3.1-flash-preview",
+        toolAvailability: { native: [], openClaw: [], mcp: [] },
+        isolatedCompletionModelId: "gemini-3.1-flash-preview",
+        isolatedCompletionSystemPrompt: "Return only JSON.",
+      } as GeminiPrepareContext);
+      try {
+        await stageGeminiPreparedExecution(prepared);
+        expect(prepared?.env?.GEMINI_API_KEY).toBe("home-key");
+      } finally {
+        restoreEnv("GEMINI_CLI_HOME", originalGeminiCliHome);
+        await prepared?.cleanup?.();
+      }
+    });
+  });
+
+  it("rebases relative ambient Vertex credential paths to the original workspace", async () => {
+    await withTempDir("openclaw-test-workspace-", async (workspaceDir) => {
+      const ambientHome = path.join(workspaceDir, "ambient-home");
+      await fs.mkdir(path.join(ambientHome, ".gemini"), { recursive: true });
+      await fs.writeFile(
+        path.join(ambientHome, ".gemini", "settings.json"),
+        `${JSON.stringify({ security: { auth: { selectedType: "vertex-ai" } } })}\n`,
+      );
+      await fs.writeFile(
+        path.join(ambientHome, ".gemini", ".env"),
+        'GOOGLE_GENAI_USE_VERTEXAI="true"\nGOOGLE_APPLICATION_CREDENTIALS="./credentials.json"\n',
+      );
+
+      const originalGeminiCliHome = process.env.GEMINI_CLI_HOME;
+      process.env.GEMINI_CLI_HOME = ambientHome;
+      const prepared = await buildGoogleGeminiCliBackend().prepareExecution?.({
+        workspaceDir,
+        provider: "google-gemini-cli",
+        modelId: "gemini-3.1-flash-preview",
+        toolAvailability: { native: [], openClaw: [], mcp: [] },
+        isolatedCompletionModelId: "gemini-3.1-flash-preview",
+        isolatedCompletionSystemPrompt: "Return only JSON.",
+      } as GeminiPrepareContext);
+      try {
+        await stageGeminiPreparedExecution(prepared);
+        expect(prepared?.env?.GOOGLE_GENAI_USE_VERTEXAI).toBe("true");
+        expect(prepared?.env?.GOOGLE_APPLICATION_CREDENTIALS).toBe(
+          path.join(workspaceDir, "credentials.json"),
+        );
+      } finally {
+        restoreEnv("GEMINI_CLI_HOME", originalGeminiCliHome);
+        await prepared?.cleanup?.();
+      }
+    });
+  });
+
+  it("rebases relative Vertex credentials inherited from the process", async () => {
+    await withTempDir("openclaw-test-workspace-", async (workspaceDir) => {
+      const ambientHome = path.join(workspaceDir, "ambient-home");
+      await fs.mkdir(path.join(ambientHome, ".gemini"), { recursive: true });
+      await fs.writeFile(
+        path.join(ambientHome, ".gemini", "settings.json"),
+        `${JSON.stringify({ security: { auth: { selectedType: "vertex-ai" } } })}\n`,
+      );
+      const originalGeminiCliHome = process.env.GEMINI_CLI_HOME;
+      const originalApplicationCredentials = process.env.GOOGLE_APPLICATION_CREDENTIALS;
+      process.env.GEMINI_CLI_HOME = ambientHome;
+      process.env.GOOGLE_APPLICATION_CREDENTIALS = "./credentials.json";
+      let prepared: GeminiPreparedExecution | null | undefined;
+      try {
+        prepared = await buildGoogleGeminiCliBackend().prepareExecution?.({
+          workspaceDir,
+          provider: "google-gemini-cli",
+          modelId: "gemini-3.1-flash-preview",
+          toolAvailability: { native: [], openClaw: [], mcp: [] },
+          isolatedCompletionModelId: "gemini-3.1-flash-preview",
+          isolatedCompletionSystemPrompt: "Return only JSON.",
+        } as GeminiPrepareContext);
+        expect(prepared?.env?.GOOGLE_APPLICATION_CREDENTIALS).toBe(
+          path.join(workspaceDir, "credentials.json"),
+        );
+        expect(prepared?.clearEnv).toContain("GOOGLE_APPLICATION_CREDENTIALS");
+      } finally {
+        restoreEnv("GEMINI_CLI_HOME", originalGeminiCliHome);
+        restoreEnv("GOOGLE_APPLICATION_CREDENTIALS", originalApplicationCredentials);
+        await prepared?.cleanup?.();
+      }
+    });
+  });
+
+  it("rejects auto-routing models for isolated completion", async () => {
+    await withTempDir("openclaw-test-workspace-", async (workspaceDir) => {
+      await expect(
+        buildGoogleGeminiCliBackend().prepareExecution?.({
+          ...buildGeminiApiKeyPrepareContext(workspaceDir),
+          modelId: "auto",
+          toolAvailability: { native: [], openClaw: [], mcp: [] },
+          isolatedCompletionModelId: "auto",
+          isolatedCompletionSystemPrompt: "Return only JSON.",
+        } as GeminiPrepareContext),
+      ).rejects.toThrow("requires one concrete model id");
+    });
+  });
+
   it.each([
     { auth: "ambient", allowed: ["memory_search"] },
     { auth: "ambient", allowed: [] },
@@ -270,28 +463,45 @@ describe("google gemini cli backend auth bridge", () => {
             agents?: { overrides?: Record<string, Record<string, unknown>> };
             hooksConfig?: Record<string, unknown>;
             skills?: Record<string, unknown>;
+            admin?: Record<string, unknown>;
             security?: { auth?: { selectedType?: string } };
           };
-          expect(settings.tools?.core).toEqual(["mcp_openclaw_*"]);
-          expect(settings.tools).not.toHaveProperty("allowed");
+          expect(settings.tools?.core).toEqual(allowed.length > 0 ? ["mcp_openclaw_*"] : []);
           expect(settings.tools?.discoveryCommand).toBe("");
           expect(settings.tools?.callCommand).toBe("");
-          expect(settings.mcp?.allowed).toEqual(["openclaw"]);
+          expect(settings.mcp?.allowed).toEqual(allowed.length > 0 ? ["openclaw"] : []);
           expect(settings.mcp?.serverCommand).toBe("");
-          expect(settings.mcpServers?.openclaw).toMatchObject({
-            url: "http://127.0.0.1:23119/mcp",
-            headers: { authorization: "Bearer loopback-token" },
-            includeTools: [...allowed],
-          });
+          if (allowed.length > 0) {
+            expect(settings.tools).not.toHaveProperty("allowed");
+            expect(settings.mcpServers?.openclaw).toMatchObject({
+              url: "http://127.0.0.1:23119/mcp",
+              headers: { authorization: "Bearer loopback-token" },
+              includeTools: [...allowed],
+            });
+          } else {
+            expect(settings.tools).toHaveProperty("allowed", []);
+            expect(settings.mcpServers).toEqual({});
+            expect(settings.admin).toEqual({
+              extensions: { enabled: false },
+              mcp: { enabled: false },
+              skills: { enabled: false },
+            });
+          }
           expect(settings.mcpServers?.hostile).toBeUndefined();
           expect(settings.experimental?.enableAgents).toBe(false);
-          expect(settings.agents?.overrides?.codebase_investigator).toEqual({
-            enabled: false,
-            custom: "preserved",
-          });
-          expect(settings.agents?.overrides?.cli_help?.enabled).toBe(false);
-          expect(settings.hooksConfig).toEqual({ enabled: false, marker: "preserved" });
-          expect(settings.skills).toEqual({ enabled: false, marker: "preserved" });
+          if (allowed.length > 0) {
+            expect(settings.agents?.overrides?.codebase_investigator).toEqual({
+              enabled: false,
+              custom: "preserved",
+            });
+            expect(settings.agents?.overrides?.cli_help?.enabled).toBe(false);
+            expect(settings.hooksConfig).toEqual({ enabled: false, marker: "preserved" });
+            expect(settings.skills).toEqual({ enabled: false, marker: "preserved" });
+          } else {
+            expect(settings).not.toHaveProperty("agents");
+            expect(settings.hooksConfig).toEqual({ enabled: false });
+            expect(settings.skills).toEqual({ enabled: false });
+          }
           expect(settings.security?.auth?.selectedType).toBe(
             auth === "oauth" ? "oauth-personal" : auth === "api-key" ? "gemini-api-key" : undefined,
           );
@@ -319,6 +529,51 @@ describe("google gemini cli backend auth bridge", () => {
           toolAvailability: { native: ["run_shell_command"], openClaw: [], mcp: [] },
         }),
       ).rejects.toThrow("cannot expose backend-native tools");
+    });
+  });
+
+  it("prepares an empty exact policy without an OpenClaw MCP server", async () => {
+    await withTempDir("openclaw-test-workspace-", async (workspaceDir) => {
+      const inheritedSettingsPath = path.join(workspaceDir, "system-settings.json");
+      await fs.writeFile(
+        inheritedSettingsPath,
+        JSON.stringify({
+          tools: { core: ["run_shell_command"], allowed: ["*"] },
+          experimental: { enableAgents: true },
+          hooksConfig: { enabled: true },
+          skills: { enabled: true },
+        }),
+        "utf8",
+      );
+      const prepared = await buildGoogleGeminiCliBackend().prepareExecution?.({
+        workspaceDir,
+        provider: "google-gemini-cli",
+        modelId: "gemini-3.1-pro-preview",
+        env: { GEMINI_CLI_SYSTEM_SETTINGS_PATH: inheritedSettingsPath },
+        toolAvailability: { native: [], openClaw: [], mcp: [] },
+      });
+      try {
+        expect(prepared?.toolAvailabilityEnforced).toBe(true);
+        await stageGeminiPreparedExecution(prepared);
+        const settings = JSON.parse(
+          await fs.readFile(prepared?.env?.GEMINI_CLI_SYSTEM_SETTINGS_PATH ?? "", "utf8"),
+        ) as Record<string, unknown>;
+        expect(settings).toEqual({
+          tools: { core: [], allowed: [], discoveryCommand: "", callCommand: "" },
+          mcp: { allowed: [], serverCommand: "" },
+          mcpServers: {},
+          experimental: { enableAgents: false },
+          hooksConfig: { enabled: false },
+          skills: { enabled: false },
+          admin: {
+            extensions: { enabled: false },
+            mcp: { enabled: false },
+            skills: { enabled: false },
+          },
+        });
+      } finally {
+        await prepared?.cleanup?.();
+      }
     });
   });
 

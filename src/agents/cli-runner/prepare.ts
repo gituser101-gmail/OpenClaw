@@ -130,6 +130,7 @@ import type {
 } from "./types.js";
 
 type PrivateCliBackendPreparedExecution = CliBackendPreparedExecution & {
+  isolatedCompletionEnforced?: true;
   secretInput?: CliSecretInput;
 };
 
@@ -894,18 +895,33 @@ export async function prepareCliRunContext(
         : undefined,
       env: preparedBackend.env,
     } satisfies Parameters<NonNullable<typeof backendResolved.prepareExecution>>[0];
+    const privatePrepareExecutionContext = params.isolatedCompletion
+      ? {
+          ...prepareExecutionContext,
+          // Bundled owners may project this through a native per-process system-prompt
+          // channel. Keep it private so exact isolated inference does not expand the SDK.
+          isolatedCompletionCwd: cwd,
+          isolatedCompletionModelId: normalizedModel,
+          isolatedCompletionPrompt: params.prompt,
+          isolatedCompletionSystemPrompt: params.extraSystemPrompt ?? "",
+        }
+      : prepareExecutionContext;
     preparedExecution =
       (await backendResolved.prepareExecution?.(
         (backendResolved.id === "google-gemini-cli" || backendResolved.id === "claude-cli"
           ? {
-              ...prepareExecutionContext,
+              ...privatePrepareExecutionContext,
               // Private bridge for bundled auth-owning CLI backends. This is intentionally not
               // part of the public Plugin SDK until a credential-forwarding
               // contract exists.
               authCredential,
             }
-          : prepareExecutionContext) as typeof prepareExecutionContext & {
+          : privatePrepareExecutionContext) as typeof prepareExecutionContext & {
           authCredential?: AuthProfileCredential;
+          isolatedCompletionCwd?: string;
+          isolatedCompletionModelId?: string;
+          isolatedCompletionPrompt?: string;
+          isolatedCompletionSystemPrompt?: string;
         },
       )) ?? undefined;
     const preparedBackendCleanup =
@@ -919,6 +935,11 @@ export async function prepareCliRunContext(
           }
         : undefined;
     cleanupPreparedResources = preparedBackendCleanup;
+    if (params.isolatedCompletion && preparedExecution?.isolatedCompletionEnforced !== true) {
+      throw new Error(
+        `CLI backend "${backendResolved.id}" does not support isolated completion; OpenClaw did not start the run.`,
+      );
+    }
     if (
       params.cliToolAvailability &&
       backendResolved.toolAvailabilityEnforcement === "prepare-execution" &&

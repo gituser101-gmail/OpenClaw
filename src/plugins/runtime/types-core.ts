@@ -257,6 +257,10 @@ type RuntimeRunEmbeddedAgent = (
   params: import("../../agents/embedded-agent-runner/run/params.js").RunEmbeddedAgentParams,
 ) => Promise<import("../../agents/embedded-agent-runner/types.js").EmbeddedAgentRunResult>;
 
+type RuntimeRunIsolatedCompletion = (
+  params: import("../../agents/isolated-completion.js").RunIsolatedCompletionParams,
+) => Promise<import("../../agents/isolated-completion.js").IsolatedCompletionResult>;
+
 /** Core runtime helpers exposed to trusted native plugins. */
 export type PluginRuntimeCore = {
   version: string;
@@ -298,6 +302,7 @@ export type PluginRuntimeCore = {
     resolveThinkingPolicy: (
       params: PluginRuntimeThinkingPolicyRequest,
     ) => PluginRuntimeThinkingPolicy;
+    runIsolatedCompletion: RuntimeRunIsolatedCompletion;
     runEmbeddedAgent: RuntimeRunEmbeddedAgent;
     /** @deprecated Use runEmbeddedAgent. */
     runEmbeddedPiAgent: RuntimeRunEmbeddedAgent;

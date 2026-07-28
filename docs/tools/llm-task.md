@@ -85,6 +85,27 @@ tool call omits that parameter.
 Returns `details.json` (the parsed, schema-validated JSON) plus `details.provider`
 and `details.model` naming what actually ran.
 
+Each call starts a fresh prompt-only inference operation. It does not reuse the
+calling agent's transcript or native runtime session, run agent lifecycle hooks,
+or deliver model output to a channel. OpenClaw uses the selected provider,
+model, auth profile, and runtime exactly once; it does not fall back to another
+route when that owner cannot provide a literal zero-tool call.
+
+A selected agent harness must implement isolated completion. Otherwise the call
+fails before inference with a `does not support isolated completion` error.
+This fail-closed behavior prevents a JSON task from silently becoming a normal
+tool-capable agent turn.
+
+CLI runtimes must provide the equivalent isolated preparation guarantee. The
+bundled Claude and Gemini CLI runtimes do; a different CLI runtime that has not
+adopted this internal contract fails before its process starts.
+
+Gemini CLI isolated completion supports Gemini API-key and Vertex auth. Google
+OAuth and compute/Code Assist auth are rejected because managed-account policy
+can add administrator-required tools after local CLI settings are loaded.
+Gemini prompts containing native `@path` includes or a leading `/command` also
+fail before inference because Gemini CLI has no literal raw-input mode.
+
 ## Example: Lobster workflow step
 
 ### Important limitation
@@ -130,8 +151,11 @@ openclaw.invoke --tool llm-task --action json --args-json '{
 
 - **JSON-only**: the model is instructed to return only a JSON value, no code
   fences, no commentary.
-- **No tools**: the underlying run has tools disabled, so the model cannot call
-  out mid-task.
+- **No tools**: the selected runtime must expose a literal empty model-callable
+  tool surface. OpenClaw rejects tool-shaped results instead of treating them as
+  task output.
+- **Isolated**: the run has no agent transcript, session reuse, lifecycle hooks,
+  channel delivery, or provider fallback.
 - Treat output as untrusted unless you validate it with `schema`.
 - Put approvals before any side-effecting step (send, post, exec) that consumes
   this output.

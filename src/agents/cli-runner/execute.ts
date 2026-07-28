@@ -1,9 +1,11 @@
 /** Executes prepared CLI backend runs and owns their queue and resource lifecycle. */
 import crypto from "node:crypto";
+import { parse as parseSemver } from "semver";
 import { assertAgentRunLifecycleGenerationCurrent } from "../../infra/agent-events.js";
 import { isTruthyEnvValue } from "../../infra/env.js";
 import { formatErrorMessage, toErrorObject } from "../../infra/errors.js";
 import { sanitizeHostExecEnv } from "../../infra/host-env-security.js";
+import { compareValidSemver } from "../../infra/semver.js";
 import type { CliBackendThinkingLevel } from "../../plugins/cli-backend.types.js";
 import { applySkillEnvOverridesFromSnapshot } from "../../skills/runtime/env-overrides.js";
 import { appendBootstrapPromptWarning } from "../bootstrap-budget.js";
@@ -68,6 +70,33 @@ function normalizeCliBackendThinkingLevel(
   level: PreparedCliRunContext["params"]["thinkLevel"],
 ): CliBackendThinkingLevel | undefined {
   return level === "ultra" ? "max" : level;
+}
+
+function assertExactToolAvailabilityRuntimeVersion(params: {
+  backendId: string;
+  policy: NonNullable<
+    PreparedCliRunContext["backendResolved"]["runtimeArtifact"]
+  >["exactToolAvailabilityVersionPolicy"];
+  executableIdentity: Awaited<ReturnType<typeof resolveCliExecutableIdentity>>;
+}): void {
+  const artifact = params.executableIdentity?.runtimeArtifact;
+  const packageVersion = artifact?.kind === "package-tree" ? artifact.packageVersion : undefined;
+  const parsedVersion = packageVersion ? parseSemver(packageVersion) : null;
+  const prereleaseChannel = parsedVersion?.prerelease[0];
+  const minimumVersion =
+    parsedVersion?.prerelease.length === 0
+      ? params.policy?.stableMinimum
+      : typeof prereleaseChannel === "string"
+        ? params.policy?.prereleaseMinimums?.[prereleaseChannel]
+        : undefined;
+  const comparison =
+    packageVersion && minimumVersion ? compareValidSemver(packageVersion, minimumVersion) : null;
+  if (comparison !== null && comparison >= 0) {
+    return;
+  }
+  throw new Error(
+    `CLI backend ${params.backendId} requires a supported package version for exact per-run tool availability${minimumVersion ? ` (requires >=${minimumVersion}` : " (unsupported release line"}${packageVersion ? `; found ${packageVersion})` : ")"}`,
+  );
 }
 
 if (process.env.VITEST || process.env.NODE_ENV === "test") {
@@ -392,7 +421,18 @@ export async function executePreparedCliRun(
       let executionLeadingArgv: readonly string[] = [];
       context.runtimeOwnerFingerprint = undefined;
       context.runtimeArtifactFingerprint = undefined;
-      if (params.onSuccessfulAuthBinding && !nodePlacement) {
+      const exactToolAvailabilityVersionPolicy = params.cliToolAvailability
+        ? context.backendResolved.runtimeArtifact?.exactToolAvailabilityVersionPolicy
+        : undefined;
+      if (exactToolAvailabilityVersionPolicy && nodePlacement) {
+        throw new Error(
+          `CLI backend ${context.backendResolved.id} cannot verify its exact tool-availability runtime on a paired node`,
+        );
+      }
+      if (
+        (params.onSuccessfulAuthBinding || exactToolAvailabilityVersionPolicy) &&
+        !nodePlacement
+      ) {
         const executableIdentity = await resolveCliExecutableIdentity({
           command: backend.command,
           cwd: context.cwd ?? context.workspaceDir,
@@ -406,6 +446,13 @@ export async function executePreparedCliRun(
             `CLI backend ${context.backendResolved.id} executable cannot be bound to one durable absolute owner`,
           );
         }
+        if (exactToolAvailabilityVersionPolicy) {
+          assertExactToolAvailabilityRuntimeVersion({
+            backendId: context.backendResolved.id,
+            policy: exactToolAvailabilityVersionPolicy,
+            executableIdentity,
+          });
+        }
         executionCommand = executableIdentity.invocation.command;
         executionLeadingArgv = executableIdentity.invocation.leadingArgv;
         context.runtimeArtifactFingerprint = fingerprintCliRuntimeArtifact({
@@ -413,7 +460,7 @@ export async function executePreparedCliRun(
           backendId: context.backendResolved.id,
           executableIdentity,
         });
-        if (!context.authBindingFingerprint) {
+        if (params.onSuccessfulAuthBinding && !context.authBindingFingerprint) {
           context.runtimeOwnerFingerprint = await resolveCliRuntimeOwnerFingerprint({
             provider: params.provider,
             config: params.config ?? context.contextEngineConfig,

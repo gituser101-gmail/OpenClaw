@@ -112,6 +112,16 @@ function installXaiWebSearchFetch() {
   return mockFetch;
 }
 
+function requireXaiWebSearchTool(
+  params: Parameters<ReturnType<typeof createXaiWebSearchProvider>["createTool"]>[0],
+) {
+  const tool = createXaiWebSearchProvider().createTool(params);
+  if (!tool) {
+    throw new Error("Expected xAI web search tool");
+  }
+  return tool;
+}
+
 function firstFetchUrl(mockFetch: ReturnType<typeof installXaiWebSearchFetch>) {
   const [call] = mockFetch.mock.calls;
   if (!call) {
@@ -174,6 +184,18 @@ function expectCatalogEntry(
   if (expected.cost) {
     expect(entry?.cost).toEqual(expected.cost);
   }
+}
+
+function resolveForwardXaiModel(modelId: string) {
+  return resolveXaiForwardCompatModel({
+    providerId: "xai",
+    ctx: {
+      provider: "xai",
+      modelId,
+      modelRegistry: { find: () => null } as never,
+      providerConfig: { api: "openai-responses", baseUrl: "https://api.x.ai/v1" },
+    },
+  });
 }
 
 afterEach(() => {
@@ -294,8 +316,7 @@ describe("xai web search config resolution", () => {
       profileId: "xai:default",
     });
     const mockFetch = installXaiWebSearchFetch();
-    const provider = createXaiWebSearchProvider();
-    const tool = provider.createTool({
+    const tool = requireXaiWebSearchTool({
       config: {
         agents: {
           list: [{ id: "main", default: true, agentDir: "/tmp/openclaw-xai-main-agent" }],
@@ -313,10 +334,6 @@ describe("xai web search config resolution", () => {
         },
       },
     });
-    if (!tool) {
-      throw new Error("Expected xAI web search tool");
-    }
-
     await tool.execute({ query: "OpenClaw Grok OAuth web search" });
 
     expect(providerAuthRuntimeMocks.resolveApiKeyForProvider).toHaveBeenCalledWith(
@@ -336,8 +353,7 @@ describe("xai web search config resolution", () => {
       profileId: "xai:active",
     });
     const mockFetch = installXaiWebSearchFetch();
-    const provider = createXaiWebSearchProvider();
-    const tool = provider.createTool({
+    const tool = requireXaiWebSearchTool({
       agentDir: "/tmp/openclaw-xai-active-agent",
       config: {
         agents: {
@@ -348,10 +364,6 @@ describe("xai web search config resolution", () => {
         },
       },
     });
-    if (!tool) {
-      throw new Error("Expected xAI web search tool");
-    }
-
     await tool.execute({ query: "OpenClaw Grok active agent OAuth web search" });
 
     expect(providerAuthRuntimeMocks.resolveApiKeyForProvider).toHaveBeenCalledWith(
@@ -391,8 +403,7 @@ describe("xai web search config resolution", () => {
         }),
       );
     global.fetch = withFetchPreconnect(mockFetch);
-    const provider = createXaiWebSearchProvider();
-    const tool = provider.createTool({
+    const tool = requireXaiWebSearchTool({
       config: {
         agents: {
           list: [{ id: "main", default: true, agentDir: "/tmp/openclaw-xai-main-agent" }],
@@ -406,10 +417,6 @@ describe("xai web search config resolution", () => {
         },
       },
     });
-    if (!tool) {
-      throw new Error("Expected xAI web search tool");
-    }
-
     const result = await tool.execute({ query: "OpenClaw Grok OAuth refresh test" });
 
     expect(result.content).toContain("Fresh OAuth Grok answer");
@@ -460,8 +467,7 @@ describe("xai web search config resolution", () => {
         }),
       );
     global.fetch = withFetchPreconnect(mockFetch);
-    const provider = createXaiWebSearchProvider();
-    const tool = provider.createTool({
+    const tool = requireXaiWebSearchTool({
       config: {
         agents: {
           list: [{ id: "main", default: true, agentDir: "/tmp/openclaw-xai-main-agent" }],
@@ -475,10 +481,6 @@ describe("xai web search config resolution", () => {
         },
       },
     });
-    if (!tool) {
-      throw new Error("Expected xAI web search tool");
-    }
-
     const result = await tool.execute({ query: "OpenClaw Grok API fallback test" });
 
     expect(result.content).toContain("API key fallback Grok answer");
@@ -555,8 +557,7 @@ describe("xai web search config resolution", () => {
         }),
       );
     global.fetch = withFetchPreconnect(mockFetch);
-    const provider = createXaiWebSearchProvider();
-    const tool = provider.createTool({
+    const tool = requireXaiWebSearchTool({
       config: {
         agents: {
           list: [{ id: "main", default: true, agentDir: "/tmp/openclaw-xai-main-agent" }],
@@ -570,10 +571,6 @@ describe("xai web search config resolution", () => {
         },
       },
     });
-    if (!tool) {
-      throw new Error("Expected xAI web search tool");
-    }
-
     const result = await tool.execute({ query: "OpenClaw Grok profile fallback test" });
 
     expect(result.content).toContain("Profile API key Grok answer");
@@ -618,8 +615,7 @@ describe("xai web search config resolution", () => {
         }),
       );
     global.fetch = withFetchPreconnect(mockFetch);
-    const provider = createXaiWebSearchProvider();
-    const tool = provider.createTool({
+    const tool = requireXaiWebSearchTool({
       config: {
         agents: {
           list: [{ id: "main", default: true, agentDir: "/tmp/openclaw-xai-main-agent" }],
@@ -633,10 +629,6 @@ describe("xai web search config resolution", () => {
         },
       },
     });
-    if (!tool) {
-      throw new Error("Expected xAI web search tool");
-    }
-
     const result = await tool.execute({ query: "OpenClaw Grok API-key fallback test" });
 
     expect(result.content).toContain("Env fallback Grok answer");
@@ -1159,66 +1151,11 @@ describe("xai provider models", () => {
   });
 
   it("builds forward-compatible runtime models for newer Grok ids", () => {
-    const grok41 = resolveXaiForwardCompatModel({
-      providerId: "xai",
-      ctx: {
-        provider: "xai",
-        modelId: "grok-4-1-fast",
-        modelRegistry: { find: () => null } as never,
-        providerConfig: {
-          api: "openai-responses",
-          baseUrl: "https://api.x.ai/v1",
-        },
-      },
-    });
-    const grok420 = resolveXaiForwardCompatModel({
-      providerId: "xai",
-      ctx: {
-        provider: "xai",
-        modelId: "grok-4.20-0309-reasoning",
-        modelRegistry: { find: () => null } as never,
-        providerConfig: {
-          api: "openai-responses",
-          baseUrl: "https://api.x.ai/v1",
-        },
-      },
-    });
-    const grok43Alias = resolveXaiForwardCompatModel({
-      providerId: "xai",
-      ctx: {
-        provider: "xai",
-        modelId: "grok-4.3-latest",
-        modelRegistry: { find: () => null } as never,
-        providerConfig: {
-          api: "openai-responses",
-          baseUrl: "https://api.x.ai/v1",
-        },
-      },
-    });
-    const grok45Alias = resolveXaiForwardCompatModel({
-      providerId: "xai",
-      ctx: {
-        provider: "xai",
-        modelId: "grok-4.5-latest",
-        modelRegistry: { find: () => null } as never,
-        providerConfig: {
-          api: "openai-responses",
-          baseUrl: "https://api.x.ai/v1",
-        },
-      },
-    });
-    const grok3Mini = resolveXaiForwardCompatModel({
-      providerId: "xai",
-      ctx: {
-        provider: "xai",
-        modelId: "grok-3-mini-fast",
-        modelRegistry: { find: () => null } as never,
-        providerConfig: {
-          api: "openai-responses",
-          baseUrl: "https://api.x.ai/v1",
-        },
-      },
-    });
+    const grok41 = resolveForwardXaiModel("grok-4-1-fast");
+    const grok420 = resolveForwardXaiModel("grok-4.20-0309-reasoning");
+    const grok43Alias = resolveForwardXaiModel("grok-4.3-latest");
+    const grok45Alias = resolveForwardXaiModel("grok-4.5-latest");
+    const grok3Mini = resolveForwardXaiModel("grok-3-mini-fast");
 
     expect(grok41?.provider).toBe("xai");
     expect(grok41?.id).toBe("grok-4-1-fast");
@@ -1281,18 +1218,7 @@ describe("xai provider models", () => {
   });
 
   it("refuses the unsupported multi-agent endpoint ids", () => {
-    const model = resolveXaiForwardCompatModel({
-      providerId: "xai",
-      ctx: {
-        provider: "xai",
-        modelId: "grok-4.20-multi-agent-experimental-beta-0304",
-        modelRegistry: { find: () => null } as never,
-        providerConfig: {
-          api: "openai-responses",
-          baseUrl: "https://api.x.ai/v1",
-        },
-      },
-    });
+    const model = resolveForwardXaiModel("grok-4.20-multi-agent-experimental-beta-0304");
 
     expect(model).toBeUndefined();
   });

@@ -2,7 +2,6 @@
 import { parse as partialParse } from "partial-json";
 
 const VALID_JSON_ESCAPES = new Set(['"', "\\", "/", "b", "f", "n", "r", "t", "u"]);
-const JSON_CONTROL_ESCAPES = new Set(["b", "f", "n", "r", "t"]);
 
 function isControlCharacter(char: string): boolean {
   const codePoint = char.codePointAt(0);
@@ -30,13 +29,16 @@ function escapeControlCharacter(char: string): string {
  * Repairs malformed JSON string literals by:
  * - escaping raw control characters inside strings
  * - doubling backslashes before invalid escape characters
- * - preserving malformed Windows paths (C:\\newfolder) when the
- *   accumulated prefix is a pure drive-letter path
+ *
+ * Does NOT attempt to recover malformed Windows paths (e.g. C:\\newfolder
+ * where \\n is a raw path separator). That responsibility belongs to the
+ * model and to the partial-json fallback in parseStreamingJson. Attempting
+ * path recovery in repairJson creates an unavoidable ambiguity with valid
+ * JSON newline escapes and causes regressions like #114292.
  */
 export function repairJson(json: string): string {
   let repaired = "";
   let inString = false;
-  let stringValuePrefix = "";
 
   for (let index = 0; index < json.length; index++) {
     const char = json.charAt(index);
@@ -45,7 +47,6 @@ export function repairJson(json: string): string {
       repaired += char;
       if (char === '"') {
         inString = true;
-        stringValuePrefix = "";
       }
       continue;
     }
@@ -53,7 +54,6 @@ export function repairJson(json: string): string {
     if (char === '"') {
       repaired += char;
       inString = false;
-      stringValuePrefix = "";
       continue;
     }
 
@@ -68,48 +68,24 @@ export function repairJson(json: string): string {
         const unicodeDigits = json.slice(index + 2, index + 6);
         if (/^[0-9a-fA-F]{4}$/.test(unicodeDigits)) {
           repaired += `\\u${unicodeDigits}`;
-          stringValuePrefix += `\\u${unicodeDigits}`;
           index += 5;
           continue;
         }
-        // A \\u not followed by four hex digits is an invalid escape: double the
-        // backslash like the other invalid escapes below. Falling through would
-        // hit the valid-escape branch (VALID_JSON_ESCAPES contains "u") and
-        // re-emit the broken \\u, leaving the JSON unparseable.
         repaired += "\\\\";
-        stringValuePrefix += "\\";
-        continue;
-      }
-
-      // When a valid JSON control escape (\\n, \\r, \\t, etc.) follows a pure
-      // Windows path prefix AND the character after the escape does not look
-      // like a content boundary (whitespace, quote, delimiter), treat it as a
-      // malformed path component. Content boundaries indicate the \\n is an
-      // intentional newline (e.g. C:\\\\path\\nnext line), not a path separator.
-      if (
-        JSON_CONTROL_ESCAPES.has(nextChar) &&
-        looksLikeWindowsPathPrefix(stringValuePrefix) &&
-        !looksLikeContentBoundary(json.charAt(index + 2))
-      ) {
-        repaired += "\\\\";
-        stringValuePrefix += "\\";
         continue;
       }
 
       if (VALID_JSON_ESCAPES.has(nextChar)) {
         repaired += `\\${nextChar}`;
-        stringValuePrefix += nextChar === "\\" ? "\\" : `\\${nextChar}`;
         index += 1;
         continue;
       }
 
       repaired += "\\\\";
-      stringValuePrefix += "\\";
       continue;
     }
 
     repaired += isControlCharacter(char) ? escapeControlCharacter(char) : char;
-    stringValuePrefix += char;
   }
 
   return repaired;
@@ -117,26 +93,6 @@ export function repairJson(json: string): string {
 
 export function parseJsonWithRepair(json: string): unknown {
   return JSON.parse(repairJson(json)) as unknown;
-}
-
-/**
- * Returns true when the entire accumulated prefix is a pure Windows drive-letter
- * path (starts with X:\\ or X:/). Mixed content like "import sys\\n" won't match
- * because the prefix before the \\n is "import sys", not a drive-letter path.
- */
-function looksLikeWindowsPathPrefix(prefix: string): boolean {
-  return /^[A-Za-z]:[\\/]/.test(prefix);
-}
-
-/**
- * Returns true when the character after a control escape looks like the start
- * of new content (whitespace, JSON string terminator, bracket, brace, paren).
- * When true, the \\n is treated as an intentional newline rather than a
- * malformed Windows path component.
- */
-function looksLikeContentBoundary(after: string): boolean {
-  // End of string, whitespace, or common delimiters = intentional newline
-  return after === "" || /^[\s"'{}()[\],;]/.test(after);
 }
 
 function asStreamingJsonRecord(value: unknown): Record<string, unknown> {

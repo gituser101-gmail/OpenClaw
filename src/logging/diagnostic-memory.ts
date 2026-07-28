@@ -1,4 +1,6 @@
 // Diagnostic memory helpers capture process memory facts for support diagnostics.
+import { getHeapStatistics } from "node:v8";
+import { isExplicitGatewayHeapLimit } from "../daemon/gateway-heap.js";
 import {
   emitInternalDiagnosticEvent as emitDiagnosticEvent,
   type DiagnosticMemoryPressureEvent,
@@ -61,11 +63,21 @@ function normalizeMemoryUsage(memory: NodeJS.MemoryUsage): DiagnosticMemoryUsage
 function resolveThresholds(
   thresholds?: DiagnosticMemoryThresholds,
 ): Required<DiagnosticMemoryThresholds> {
+  const heapSizeLimitBytes = getHeapStatistics().heap_size_limit;
+  // Managed services materialize resource-derived defaults as NODE_OPTIONS.
+  // Scale only for a distinct operator override or direct Node CLI heap flag.
+  const useAdaptiveHeapThresholds = isExplicitGatewayHeapLimit();
+  const heapUsedWarningBytes = useAdaptiveHeapThresholds
+    ? Math.max(DEFAULT_HEAP_WARNING_BYTES, Math.floor(heapSizeLimitBytes * 0.25))
+    : DEFAULT_HEAP_WARNING_BYTES;
+  const heapUsedCriticalBytes = useAdaptiveHeapThresholds
+    ? Math.max(DEFAULT_HEAP_CRITICAL_BYTES, Math.floor(heapSizeLimitBytes * 0.5))
+    : DEFAULT_HEAP_CRITICAL_BYTES;
   return {
     rssWarningBytes: thresholds?.rssWarningBytes ?? DEFAULT_RSS_WARNING_BYTES,
     rssCriticalBytes: thresholds?.rssCriticalBytes ?? DEFAULT_RSS_CRITICAL_BYTES,
-    heapUsedWarningBytes: thresholds?.heapUsedWarningBytes ?? DEFAULT_HEAP_WARNING_BYTES,
-    heapUsedCriticalBytes: thresholds?.heapUsedCriticalBytes ?? DEFAULT_HEAP_CRITICAL_BYTES,
+    heapUsedWarningBytes: thresholds?.heapUsedWarningBytes ?? heapUsedWarningBytes,
+    heapUsedCriticalBytes: thresholds?.heapUsedCriticalBytes ?? heapUsedCriticalBytes,
     rssGrowthWarningBytes: thresholds?.rssGrowthWarningBytes ?? DEFAULT_RSS_GROWTH_WARNING_BYTES,
     rssGrowthCriticalBytes: thresholds?.rssGrowthCriticalBytes ?? DEFAULT_RSS_GROWTH_CRITICAL_BYTES,
     growthWindowMs: thresholds?.growthWindowMs ?? DEFAULT_GROWTH_WINDOW_MS,

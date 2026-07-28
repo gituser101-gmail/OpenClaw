@@ -28,6 +28,8 @@ export type {
   WorkerTranscriptCommitResponseFrame,
   WorkerTranscriptCommitResult,
   WorkerTranscriptMessage,
+  GatewayRestoreStatusParams,
+  GatewayRestoreStatusResult,
   GatewaySuspendTaskBlocker,
   GatewaySuspendBlocker,
   GatewaySuspendPrepareParams,

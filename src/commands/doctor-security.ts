@@ -29,7 +29,7 @@ import { compileSafeRegexDetailed, type SafeRegexRejectReason } from "../securit
 import { resolveDefaultChannelAccountContext } from "./channel-account-context.js";
 
 /** One persisted allowlist entry whose argPattern is rejected by the ReDoS guard. */
-export type UnsafeExecArgPatternFinding = {
+type UnsafeExecArgPatternFinding = {
   scope: string;
   pattern: string;
   argPattern: string;
@@ -42,7 +42,7 @@ export type UnsafeExecArgPatternFinding = {
  * ReDoS guard will reject (nested repetition or invalid regex). Detection only:
  * Doctor never auto-deletes approvals; operators must remediate explicitly.
  */
-export function findUnsafeExecApprovalArgPatterns(
+function findUnsafeExecApprovalArgPatterns(
   file: ExecApprovalsFile = loadExecApprovals(),
 ): UnsafeExecArgPatternFinding[] {
   const findings: UnsafeExecArgPatternFinding[] = [];

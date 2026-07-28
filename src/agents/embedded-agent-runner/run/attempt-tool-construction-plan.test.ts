@@ -591,3 +591,5 @@ describe("shouldCreateBundleLspRuntimeForAttempt", () => {
     ).toBe(true);
   });
 });
+
+// ci-retrigger: mcp toolsAllow materialize (empty commit did not fire pull_request CI)

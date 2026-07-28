@@ -2,7 +2,6 @@
 import { parse as partialParse } from "partial-json";
 
 const VALID_JSON_ESCAPES = new Set(['"', "\\", "/", "b", "f", "n", "r", "t", "u"]);
-const JSON_CONTROL_ESCAPES = new Set(["b", "f", "n", "r", "t"]);
 
 function isControlCharacter(char: string): boolean {
   const codePoint = char.codePointAt(0);
@@ -34,7 +33,6 @@ function escapeControlCharacter(char: string): string {
 export function repairJson(json: string): string {
   let repaired = "";
   let inString = false;
-  let stringValuePrefix = "";
 
   for (let index = 0; index < json.length; index++) {
     const char = json.charAt(index);
@@ -43,7 +41,6 @@ export function repairJson(json: string): string {
       repaired += char;
       if (char === '"') {
         inString = true;
-        stringValuePrefix = "";
       }
       continue;
     }
@@ -51,7 +48,6 @@ export function repairJson(json: string): string {
     if (char === '"') {
       repaired += char;
       inString = false;
-      stringValuePrefix = "";
       continue;
     }
 
@@ -66,39 +62,28 @@ export function repairJson(json: string): string {
         const unicodeDigits = json.slice(index + 2, index + 6);
         if (/^[0-9a-fA-F]{4}$/.test(unicodeDigits)) {
           repaired += `\\u${unicodeDigits}`;
-          stringValuePrefix += `\\u${unicodeDigits}`;
           index += 5;
           continue;
         }
-        // A \u not followed by four hex digits is an invalid escape: double the
+        // A \\u not followed by four hex digits is an invalid escape: double the
         // backslash like the other invalid escapes below. Falling through would
         // hit the valid-escape branch (VALID_JSON_ESCAPES contains "u") and
-        // re-emit the broken \u, leaving the JSON unparseable.
+        // re-emit the broken \\u, leaving the JSON unparseable.
         repaired += "\\\\";
-        stringValuePrefix += "\\";
-        continue;
-      }
-
-      if (JSON_CONTROL_ESCAPES.has(nextChar) && looksLikeWindowsPathPrefix(stringValuePrefix)) {
-        repaired += "\\\\";
-        stringValuePrefix += "\\";
         continue;
       }
 
       if (VALID_JSON_ESCAPES.has(nextChar)) {
         repaired += `\\${nextChar}`;
-        stringValuePrefix += nextChar === "\\" ? "\\" : `\\${nextChar}`;
         index += 1;
         continue;
       }
 
       repaired += "\\\\";
-      stringValuePrefix += "\\";
       continue;
     }
 
     repaired += isControlCharacter(char) ? escapeControlCharacter(char) : char;
-    stringValuePrefix += char;
   }
 
   return repaired;
@@ -106,11 +91,6 @@ export function repairJson(json: string): string {
 
 export function parseJsonWithRepair(json: string): unknown {
   return JSON.parse(repairJson(json)) as unknown;
-}
-
-function looksLikeWindowsPathPrefix(prefix: string): boolean {
-  const tail = prefix.slice(-160);
-  return /(?:^|[^A-Za-z0-9])[A-Za-z]:(?:[\\/][^"\\/:*?<>|\r\n]*)*$/.test(tail);
 }
 
 function asStreamingJsonRecord(value: unknown): Record<string, unknown> {

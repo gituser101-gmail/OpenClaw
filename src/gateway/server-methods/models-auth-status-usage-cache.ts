@@ -8,17 +8,13 @@ import {
 import { resolveUsableCustomProviderApiKey } from "../../agents/model-auth.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { loadProviderUsageSummary } from "../../infra/provider-usage.load.js";
-import type { ProviderUsageSnapshot, UsageProviderId } from "../../infra/provider-usage.types.js";
+import type { UsageProviderId } from "../../infra/provider-usage.types.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
 import { formatForLog } from "../ws-log.js";
+import type { ProfileUsageStatus, ProviderUsageStatus } from "./models-auth-status-usage.js";
 
 const log = createSubsystemLogger("models-auth-status");
 const USAGE_CACHE_TTL_MS = 60_000;
-
-export type ProviderUsageStatus = Pick<
-  ProviderUsageSnapshot,
-  "windows" | "summary" | "plan" | "billing" | "accountEmail"
->;
 
 type ProviderUsageCacheEntry = {
   agentDir: string;
@@ -27,6 +23,7 @@ type ProviderUsageCacheEntry = {
   providerKey: string;
   refreshedAt: number;
   usageByProvider: Map<string, ProviderUsageStatus>;
+  usageByProfile: Map<string, ProfileUsageStatus>;
 };
 
 type ProviderUsageRefresh = {
@@ -101,6 +98,7 @@ function providerUsageCacheKey(providerIds: readonly UsageProviderId[]): string 
 
 function mapProviderUsage(usage: Awaited<ReturnType<typeof loadProviderUsageSummary>>) {
   const usageByProvider = new Map<string, ProviderUsageStatus>();
+  const usageByProfile = new Map<string, ProfileUsageStatus>();
   for (const snap of usage.providers) {
     usageByProvider.set(snap.provider, {
       windows: snap.windows,
@@ -110,7 +108,16 @@ function mapProviderUsage(usage: Awaited<ReturnType<typeof loadProviderUsageSumm
       ...(snap.accountEmail ? { accountEmail: snap.accountEmail } : {}),
     });
   }
-  return usageByProvider;
+  for (const snap of usage.profiles ?? []) {
+    usageByProfile.set(snap.authProfileId, {
+      providerId: snap.provider,
+      windows: snap.windows,
+      ...(snap.summary ? { summary: snap.summary } : {}),
+      ...(snap.plan ? { plan: snap.plan } : {}),
+      ...(snap.billing?.length ? { billing: snap.billing } : {}),
+    });
+  }
+  return { usageByProvider, usageByProfile };
 }
 
 function scheduleProviderUsageRefresh(params: {
@@ -150,13 +157,14 @@ function scheduleProviderUsageRefresh(params: {
       ) {
         return;
       }
+      const mapped = mapProviderUsage(usage);
       usageCacheByAgentId.set(params.agentId, {
         agentDir: params.agentDir,
         configRef: params.configRef,
         credentialKey: params.credentialKey,
         providerKey: params.providerKey,
         refreshedAt: Date.now(),
-        usageByProvider: mapProviderUsage(usage),
+        ...mapped,
       });
     })
     .catch((err: unknown) => {
@@ -181,10 +189,13 @@ export function readProviderUsageStaleWhileRevalidate(params: {
   forceRefresh?: boolean;
   providerIds: UsageProviderId[];
   now: number;
-}): Map<string, ProviderUsageStatus> {
+}): {
+  usageByProvider: Map<string, ProviderUsageStatus>;
+  usageByProfile: Map<string, ProfileUsageStatus>;
+} {
   if (params.providerIds.length === 0) {
     usageCacheByAgentId.delete(params.agentId);
-    return new Map();
+    return { usageByProvider: new Map(), usageByProfile: new Map() };
   }
   const providerIds = params.providerIds.toSorted();
   const providerKey = providerUsageCacheKey(providerIds);
@@ -212,5 +223,8 @@ export function readProviderUsageStaleWhileRevalidate(params: {
       providerKey,
     });
   }
-  return matching?.usageByProvider ?? new Map();
+  return {
+    usageByProvider: matching?.usageByProvider ?? new Map(),
+    usageByProfile: matching?.usageByProfile ?? new Map(),
+  };
 }

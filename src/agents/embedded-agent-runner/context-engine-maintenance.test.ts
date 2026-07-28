@@ -2,7 +2,10 @@
 
 import { expectDefined } from "@openclaw/normalization-core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { ContextEngineRuntimeContext } from "../../context-engine/types.js";
+import type {
+  ContextEngineRuntimeContext,
+  TranscriptRewriteResult,
+} from "../../context-engine/types.js";
 import { peekSystemEvents, resetSystemEventsForTest } from "../../infra/system-events.js";
 import { enqueueCommandInLane, markGatewayDraining } from "../../process/command-queue.js";
 import * as commandQueueModule from "../../process/command-queue.js";
@@ -21,11 +24,13 @@ import { withStateDirEnv } from "../../test-helpers/state-dir-env.js";
 import { castAgentMessage } from "../test-helpers/agent-message-fixtures.js";
 import { resolveSessionLane } from "./lanes.js";
 
-const rewriteTranscriptEntriesInSessionManagerMock = vi.fn((_params?: unknown) => ({
-  changed: true,
-  bytesFreed: 77,
-  rewrittenEntries: 1,
-}));
+const rewriteTranscriptEntriesInSessionManagerMock = vi.fn(
+  (_params?: unknown): TranscriptRewriteResult | Promise<TranscriptRewriteResult> => ({
+    changed: true,
+    bytesFreed: 77,
+    rewrittenEntries: 1,
+  }),
+);
 const openedSessionManager = { kind: "opened-session-manager" };
 const sessionManagerOpenMock = vi.fn((_target?: unknown) => openedSessionManager);
 const resolveRuntimeTranscriptReadTargetMock = vi.fn(async (scope: Record<string, unknown>) => ({
@@ -1639,7 +1644,7 @@ describe("runContextEngineMaintenance", () => {
         const events: string[] = [];
         let releasePersist: (() => void) | undefined;
         // The persist is admitted before the timeout, then parked mid-write.
-        rewriteTranscriptEntriesInRuntimeTranscriptMock.mockImplementationOnce(async () => {
+        rewriteTranscriptEntriesInSessionManagerMock.mockImplementationOnce(async () => {
           events.push("persist-start");
           await new Promise<void>((resolve) => {
             releasePersist = resolve;
@@ -1681,7 +1686,10 @@ describe("runContextEngineMaintenance", () => {
         await waitForAssertion(() => expect(events).toContain("persist-start"));
         expect(deferredPromises).toHaveLength(1);
         let barrierSettled = false;
-        const firstDeferred = expectDefined(deferredPromises[0], "deferredPromises[0] test invariant");
+        const firstDeferred = expectDefined(
+          deferredPromises[0],
+          "deferredPromises[0] test invariant",
+        );
         const tracked = firstDeferred.then(() => {
           barrierSettled = true;
         });

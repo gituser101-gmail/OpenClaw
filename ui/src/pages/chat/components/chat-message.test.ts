@@ -3627,12 +3627,16 @@ describe("grouped chat rendering", () => {
 
   it("fetches managed outgoing chat images with auth and requester scope", async () => {
     const managedChatImageUrl = `/api/chat/media/outgoing/agent%3Amain%3Amain/${crypto.randomUUID()}/full`;
-    const objectUrl = "blob:managed-image";
+    const thumbnailUrl = managedChatImageUrl.replace(/\/full$/u, "/thumbnail");
+    const objectUrls = ["blob:managed-thumbnail", "blob:managed-full"];
+    let objectUrlIndex = 0;
     const NativeUrl = URL;
     vi.stubGlobal(
       "URL",
       class extends NativeUrl {
-        static override createObjectURL = vi.fn(() => objectUrl);
+        static override createObjectURL = vi.fn(
+          () => objectUrls[objectUrlIndex++] ?? "blob:managed-full",
+        );
         static override revokeObjectURL = vi.fn();
       },
     );
@@ -3671,15 +3675,18 @@ describe("grouped chat rendering", () => {
 
     await vi.waitFor(() => {
       const image = container.querySelector<HTMLImageElement>(".chat-message-image");
-      expect(image?.getAttribute("src")).toBe(objectUrl);
+      expect(image?.getAttribute("src")).toBe(objectUrls[0]);
       expect(image?.getAttribute("alt")).toBe("Generated image 1");
     });
-    const [, fetchInit] = requireFetchCallForUrl(fetchMock, managedChatImageUrl);
+    const [, fetchInit] = requireFetchCallForUrl(fetchMock, thumbnailUrl);
     expectSameOriginGet(fetchInit);
+    expect(container.querySelectorAll(".chat-image-action")).toHaveLength(3);
     expectElement(container, ".chat-message-image-button", HTMLButtonElement).click();
+    await vi.waitFor(() => expect(onOpenImage).toHaveBeenCalledTimes(1));
     expect(onOpenImage).toHaveBeenCalledWith(
-      expect.objectContaining({ src: objectUrl, title: "Generated image 1" }),
+      expect.objectContaining({ src: objectUrls[1], title: "Generated image 1" }),
     );
+    expectSameOriginGet(requireFetchCallForUrl(fetchMock, managedChatImageUrl)[1]);
     const activeItem = onOpenImage.mock.calls[0]?.[0];
     activeItem?.release?.();
   });
@@ -3688,12 +3695,13 @@ describe("grouped chat rendering", () => {
     const artifactId = `artifact_managed_image_${crypto.randomUUID()}`;
     const managedChatImageUrl = `/api/chat/media/outgoing/agent%3Amain%3Amain/${crypto.randomUUID()}/full`;
     const ticketedUrl = `${managedChatImageUrl}?mediaTicket=ticket`;
+    const ticketedThumbnailUrl = ticketedUrl.replace(/\/full\?/u, "/thumbnail?");
     const resolveArtifactDownload = vi.fn(async () => ({
       url: ticketedUrl,
       expiresAt: "2026-07-28T05:00:00.000Z",
     }));
     const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
-      expect(url).toBe(ticketedUrl);
+      expect([ticketedThumbnailUrl, ticketedUrl]).toContain(url);
       const headers = new Headers(init?.headers);
       expect(headers.get("Authorization")).toBeNull();
       expect(headers.get("x-openclaw-requester-session-key")).toBeNull();
@@ -3702,6 +3710,7 @@ describe("grouped chat rendering", () => {
     vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
 
     const container = document.createElement("div");
+    const onOpenImage = vi.fn();
     renderAssistantMessage(
       container,
       {
@@ -3720,6 +3729,7 @@ describe("grouped chat rendering", () => {
         showToolCalls: false,
         assistantAttachmentAuthToken: "must-not-be-forwarded",
         resolveArtifactDownload,
+        onOpenImage,
       },
     );
 
@@ -3728,6 +3738,12 @@ describe("grouped chat rendering", () => {
       sessionKey: "agent:main:main",
       artifactId,
     });
+    expect(requireFetchCallForUrl(fetchMock, ticketedThumbnailUrl)).toBeDefined();
+    expectElement(container, ".chat-image-action", HTMLButtonElement).click();
+    await vi.waitFor(() => expect(onOpenImage).toHaveBeenCalledTimes(1));
+    expect(requireFetchCallForUrl(fetchMock, ticketedUrl)).toBeDefined();
+    expect(resolveArtifactDownload).toHaveBeenCalledTimes(2);
+    onOpenImage.mock.calls[0]?.[0]?.release?.();
   });
 
   it("aborts a stalled managed outgoing image fetch after the deadline", async () => {
@@ -3768,7 +3784,10 @@ describe("grouped chat rendering", () => {
     );
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    const [, fetchInit] = requireFetchCallForUrl(fetchMock, managedChatImageUrl);
+    const [, fetchInit] = requireFetchCallForUrl(
+      fetchMock,
+      managedChatImageUrl.replace(/\/full$/u, "/thumbnail"),
+    );
     expect(fetchInit?.signal?.aborted).toBe(false);
     expectSameOriginGet(fetchInit);
 
@@ -3817,7 +3836,10 @@ describe("grouped chat rendering", () => {
     });
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    const [, fetchInit] = requireFetchCallForUrl(fetchMock, managedChatImageUrl);
+    const [, fetchInit] = requireFetchCallForUrl(
+      fetchMock,
+      managedChatImageUrl.replace(/\/full$/u, "/thumbnail"),
+    );
     expect(fetchInit?.signal?.aborted).toBe(false);
     expectSameOriginGet(fetchInit);
 
@@ -3942,8 +3964,10 @@ describe("grouped chat rendering", () => {
     await vi.waitFor(() => expect(resolveEvictedRefetch).toBeTypeOf("function"));
 
     newestCurrentImage!.click();
-    expect(acceptedImageOpen).toHaveBeenCalledWith(
-      expect.objectContaining({ title: "Generated image 3" }),
+    await vi.waitFor(() =>
+      expect(acceptedImageOpen).toHaveBeenCalledWith(
+        expect.objectContaining({ title: "Generated image 3" }),
+      ),
     );
 
     resolveEvictedRefetch?.(response);
@@ -3952,6 +3976,71 @@ describe("grouped chat rendering", () => {
     );
     expect(acceptedImageOpen).toHaveBeenCalledTimes(1);
     (acceptedImageOpen.mock.calls[0]?.[0] as { release?: () => void } | undefined)?.release?.();
+  });
+
+  it("keeps a full-image Blob URL alive while its lightbox is open", async () => {
+    const primaryUrl = `/api/chat/media/outgoing/agent%3Amain%3Amain/${crypto.randomUUID()}/full`;
+    const overflowUrls = Array.from(
+      { length: 66 },
+      () => `/api/chat/media/outgoing/agent%3Amain%3Amain/${crypto.randomUUID()}/full`,
+    );
+    let objectUrlIndex = 0;
+    const createObjectURL = vi.fn(() => `blob:retained-full-${objectUrlIndex++}`);
+    const revokeObjectURL = vi.fn();
+    const NativeUrl = URL;
+    vi.stubGlobal(
+      "URL",
+      class extends NativeUrl {
+        static override createObjectURL = createObjectURL;
+        static override revokeObjectURL = revokeObjectURL;
+      },
+    );
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({
+        ok: true,
+        blob: async () => new Blob(["png"], { type: "image/png" }),
+      })) as unknown as typeof fetch,
+    );
+
+    const container = document.createElement("div");
+    const onOpenImage = vi.fn();
+    renderAssistantMessage(
+      container,
+      {
+        role: "assistant",
+        content: [{ type: "image", url: primaryUrl, alt: "Retained full image" }],
+        timestamp: Date.now(),
+      },
+      { onOpenImage },
+    );
+    await vi.waitFor(() => expect(createObjectURL).toHaveBeenCalledTimes(1));
+    expectElement(container, ".chat-message-image-button", HTMLButtonElement).click();
+    await vi.waitFor(() => expect(onOpenImage).toHaveBeenCalledTimes(1));
+    const fullBlobUrl = onOpenImage.mock.calls[0]?.[0]?.src;
+    expect(fullBlobUrl).toBe("blob:retained-full-1");
+
+    const overflowContainer = document.createElement("div");
+    renderAssistantMessage(overflowContainer, {
+      role: "assistant",
+      content: overflowUrls.slice(0, 65).map((url, index) => ({
+        type: "image",
+        url,
+        alt: `Overflow image ${index + 1}`,
+      })),
+      timestamp: Date.now(),
+    });
+    await vi.waitFor(() => expect(createObjectURL).toHaveBeenCalledTimes(67));
+    expect(revokeObjectURL).not.toHaveBeenCalledWith(fullBlobUrl);
+
+    onOpenImage.mock.calls[0]?.[0]?.release?.();
+    const finalContainer = document.createElement("div");
+    renderAssistantMessage(finalContainer, {
+      role: "assistant",
+      content: [{ type: "image", url: overflowUrls[65], alt: "Final overflow image" }],
+      timestamp: Date.now(),
+    });
+    await vi.waitFor(() => expect(revokeObjectURL).toHaveBeenCalledWith(fullBlobUrl));
   });
 
   it("bounds managed outgoing image miss retention", async () => {

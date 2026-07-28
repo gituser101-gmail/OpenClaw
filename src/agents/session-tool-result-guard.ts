@@ -673,12 +673,16 @@ export function installSessionToolResultGuard(
     return transformer ? transformer(message, meta) : message;
   };
 
-  const allowSyntheticToolResults = opts?.allowSyntheticToolResults ?? true;
-  const missingToolResultText = opts?.missingToolResultText;
+  // Rebinding may swap `opts` contents in place when a caller-owned manager is
+  // reused across attempts (e.g. model fallback with a smaller context window),
+  // so read attempt-scoped policy and size fields at call time instead of
+  // capturing them once at install time.
+  const allowSyntheticToolResults = () => opts?.allowSyntheticToolResults ?? true;
+  const missingToolResultText = () => opts?.missingToolResultText;
   const beforeWrite = opts?.beforeMessageWriteHook;
   const toolResultTransformerMayMutate = opts?.transformToolResultForPersistence !== undefined;
-  const redactionConfig = opts?.redactLoggingConfig;
-  const maxToolResultChars = resolveMaxToolResultChars(opts);
+  const redactionConfig = () => opts?.redactLoggingConfig;
+  const maxToolResultChars = () => resolveMaxToolResultChars(opts);
   const transcriptSeqByEntryId: TranscriptSeqByEntryId = new Map();
   let suppressNextUserMessagePersistence = opts?.suppressNextUserMessagePersistence === true;
 
@@ -741,12 +745,12 @@ export function installSessionToolResultGuard(
     if (pendingState.size() === 0) {
       return;
     }
-    if (allowSyntheticToolResults) {
+    if (allowSyntheticToolResults()) {
       for (const [id, name] of pendingState.entries()) {
         const synthetic = makeMissingToolResult({
           toolCallId: id,
           toolName: name,
-          text: missingToolResultText,
+          text: missingToolResultText(),
         });
         const persistedSynthetic = persistMessage(synthetic);
         const transformed = persistToolResult(persistedSynthetic, {
@@ -757,7 +761,7 @@ export function installSessionToolResultGuard(
         const flushed = applyBeforeWriteHook(transformed);
         if (flushed) {
           appendMessageAndCacheTranscriptSeq(
-            capToolResultForPersistence(flushed.message, maxToolResultChars, redactionConfig),
+            capToolResultForPersistence(flushed.message, maxToolResultChars(), redactionConfig()),
             {
               invalidateSerializedPrefixCache:
                 persistedSynthetic !== synthetic ||
@@ -810,8 +814,8 @@ export function installSessionToolResultGuard(
       const persistedToolResult = persistMessage(normalizedToolResult);
       const capped = capToolResultForPersistence(
         persistedToolResult,
-        maxToolResultChars,
-        redactionConfig,
+        maxToolResultChars(),
+        redactionConfig(),
       );
       const transformed = persistToolResult(capped, {
         toolCallId: id ?? undefined,
@@ -827,7 +831,7 @@ export function installSessionToolResultGuard(
         pendingState.delete(id);
       }
       return appendMessageAndCacheTranscriptSeq(
-        capToolResultForPersistence(persisted.message, maxToolResultChars, redactionConfig),
+        capToolResultForPersistence(persisted.message, maxToolResultChars(), redactionConfig()),
         {
           invalidateSerializedPrefixCache:
             callerInvalidatesCache ||
@@ -872,7 +876,7 @@ export function installSessionToolResultGuard(
     // this assistant append, and transcript repair can move late real results
     // back into strict provider order before the next replay.
     if (
-      !allowSyntheticToolResults &&
+      !allowSyntheticToolResults() &&
       pendingState.shouldFlushBeforeNewToolCalls(toolCalls.length)
     ) {
       flushPendingToolResults();

@@ -39,7 +39,7 @@ type GuardedSessionManager = SessionManager & {
   rebindSessionGuardState?: (opts: GuardSessionManagerOptions | undefined) => void;
 };
 
-export type GuardSessionManagerOptions = {
+type GuardSessionManagerOptions = {
   agentId?: string;
   sessionKey?: string;
   config?: OpenClawConfig;
@@ -84,11 +84,12 @@ export type GuardSessionManagerOptions = {
  * a flush method on the instance for easy teardown handling.
  *
  * Re-guarding an already-guarded manager rebinds the per-attempt guard state
- * (prepared user-turn message, persistence suppression, attempt callbacks) to
- * the new options instead of silently keeping the previous attempt's state.
- * This matters for caller-owned managers that are reused across run attempts
- * (e.g. auth/model fallback retries); persisted runs open a fresh manager per
- * attempt and never take this path.
+ * (prepared user-turn message, persistence suppression, attempt callbacks,
+ * synthetic tool-result policy, and tool-result size caps derived from the
+ * attempt's context window) to the new options instead of silently keeping
+ * the previous attempt's state. This matters for caller-owned managers that
+ * are reused across run attempts (e.g. auth/model fallback retries);
+ * persisted runs open a fresh manager per attempt and never take this path.
  */
 export function guardSessionManager(
   sessionManager: SessionManager,
@@ -251,7 +252,8 @@ export function guardSessionManager(
     onAssistantErrorMessagePersisted: source?.onAssistantErrorMessagePersisted,
   });
 
-  // The inner guard reads callbacks and non-install-time options from this
+  // The inner guard reads callbacks and attempt-scoped options (synthetic
+  // tool-result policy, redaction config, tool-result size caps) from this
   // object at call time, so rebinding can swap them in place.
   const innerGuardOptions = guardOptionsToInnerOptions(opts);
   const guard = installSessionToolResultGuard(sessionManager, innerGuardOptions);
@@ -259,9 +261,9 @@ export function guardSessionManager(
     activeOpts = nextOpts;
     pendingPreparedUserTurnMessage = nextOpts?.preparedUserTurnMessage;
     queuedUserTurnTranscriptRecorder = undefined;
-    // Values copied by the inner guard at install time (synthetic tool-result
-    // policy, redaction config, tool-result size caps) intentionally keep the
-    // first attempt's values: they are derived from run-scoped configuration.
+    // Swap the inner guard's options in place so call-time reads (callbacks,
+    // synthetic tool-result policy, redaction config, size caps derived from
+    // the attempt's context window) pick up the new attempt's values.
     Object.assign(innerGuardOptions, guardOptionsToInnerOptions(nextOpts));
     guard.setNextUserMessagePersistenceSuppression(
       nextOpts?.suppressNextUserMessagePersistence === true,

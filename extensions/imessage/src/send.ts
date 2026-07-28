@@ -224,7 +224,14 @@ function appleMessageDateLowerBoundMs(sentAfterMs: number | undefined): number |
   return Math.max(0, Math.floor(((sentAfterMs as number) - 978_307_200_000 - 5_000) * 1_000_000));
 }
 
-function resolveLatestSentMessageGuidFromChatDb(params: {
+/**
+ * Resolve the guid of a just-sent message from chat.db. Fail-closed on
+ * ambiguity: the row must be the single most recent is_from_me match for the
+ * target+text inside the window. If an identical older/duplicate row also
+ * matches the window, there is no way to tell which row this send produced,
+ * so return null instead of acking against the wrong message (#115328).
+ */
+export function resolveLatestSentMessageGuidFromChatDb(params: {
   dbPath?: string;
   target: ParsedIMessageTarget;
   text: string;
@@ -275,6 +282,12 @@ function resolveLatestSentMessageGuidFromChatDb(params: {
       LIMIT 10
     `;
     const rows = db.prepare(selectSql).all(...targetParams) as Array<Record<string, unknown>>;
+    if (rows.length !== 1) {
+      // Zero rows: no evidence. More than one row: duplicate identical
+      // messages inside the window make the match ambiguous; fail closed
+      // rather than acking against an older/duplicate row.
+      return null;
+    }
     return getStringRowValue(rows[0], "guid");
   } catch {
     return null;
@@ -371,7 +384,11 @@ function shouldRecoverApprovalPromptGuid(params: {
   );
 }
 
-const IMESSAGE_RECONCILE_CLOCK_SKEW_MS = 60_000;
+// Reconciliation windows anchor at the send attempt start. Keep only a small
+// allowance for bridge clock/write skew: a chat.db row that predates the
+// attempt by more than this cannot be evidence for this send (an older
+// identical message must never be matched), so the skew stays tight.
+const IMESSAGE_RECONCILE_CLOCK_SKEW_MS = 5_000;
 
 type IMessageReconcileUnknownSendOpts = {
   resolveSentMessageGuidImpl?: IMessageSendOpts["resolveSentMessageGuidImpl"];
@@ -410,10 +427,13 @@ function collectIMessageReconcileTextCandidates(params: {
 /**
  * Durable-delivery reconciliation for sends whose outcome became unknown
  * after dispatch (rpc timeout / wrapper drop). Acks the delivery only when
- * chat.db yields exact evidence (is_from_me row matching target + text within
- * the attempt window); otherwise stays fail-closed as retryable "unresolved"
- * so recovery never blind-replays. Remote cliPath wrappers without a readable
- * chat.db cannot be reconciled locally and remain unresolved. See #115328.
+ * chat.db yields exact evidence: a single, unambiguous is_from_me row whose
+ * text matches the payload and whose date is anchored at/after the send
+ * attempt start (minus a small clock-skew allowance). Rows predating the
+ * attempt and duplicate identical rows inside the window both fail closed as
+ * retryable "unresolved" so recovery never acks an older/duplicate message or
+ * blind-replays. Remote cliPath wrappers without a readable chat.db cannot be
+ * reconciled locally and remain unresolved. See #115328.
  */
 export async function reconcileIMessageUnknownSend(
   ctx: ChannelMessageUnknownSendContext,

@@ -1282,6 +1282,150 @@ describe("sendMessageTelegram", () => {
     expect(result.messageId).toBe("");
   });
 
+  it("retrofits the inline keyboard when the trailing chunk is rejected as empty", async () => {
+    // Regression: reply_markup rides the last ATTEMPTED chunk. When Telegram
+    // rejects that trailing chunk as empty, the keyboard must land on the last
+    // DELIVERED message and that message must carry the final projection part;
+    // deriving both from the raw loop index dropped the keyboard entirely.
+    const storePath = `/tmp/openclaw-telegram-trailing-skip-${process.pid}-${Date.now()}.json`;
+    const cursor = createTelegramPromptContextProjectionCursor({
+      transcriptMessageId: "assistant-trailing-skip",
+    });
+    const onDeliveryResult = vi.fn();
+    botApi.sendMessage
+      .mockResolvedValueOnce({ message_id: 71, chat: { id: "123" } })
+      .mockRejectedValueOnce(new Error("Bad Request: message text is empty"));
+    botApi.editMessageReplyMarkup.mockResolvedValueOnce({ message_id: 71 });
+
+    const result = await sendMessageTelegram("123", "A".repeat(4200), {
+      cfg: { session: { store: storePath } },
+      token: "tok",
+      buttons: [[{ text: "OK", callback_data: "ok" }]],
+      onDeliveryResult,
+      promptContextProjectionPlan: { cursor, finalPart: true },
+    });
+
+    expect(botApi.sendMessage).toHaveBeenCalledTimes(2);
+    expect(botApi.editMessageReplyMarkup).toHaveBeenCalledTimes(1);
+    const editCall = botApi.editMessageReplyMarkup.mock.calls[0];
+    expect(editCall?.[0]).toBe("123");
+    expect(editCall?.[1]).toBe(71);
+    expect(editCall?.[2]?.reply_markup).toEqual({
+      inline_keyboard: [[{ text: "OK", callback_data: "ok" }]],
+    });
+    expect(result.messageId).toBe("71");
+    expect(onDeliveryResult).toHaveBeenCalledTimes(1);
+    expect(onDeliveryResult.mock.calls[0]?.[0]?.meta?.telegramHasInlineKeyboard).toBe(true);
+    const cached = await createTelegramMessageCache({
+      scope: resolveTelegramMessageCacheScope(storePath),
+    }).get({ accountId: "default", chatId: "123", messageId: "71" });
+    expect(cached?.promptContextProjectionMarker).toEqual({
+      kind: "valid",
+      projection: { ...cursor.source, partIndex: 0, finalPart: true },
+    });
+  });
+
+  it("keeps final-delivery metadata on the delivered chunk when a leading chunk skips", async () => {
+    const storePath = `/tmp/openclaw-telegram-leading-skip-${process.pid}-${Date.now()}.json`;
+    const cursor = createTelegramPromptContextProjectionCursor({
+      transcriptMessageId: "assistant-leading-skip",
+    });
+    const onDeliveryResult = vi.fn();
+    botApi.sendMessage
+      .mockRejectedValueOnce(new Error("Bad Request: message text is empty"))
+      .mockResolvedValueOnce({ message_id: 72, chat: { id: "123" } });
+
+    const result = await sendMessageTelegram("123", "A".repeat(4200), {
+      cfg: { session: { store: storePath } },
+      token: "tok",
+      buttons: [[{ text: "OK", callback_data: "ok" }]],
+      onDeliveryResult,
+      promptContextProjectionPlan: { cursor, finalPart: true },
+    });
+
+    // The delivered chunk was the last attempted one, so the keyboard rode the
+    // send itself and no retrofit is needed.
+    expect(botApi.editMessageReplyMarkup).not.toHaveBeenCalled();
+    expect(result.messageId).toBe("72");
+    expect(onDeliveryResult).toHaveBeenCalledTimes(1);
+    expect(onDeliveryResult.mock.calls[0]?.[0]?.meta?.telegramHasInlineKeyboard).toBe(true);
+    const cached = await createTelegramMessageCache({
+      scope: resolveTelegramMessageCacheScope(storePath),
+    }).get({ accountId: "default", chatId: "123", messageId: "72" });
+    expect(cached?.promptContextProjectionMarker).toEqual({
+      kind: "valid",
+      projection: { ...cursor.source, partIndex: 0, finalPart: true },
+    });
+  });
+
+  it("keeps the send successful when the keyboard retrofit fails", async () => {
+    const storePath = `/tmp/openclaw-telegram-retrofit-fail-${process.pid}-${Date.now()}.json`;
+    const cursor = createTelegramPromptContextProjectionCursor({
+      transcriptMessageId: "assistant-retrofit-fail",
+    });
+    const onDeliveryResult = vi.fn();
+    botApi.sendMessage
+      .mockResolvedValueOnce({ message_id: 74, chat: { id: "123" } })
+      .mockRejectedValueOnce(new Error("Bad Request: message text is empty"));
+    botApi.editMessageReplyMarkup.mockRejectedValueOnce(
+      new Error("Bad Request: message to edit not found"),
+    );
+
+    const result = await sendMessageTelegram("123", "A".repeat(4200), {
+      cfg: { session: { store: storePath } },
+      token: "tok",
+      buttons: [[{ text: "OK", callback_data: "ok" }]],
+      onDeliveryResult,
+      promptContextProjectionPlan: { cursor, finalPart: true },
+    });
+
+    // Text already delivered; a failed retrofit downgrades to a warning and
+    // accurate keyboard metadata instead of failing the whole send.
+    expect(result.messageId).toBe("74");
+    expect(onDeliveryResult).toHaveBeenCalledTimes(1);
+    expect(onDeliveryResult.mock.calls[0]?.[0]?.meta?.telegramHasInlineKeyboard).toBe(false);
+    const cached = await createTelegramMessageCache({
+      scope: resolveTelegramMessageCacheScope(storePath),
+    }).get({ accountId: "default", chatId: "123", messageId: "74" });
+    expect(cached?.promptContextProjectionMarker).toEqual({
+      kind: "valid",
+      projection: { ...cursor.source, partIndex: 0, finalPart: true },
+    });
+  });
+
+  it("routes rich fallback deliveries through final-delivery accounting", async () => {
+    const storePath = `/tmp/openclaw-telegram-rich-fallback-final-${process.pid}-${Date.now()}.json`;
+    const cursor = createTelegramPromptContextProjectionCursor({
+      transcriptMessageId: "assistant-rich-fallback-final",
+    });
+    const onDeliveryResult = vi.fn();
+    botRawApi.sendRichMessage.mockRejectedValueOnce(createRichContentRequiredError());
+    botApi.sendMessage.mockResolvedValueOnce({ message_id: 75, chat: { id: "123" } });
+
+    const result = await sendMessageTelegram("123", "still visible after rich rejection", {
+      cfg: { channels: { telegram: { richMessages: true } }, session: { store: storePath } },
+      token: "tok",
+      buttons: [[{ text: "OK", callback_data: "ok" }]],
+      onDeliveryResult,
+      promptContextProjectionPlan: { cursor, finalPart: true },
+    });
+
+    expect(result.messageId).toBe("75");
+    expect(botApi.editMessageReplyMarkup).not.toHaveBeenCalled();
+    expect(botApi.sendMessage.mock.calls[0]?.[2]?.reply_markup).toEqual({
+      inline_keyboard: [[{ text: "OK", callback_data: "ok" }]],
+    });
+    expect(onDeliveryResult).toHaveBeenCalledTimes(1);
+    expect(onDeliveryResult.mock.calls[0]?.[0]?.meta?.telegramHasInlineKeyboard).toBe(true);
+    const cached = await createTelegramMessageCache({
+      scope: resolveTelegramMessageCacheScope(storePath),
+    }).get({ accountId: "default", chatId: "123", messageId: "75" });
+    expect(cached?.promptContextProjectionMarker).toEqual({
+      kind: "valid",
+      projection: { ...cursor.source, partIndex: 0, finalPart: true },
+    });
+  });
+
   it("routes caller HTML through the legacy HTML transport on rich accounts", async () => {
     // Rich HTML treats literal newlines as insignificant; parse_mode HTML keeps
     // them, so caller-authored HTML must stay on the legacy transport.

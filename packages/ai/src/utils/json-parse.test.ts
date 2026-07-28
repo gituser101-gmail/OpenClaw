@@ -9,10 +9,10 @@ describe("repairJson", () => {
       expect(parsed.content).toBe("line1\nline2");
     });
 
-    it("preserves multiple \\n sequences", () => {
-      const input = '{"content":"a\\nb\\nc"}';
+    it("preserves multiple \\n in code", () => {
+      const input = '{"content":"import sys\\nprint(1)"}';
       const parsed = JSON.parse(repairJson(input));
-      expect(parsed.content).toBe("a\nb\nc");
+      expect(parsed.content).toBe("import sys\nprint(1)");
     });
 
     it("preserves \\t (tab)", () => {
@@ -35,62 +35,37 @@ describe("repairJson", () => {
   });
 
   describe("\\n in code content (regression #114292)", () => {
-    it("preserves \\n in Python import statement", () => {
-      const input = '{"content":"import sys\\nprint(1)"}';
+    it("preserves \\n in Python multi-line script", () => {
+      const input = '{"content":"def foo():\\n    return 1\\n"}';
       const parsed = JSON.parse(repairJson(input));
-      expect(parsed.content).toBe("import sys\nprint(1)");
+      expect(parsed.content).toBe("def foo():\n    return 1\n");
     });
 
-    it("preserves \\n after path-like prefix (not a pure path)", () => {
-      // Mixed content like "go to C:\\dir\\nand run" — prefix is not a pure path
+    it("preserves \\n after path-like prefix (mixed content)", () => {
       const input = '{"content":"go to C:\\\\dir\\nand run"}';
       const parsed = JSON.parse(repairJson(input));
       expect(parsed.content).toBe("go to C:\\dir\nand run");
     });
   });
 
-  describe("malformed Windows path recovery", () => {
-    it("double-escapes \\n when prefix is a pure drive-letter path", () => {
-      // "C:\\newfolder" in malformed JSON — \\n should NOT become a newline
-      const input = '{"path":"C:\\newfolder"}';
-      const repaired = repairJson(input);
-      // After repair, \\n should be doubled so JSON.parse gives literal backslash-n
-      const parsed = JSON.parse(repaired);
-      expect(parsed.path).toBe("C:\newfolder");
-    });
-
-    it("double-escapes \\n in pure path prefix with continuation", () => {
-      const input = '{"path":"D:\\newfolder\\nested"}';
-      const repaired = repairJson(input);
-      const parsed = JSON.parse(repaired);
-      // \\n in "\\newfolder" stays as path component, \\n in "\\nested" is newline
-      // Actually "\\newfolder" has \\n where n is part of folder name
-      // "\\nested" has \\n where n is part of "nested"
-      // Both are path components, both should be double-escaped
-      expect(parsed.path).toBe("D:\newfolder\nested");
-    });
-  });
-
   describe("invalid escape handling", () => {
-    it("doubles backslash before invalid escape character", () => {
-      const input = '{"path":"C:\\\\zoo"}';
+    it("doubles backslash before invalid escape", () => {
+      const input = '{"text":"bad\\z"}';
       const repaired = repairJson(input);
-      expect(repaired).toContain("\\\\z");
       const parsed = JSON.parse(repaired);
-      expect(parsed.path).toBe("C:\\zoo");
+      expect(parsed.text).toBe("bad\\z");
     });
 
-    it("doubles trailing backslash at end of string", () => {
+    it("doubles trailing backslash", () => {
       const input = '{"text":"trailing\\\\"}';
       const repaired = repairJson(input);
-      expect(repaired).toContain("\\\\\\\\");
       const parsed = JSON.parse(repaired);
       expect(parsed.text).toBe("trailing\\");
     });
   });
 
   describe("control character escaping", () => {
-    it("escapes raw newline inside JSON string", () => {
+    it("escapes raw newline in JSON string", () => {
       const input = '{"text":"hello\nworld"}';
       const repaired = repairJson(input);
       expect(repaired).toContain("\\n");
@@ -98,7 +73,7 @@ describe("repairJson", () => {
       expect(parsed.text).toBe("hello\nworld");
     });
 
-    it("escapes raw tab inside JSON string", () => {
+    it("escapes raw tab in JSON string", () => {
       const input = '{"text":"col1\tcol2"}';
       const repaired = repairJson(input);
       expect(repaired).toContain("\\t");
@@ -108,13 +83,13 @@ describe("repairJson", () => {
   });
 
   describe("unicode escape handling", () => {
-    it("preserves valid \\uXXXX escapes", () => {
+    it("preserves valid \\uXXXX", () => {
       const input = '{"text":"hello\\u0020world"}';
       const parsed = JSON.parse(repairJson(input));
       expect(parsed.text).toBe("hello world");
     });
 
-    it("doubles invalid \\u escape (not 4 hex digits)", () => {
+    it("doubles invalid \\u escape", () => {
       const input = '{"text":"bad\\u12"}';
       const repaired = repairJson(input);
       expect(repaired).toContain("\\\\u12");

@@ -8,6 +8,7 @@ import { renderTelegramHtmlText, telegramHtmlToPlainTextFallback } from "./forma
 import { buildInlineKeyboard } from "./inline-keyboard.js";
 import { recordOutboundMessageForPromptContext } from "./outbound-message-context.js";
 import type { TelegramOutboundPromptContextMessage as TelegramMessageLike } from "./outbound-message-context.js";
+import { TELEGRAM_MAX_PHOTO_BYTES } from "./photo.js";
 import {
   buildTelegramThreadReplyParams,
   resolveTelegramSendThreadSpec,
@@ -189,6 +190,10 @@ async function sendMessageTelegramWithContext(
   });
 
   async function shouldSendTelegramImageAsPhoto(buffer: Buffer): Promise<boolean> {
+    if (buffer.byteLength > TELEGRAM_MAX_PHOTO_BYTES) {
+      sendLogger.warn("Photo exceeds Telegram's 10 MiB limit. Sending as document instead.");
+      return false;
+    }
     try {
       const metadata = await getImageMetadata(buffer);
       const width = metadata?.width;

@@ -409,6 +409,14 @@ function capturedLogText(logFile: string): string {
   return fs.existsSync(logFile) ? fs.readFileSync(logFile, "utf8") : "";
 }
 
+// File logger writes are asynchronous, so wait for the record before inspecting it.
+async function waitForCapturedLogText(logFile: string, expected: string): Promise<string> {
+  await vi.waitFor(() => {
+    expect(capturedLogText(logFile)).toContain(expected);
+  });
+  return capturedLogText(logFile);
+}
+
 afterEach(() => {
   resetTelegramSentMessageCacheForTest();
   clearTelegramRuntime();
@@ -1200,7 +1208,7 @@ describe("sendMessageTelegram", () => {
 
     const richMessage = botRawApi.sendRichMessage.mock.calls[0]?.[0]?.rich_message;
     expect(richMessage?.blocks?.some((block: InputRichBlock) => block.type === "pre")).toBe(true);
-    expect(capturedLogText(logFile)).toContain("rich-degrade=table-ascii");
+    await waitForCapturedLogText(logFile, "rich-degrade=table-ascii");
   });
 
   it("skips rich entity detection for provider-prefixed email text", async () => {
@@ -3012,6 +3020,44 @@ describe("sendMessageTelegram", () => {
     expect(res.messageId).toBe("10");
   });
 
+  it("sends images above Telegram's 10 MiB photo limit as documents", async () => {
+    const chatId = "123";
+    const sendDocument = vi.fn().mockResolvedValue({
+      message_id: 10,
+      chat: { id: chatId },
+    });
+    const sendPhoto = vi.fn();
+    const api = { sendDocument, sendPhoto } as unknown as {
+      sendDocument: typeof sendDocument;
+      sendPhoto: typeof sendPhoto;
+    };
+
+    mockLoadedMedia({
+      buffer: Buffer.alloc(10 * 1024 * 1024 + 1),
+      contentType: "image/png",
+      fileName: "large-photo.png",
+    });
+
+    const res = await sendMessageTelegram(chatId, "caption", {
+      cfg: TELEGRAM_TEST_CFG,
+      token: "tok",
+      api,
+      mediaUrl: "https://example.com/large-photo.png",
+    });
+
+    expectMediaSendCall(
+      firstMockCall(sendDocument, "send oversized photo as document"),
+      "send oversized photo as document",
+      chatId,
+      {
+        caption: "caption",
+        parse_mode: "HTML",
+      },
+    );
+    expect(sendPhoto).not.toHaveBeenCalled();
+    expect(res.messageId).toBe("10");
+  });
+
   it("sends images as documents when metadata dimensions are unavailable", async () => {
     const chatId = "123";
     const sendDocument = vi.fn().mockResolvedValue({
@@ -3511,7 +3557,7 @@ describe("sendMessageTelegram", () => {
       silent: true,
     });
 
-    const logs = capturedLogText(logFile);
+    const logs = await waitForCapturedLogText(logFile, "outbound send ok");
     expect(logs).toContain("outbound send ok");
     expect(logs).toContain("accountId=ops");
     expect(logs).toContain(`chatId=${chatId}`);
@@ -3582,7 +3628,7 @@ describe("sendMessageTelegram", () => {
       messageThreadId: 45,
     });
 
-    const logs = capturedLogText(logFile);
+    const logs = await waitForCapturedLogText(logFile, "outbound send ok");
     expect(logs).toContain("outbound send ok");
     expect(logs).toContain("accountId=ops");
     expect(logs).toContain(`chatId=${chatId}`);

@@ -932,6 +932,36 @@ describe("deliverReplies", () => {
     });
   });
 
+  it("sends images above Telegram's 10 MiB photo limit as documents", async () => {
+    const runtime = createRuntime();
+    const sendDocument = vi.fn().mockResolvedValue({
+      message_id: 2,
+      chat: { id: "123" },
+    });
+    const sendPhoto = vi.fn();
+    const bot = createBot({ sendDocument, sendPhoto });
+
+    loadWebMedia.mockResolvedValueOnce({
+      buffer: Buffer.alloc(10 * 1024 * 1024 + 1),
+      contentType: "image/png",
+      fileName: "large-photo.png",
+    });
+
+    await deliverWith({
+      replies: [{ mediaUrl: "https://example.com/large-photo.png", text: "hi **boss**" }],
+      runtime,
+      bot,
+    });
+
+    expect(sendDocument).toHaveBeenCalledTimes(1);
+    expect(firstMockCallArg(sendDocument, 0)).toBe("123");
+    expectRecordFields(mockCallArg(sendDocument, 0, 2), {
+      caption: "hi <b>boss</b>",
+      parse_mode: "HTML",
+    });
+    expect(sendPhoto).not.toHaveBeenCalled();
+  });
+
   it("falls back to a plain media caption when Telegram rejects caption HTML", async () => {
     const runtime = createRuntime();
     const sendPhoto = vi

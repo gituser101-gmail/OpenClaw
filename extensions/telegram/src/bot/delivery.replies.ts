@@ -44,6 +44,7 @@ import {
   canonicalizeTelegramPresentationPayload,
   resolveTelegramInteractiveTextFallback,
 } from "../interactive-fallback.js";
+import { TELEGRAM_MAX_PHOTO_BYTES } from "../photo.js";
 import type { TelegramPromptContextProjectionSequence } from "../prompt-context-projection.js";
 import type { TelegramRichBlocksDegradationReason } from "../rich-block-model.js";
 import {
@@ -494,7 +495,7 @@ async function deliverMediaReply(params: {
         send: (effectiveParams) =>
           params.bot.api.sendAnimation(params.chatId, file, { ...effectiveParams }),
       });
-    } else if (kind === "image") {
+    } else if (kind === "image" && media.buffer.byteLength <= TELEGRAM_MAX_PHOTO_BYTES) {
       await deliverAcceptedMedia({
         operation: "sendPhoto",
         requestParams: mediaParams,

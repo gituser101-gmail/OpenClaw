@@ -176,7 +176,7 @@ describe("session catalog Gateway methods", () => {
     });
   });
 
-  it("single-flights identical concurrent lists and gives followers only the final result", async () => {
+  it("single-flights identical concurrent lists and replays in-flight progress to followers", async () => {
     let release!: () => void;
     const gate = new Promise<void>((resolve) => {
       release = resolve;
@@ -223,8 +223,18 @@ describe("session catalog Gateway methods", () => {
       otherParams.completion,
     ]);
 
-    expect(leaderBroadcast).toHaveBeenCalledOnce();
-    expect(followerBroadcast).not.toHaveBeenCalled();
+    expect(leaderBroadcast).toHaveBeenCalledWith(
+      "sessions.catalog.host",
+      expect.objectContaining({ progressId: "leader-progress" }),
+      new Set(["leader"]),
+      { dropIfSlow: true },
+    );
+    expect(followerBroadcast).toHaveBeenCalledWith(
+      "sessions.catalog.host",
+      expect.objectContaining({ progressId: "follower-progress" }),
+      new Set(["follower"]),
+      { dropIfSlow: true },
+    );
     for (const pending of [leader, follower, otherAgent, otherParams]) {
       expect(pending.respond).toHaveBeenCalledWith(true, {
         catalogs: [expect.objectContaining({ id: "codex", hosts: [host] })],

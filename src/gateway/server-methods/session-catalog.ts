@@ -129,8 +129,13 @@ const providerCreateTargetsByConfig = new WeakMap<
 
 type CatalogListResult = { catalogs: SessionCatalog[] };
 
+type CatalogListProgressFrame = { catalog: SessionCatalog };
+type CatalogListProgressSink = (frame: CatalogListProgressFrame) => void;
+
 type CatalogListCacheEntry = {
   expiresAt?: number;
+  progressFrames: CatalogListProgressFrame[];
+  progressSinks: Set<CatalogListProgressSink>;
   result: Promise<CatalogListResult>;
 };
 
@@ -342,6 +347,20 @@ export const sessionCatalogHandlers: GatewayRequestHandlers = {
     const search = normalizeSessionCatalogSearch(request.search);
     const progressId = request.progressId;
     const progressConnId = progressId && client?.connId ? client.connId : undefined;
+    const progressSink = progressConnId
+      ? (frame: CatalogListProgressFrame) => {
+          context.broadcastToConnIds(
+            "sessions.catalog.host",
+            {
+              progressId,
+              agentId: resolvedAgent.agentId,
+              catalog: frame.catalog,
+            },
+            new Set([progressConnId]),
+            { dropIfSlow: true },
+          );
+        }
+      : undefined;
     const listKey = sessionCatalogListKey({
       agentId: resolvedAgent.agentId,
       request,
@@ -350,8 +369,19 @@ export const sessionCatalogHandlers: GatewayRequestHandlers = {
     const cache = catalogListCache(config, catalogRegistrations);
     const cached = cache.get(listKey);
     if (cached && (cached.expiresAt === undefined || cached.expiresAt > Date.now())) {
-      // progressId is connection-owned and excluded from the work key. Followers skip progressive
-      // frames and receive only the authoritative final result emitted for every caller below.
+      // progressId is connection-owned and excluded from the work key. Settled callers receive only
+      // the authoritative final result, but in-flight followers must not miss host progress already
+      // emitted by the shared provider call.
+      if (cached.expiresAt === undefined && progressSink) {
+        cached.progressSinks.add(progressSink);
+        for (const frame of cached.progressFrames) {
+          try {
+            progressSink(frame);
+          } catch {
+            // Progressive host replay is best-effort. The final RPC response remains authoritative.
+          }
+        }
+      }
       cache.delete(listKey);
       cache.set(listKey, cached);
       respond(true, await cached.result);
@@ -359,6 +389,11 @@ export const sessionCatalogHandlers: GatewayRequestHandlers = {
     }
     if (cached) {
       cache.delete(listKey);
+    }
+    const progressFrames: CatalogListProgressFrame[] = [];
+    const progressSinks = new Set<CatalogListProgressSink>();
+    if (progressSink) {
+      progressSinks.add(progressSink);
     }
     const operation = (async () => {
       const requestEntries = createSessionCatalogRequestEntrySnapshot({
@@ -370,25 +405,26 @@ export const sessionCatalogHandlers: GatewayRequestHandlers = {
         selected.map(async (provider): Promise<SessionCatalog> => {
           const createTarget = resolveProviderCreateTarget(provider, resolvedAgent.agentId, config);
           const createSession = createTarget.ok ? { model: createTarget.target.model } : undefined;
-          const onHost = progressConnId
+          const onHost = progressSinks.size
             ? (host: SessionCatalog["hosts"][number]) => {
                 // Progressive frames are an optimization. The final RPC response remains
                 // authoritative when a slow client drops an intermediate host update.
-                context.broadcastToConnIds(
-                  "sessions.catalog.host",
-                  {
-                    progressId,
-                    agentId: resolvedAgent.agentId,
-                    catalog: catalogResult(
-                      provider,
-                      [requestEntries.projectHostCreatedActors(host)],
-                      undefined,
-                      createSession,
-                    ),
-                  },
-                  new Set([progressConnId]),
-                  { dropIfSlow: true },
-                );
+                const frame = {
+                  catalog: catalogResult(
+                    provider,
+                    [requestEntries.projectHostCreatedActors(host)],
+                    undefined,
+                    createSession,
+                  ),
+                };
+                progressFrames.push(frame);
+                for (const sink of progressSinks) {
+                  try {
+                    sink(frame);
+                  } catch {
+                    // Progressive host fan-out is best-effort. The final response is authoritative.
+                  }
+                }
               }
             : undefined;
           try {
@@ -414,7 +450,7 @@ export const sessionCatalogHandlers: GatewayRequestHandlers = {
       );
       return { catalogs: catalogList };
     })();
-    const entry: CatalogListCacheEntry = { result: operation };
+    const entry: CatalogListCacheEntry = { result: operation, progressFrames, progressSinks };
     // Exact request/config/registration results remain shareable for 3s after settling. This catches
     // out-of-phase clients but expires before the UI's 5s fast follow, so changed rows surface there.
     // Expired and rejected work is removed; retaining it would mask provider recovery or new sessions.

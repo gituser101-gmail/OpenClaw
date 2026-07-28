@@ -11,6 +11,7 @@ const MEDIA_AUDIO_FIELD_KEYS = [
   "tools.media.audio.attachments",
   "tools.media.audio.echoTranscript",
   "tools.media.audio.echoFormat",
+  "tools.media.audio.echoReply",
 ] as const;
 
 type MediaAudioFieldKey = (typeof MEDIA_AUDIO_FIELD_KEYS)[number];
@@ -37,7 +38,9 @@ export const MEDIA_AUDIO_FIELD_HELP: Record<MediaAudioFieldKey, string> = {
   "tools.media.audio.echoTranscript":
     "Echo the audio transcript to the originating chat before agent processing. Enable this when users need to verify what the system heard.",
   "tools.media.audio.echoFormat":
-    "Format the echoed transcript with a {transcript} placeholder. Keep the placeholder intact so delivery includes the transcript.",
+    'Format the echoed transcript with a {transcript} placeholder (default 📝 "{transcript}"). Keep the placeholder intact so delivery includes the transcript.',
+  "tools.media.audio.echoReply":
+    "Send the transcript echo as a reply/quote to the inbound voice message when the channel supports it. Opt-in so existing enabled echoes keep ordinary send semantics on upgrade.",
 };
 
 export const MEDIA_AUDIO_FIELD_LABELS: Record<MediaAudioFieldKey, string> = {
@@ -52,4 +55,5 @@ export const MEDIA_AUDIO_FIELD_LABELS: Record<MediaAudioFieldKey, string> = {
   "tools.media.audio.attachments": "Audio Understanding Attachment Policy",
   "tools.media.audio.echoTranscript": "Echo Transcript to Chat",
   "tools.media.audio.echoFormat": "Transcript Echo Format",
+  "tools.media.audio.echoReply": "Reply to Voice Message",
 };

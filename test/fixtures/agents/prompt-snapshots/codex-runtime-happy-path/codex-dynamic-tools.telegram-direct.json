@@ -1302,6 +1302,7 @@
               "type": "string"
             },
             "path": {
+              "description": "Required for config.schema.lookup. Optional for config.get to request a narrower subtree.",
               "type": "string"
             },
             "timeoutMs": {

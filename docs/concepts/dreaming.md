@@ -21,7 +21,7 @@ Dreaming is **opt-in** and disabled by default.
 
 Long-term promotion still writes only to `MEMORY.md`.
 
-Dreaming reads at most 16 MiB from a daily inline memory file or `DREAMS.md` before updating its managed block. If either file is larger, dreaming uses a bounded streaming update for its managed block so existing large notes and diary text can stay in place without blocking the sweep.
+Dreaming reads at most 16 MiB from a daily inline memory file or `DREAMS.md` before updating its managed block. If either file is larger, dreaming uses a bounded streaming update for its managed block so existing large notes and diary text can stay in place without blocking the sweep. Existing daily-memory symlinks remain supported and are updated through their resolved file target; `DREAMS.md` symlinks remain rejected.
 
 ## Phase model
 

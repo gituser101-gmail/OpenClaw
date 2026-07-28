@@ -7,7 +7,7 @@ import "./web-awesome-tabs.ts";
 
 export type PluginsHubTab = "installed" | "discover" | "skills" | "workshop" | "claws";
 
-const HUB_TABS: readonly PluginsHubTab[] = ["installed", "discover", "skills", "workshop", "claws"];
+const HUB_TABS: readonly PluginsHubTab[] = ["installed", "discover", "skills", "workshop"];
 
 // Keyboard activation of a cross-route tab unmounts the strip that had focus,
 // so the destination strip reclaims focus for its active tab on first render.
@@ -79,7 +79,7 @@ function reclaimFocus(tab: PluginsHubTab, element: Element | undefined) {
  * deliberately distinct from segmented filter pills, keeping tablist semantics.
  */
 export function renderPluginsHubTabs(props: PluginsHubTabsProps) {
-  const tabs = props.showClaws ? HUB_TABS : HUB_TABS.filter((tab) => tab !== "claws");
+  const tabs = props.showClaws ? [...HUB_TABS, "claws" as const] : HUB_TABS;
   return html`
     <wa-tab-group
       class="hub-tabs plugins-hub-tabs plugins-tabs"

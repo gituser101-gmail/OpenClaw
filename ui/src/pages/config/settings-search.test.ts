@@ -1,7 +1,11 @@
 // @vitest-environment node
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { i18n } from "../../i18n/index.ts";
 import { findSettingsSearchBlocks } from "./settings-search.ts";
+
+beforeEach(async () => {
+  await i18n.setLocale("en");
+});
 
 afterEach(async () => {
   await i18n.setLocale("en");
@@ -326,6 +330,29 @@ describe("findSettingsSearchBlocks", () => {
         routeId: "appearance",
         label: "Chat",
         hash: "#settings-appearance-chat",
+      }),
+    ]);
+  });
+
+  it.each([
+    ["session observer", "Sidebar", "#settings-appearance-sidebar"],
+    ["camera", "Chat", "#settings-appearance-chat"],
+    ["dictation", "Chat", "#settings-appearance-chat"],
+    ["message width", "Chat", "#settings-appearance-chat"],
+  ] as const)("routes %s to the existing Appearance control", (query, label, hash) => {
+    const matches = findSettingsSearchBlocks({
+      query,
+      schema: null,
+      value: null,
+      uiHints: {},
+    });
+
+    expect(matches).toEqual([
+      expect.objectContaining({
+        routeId: "appearance",
+        label,
+        search: "?section=__appearance__",
+        hash,
       }),
     ]);
   });

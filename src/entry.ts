@@ -284,10 +284,12 @@ export async function runMainOrRootHelp(
       }
       if (await tryHandleRootHelpFastPath(argv)) {
         await flushEntryStartupTraceForEarlyReturn(argv);
+        requestExitAfterOneShotOutput();
         return;
       }
       if (await tryHandlePrecomputedCommandHelpFastPath(argv)) {
         await flushEntryStartupTraceForEarlyReturn(argv);
+        requestExitAfterOneShotOutput();
         return;
       }
       const { runCli } = await gatewayEntryStartupTrace.measure(

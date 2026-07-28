@@ -41,6 +41,7 @@ Docs: https://docs.openclaw.ai
 - **Plugin install provenance warnings:** require explicit `--force` acknowledgement for arbitrary executable plugin sources in CLI and chat installs, keep trusted ClawHub, bundled, official-catalog, and tracked-update flows frictionless, and restrict Crestodian installs to trusted sources. (#102197) Thanks @jesse-merhi.
 
 ### Fixes
+- Doctor: detect unsafe nested-repetition or invalid `argPattern` values in persisted `exec-approvals.json` allowlists and document explicit remediation (no auto-delete). Thanks @SebTardif.
 
 - **Bounded input and provider responses:** cap pasted auth/config input and enforce wall-clock deadlines across generated-media downloads, polling JSON, and failed response details so oversized or slow-drip streams cannot exceed resource budgets (thanks @Pick-cat).
 - **Cloud worker derived workspace caches:** exclude Python caches, dependency trees, and macOS metadata symmetrically from outbound sync and inbound reconciliation so local cache rewrites cannot fence later cloud results or worker reclaim.

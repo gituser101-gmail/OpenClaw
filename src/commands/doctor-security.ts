@@ -15,6 +15,8 @@ import { resolveExecPolicyScopeSnapshot } from "../infra/exec-approvals-effectiv
 import {
   loadExecApprovals,
   resolveExecApprovalsDisplayPath,
+  type ExecAllowlistEntry,
+  type ExecApprovalsFile,
   type ExecAsk,
   type ExecMode,
   type ExecSecurity,
@@ -23,7 +25,56 @@ import { isLikelySensitiveModelProviderHeaderName } from "../secrets/model-provi
 import { hasConfiguredPlaintextSecretValue } from "../secrets/secret-value.js";
 import { discoverConfigSecretTargets } from "../secrets/target-registry.js";
 import { collectExecFilesystemPolicyDriftHits } from "../security/exec-filesystem-policy.js";
+import { compileSafeRegexDetailed, type SafeRegexRejectReason } from "../security/safe-regex.js";
 import { resolveDefaultChannelAccountContext } from "./channel-account-context.js";
+
+/** One persisted allowlist entry whose argPattern is rejected by the ReDoS guard. */
+export type UnsafeExecArgPatternFinding = {
+  scope: string;
+  pattern: string;
+  argPattern: string;
+  reason: SafeRegexRejectReason;
+  entryId?: string;
+};
+
+/**
+ * Scans persisted exec-approvals allowlists for argPatterns that the runtime
+ * ReDoS guard will reject (nested repetition or invalid regex). Detection only:
+ * Doctor never auto-deletes approvals; operators must remediate explicitly.
+ */
+export function findUnsafeExecApprovalArgPatterns(
+  file: ExecApprovalsFile = loadExecApprovals(),
+): UnsafeExecArgPatternFinding[] {
+  const findings: UnsafeExecArgPatternFinding[] = [];
+
+  const visit = (scope: string, allowlist: readonly ExecAllowlistEntry[] | undefined) => {
+    if (!allowlist) {
+      return;
+    }
+    for (const entry of allowlist) {
+      const argPattern = entry.argPattern;
+      if (typeof argPattern !== "string" || argPattern.length === 0) {
+        continue;
+      }
+      const safety = compileSafeRegexDetailed(argPattern);
+      if (safety.regex) {
+        continue;
+      }
+      findings.push({
+        scope,
+        pattern: entry.pattern,
+        argPattern,
+        reason: safety.reason ?? "invalid-regex",
+        ...(entry.id !== undefined ? { entryId: entry.id } : {}),
+      });
+    }
+  };
+
+  for (const [agentId, agent] of Object.entries(file.agents ?? {})) {
+    visit(`agents.${agentId}`, agent?.allowlist);
+  }
+  return findings;
+}
 
 function collectImplicitHeartbeatDirectPolicyWarnings(cfg: OpenClawConfig): string[] {
   const warnings: string[] = [];
@@ -177,7 +228,36 @@ function collectExecPolicyConflictWarnings(cfg: OpenClawConfig): string[] {
 
 function collectDurableExecApprovalWarnings(cfg: OpenClawConfig): string[] {
   void cfg;
-  return [];
+  const findings = findUnsafeExecApprovalArgPatterns();
+  if (findings.length === 0) {
+    return [];
+  }
+
+  const displayPath = resolveExecApprovalsDisplayPath();
+  const lines: string[] = [
+    `- WARNING: ${findings.length} persisted exec-approval argPattern(s) are unsafe (nested repetition or invalid regex) and will never match at runtime.`,
+    `  File: ${displayPath}`,
+  ];
+
+  const preview = (value: string): string =>
+    value.length > 60 ? `${value.slice(0, 57)}...` : value;
+
+  for (const finding of findings.slice(0, 8)) {
+    lines.push(
+      `  - ${finding.scope}: pattern=${JSON.stringify(preview(finding.pattern))} argPattern=${JSON.stringify(preview(finding.argPattern))} (${finding.reason})`,
+    );
+  }
+  if (findings.length > 8) {
+    lines.push(`  - ...and ${findings.length - 8} more`);
+  }
+
+  lines.push(
+    "  Remediation is explicit (doctor does not auto-delete approvals):",
+    "  1. Edit or remove the unsafe entry in exec-approvals.json (prefer safe argPatterns; auto-generated allow-always patterns are safe).",
+    "  2. If the command is still needed, re-approve it via the normal allow-always path so a safe pattern is stored.",
+    `  3. Re-run ${formatCliCommand("openclaw doctor")} to confirm this warning is gone.`,
+  );
+  return lines;
 }
 
 function collectExecFilesystemPolicyWarnings(cfg: OpenClawConfig): string[] {

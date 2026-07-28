@@ -3634,7 +3634,9 @@ describe("grouped chat rendering", () => {
     vi.stubGlobal(
       "URL",
       class extends NativeUrl {
-        static override createObjectURL = vi.fn(() => objectUrls[objectUrlIndex++]);
+        static override createObjectURL = vi.fn(
+          () => objectUrls[objectUrlIndex++] ?? "blob:managed-full",
+        );
         static override revokeObjectURL = vi.fn();
       },
     );

@@ -513,6 +513,10 @@ const GITHUB_WORKFLOW_OWNER_TEST_TARGETS = new Map([
   ],
   [".github/workflows/crabbox-hydrate.yml", ["test/scripts/package-acceptance-workflow.test.ts"]],
   [".github/workflows/dependency-guard.yml", ["test/scripts/dependency-guard-workflow.test.ts"]],
+  [
+    ".github/workflows/localization-catalog-refresh.yml",
+    ["test/scripts/localization-catalog-workflow.test.ts"],
+  ],
   [".github/workflows/docker-release.yml", ["src/dockerfile.test.ts"]],
   [
     ".github/workflows/full-release-validation.yml",
@@ -758,7 +762,13 @@ const TOOLING_SOURCE_TEST_TARGETS = new Map([
   ],
   [".github/images/live-media-runner/Dockerfile", LIVE_MEDIA_RUNNER_IMAGE_TEST_TARGETS],
   [".github/workflows/auto-response.yml", ["test/scripts/ci-workflow-guards.test.ts"]],
-  [".github/workflows/ci.yml", ["test/scripts/ci-workflow-guards.test.ts"]],
+  [
+    ".github/workflows/ci.yml",
+    [
+      "test/scripts/ci-workflow-guards.test.ts",
+      "test/scripts/localization-catalog-workflow.test.ts",
+    ],
+  ],
   [".github/workflows/clawsweeper-dispatch.yml", ["test/scripts/ci-workflow-guards.test.ts"]],
   [".github/workflows/labeler.yml", ["test/scripts/ci-workflow-guards.test.ts"]],
   [".github/workflows/real-behavior-proof.yml", ["test/scripts/ci-workflow-guards.test.ts"]],

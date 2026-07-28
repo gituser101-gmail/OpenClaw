@@ -149,7 +149,19 @@ export function prepareEmbeddedAttemptTimeout(input: {
     // reduced by the hard-coded floor. For small timeouts the floor acts as
     // a reasonable ceiling to prevent unbounded extension.
     const effectiveMaxRunMs = Math.max(attempt.timeoutMs, MAX_EXTENSION_TOTAL_MS);
-    const newDeadline = Math.min(now + attempt.timeoutMs, runStartMs + effectiveMaxRunMs);
+    const maxDeadline = runStartMs + effectiveMaxRunMs;
+
+    if (now >= maxDeadline) {
+      // Absolute cap reached — abort immediately. Without this guard, the
+      // clamp below yields a non-positive delay that Math.max(1, ...) rounds
+      // to 1ms, and each subsequent noteActivity() clears that 1ms timer and
+      // schedules another, defeating the cap entirely.
+      input.markTimedOutByRunBudget();
+      input.abortRun(true);
+      return;
+    }
+
+    const newDeadline = Math.min(now + attempt.timeoutMs, maxDeadline);
     const delayMs = Math.max(1, newDeadline - now);
     scheduleAbortTimer(delayMs, "initial");
   };

@@ -213,6 +213,41 @@ describe("prepareEmbeddedAttemptTimeout", () => {
     harness.timeout.clearTimers();
   });
 
+  it("noteActivity aborts immediately when past the absolute cap (fail-closed)", async () => {
+    const harness = createTimeoutHarness({ timeoutMs: 30_000 });
+
+    // At t=120_000ms (past the 120s absolute cap):
+    //   - The initial 30s timer already fired at t=30s, calling abortRun + markTimedOutByRunBudget
+    //   - noteActivity at cap must also abort immediately (fail-closed, not a 1ms timer)
+    await vi.advanceTimersByTimeAsync(120_000);
+
+    // Initial timer already called this once; noteActivity calls it again
+    const beforeCount = harness.abortRun.mock.calls.length;
+
+    harness.timeout.noteActivity();
+    expect(harness.markTimedOutByRunBudget).toHaveBeenCalled();
+    expect(harness.abortRun).toHaveBeenCalledWith(true);
+    expect(harness.abortRun.mock.calls.length).toBe(beforeCount + 1);
+
+    harness.timeout.clearTimers();
+  });
+
+  it("noteActivity cannot bypass absolute cap via repeated calls past deadline", async () => {
+    const harness = createTimeoutHarness({ timeoutMs: 30_000 });
+
+    await vi.advanceTimersByTimeAsync(120_000);
+    const beforeCount = harness.abortRun.mock.calls.length;
+
+    // Each noteActivity past the cap must call abortRun (not bypass via timer churn)
+    harness.timeout.noteActivity();
+    expect(harness.abortRun.mock.calls.length).toBe(beforeCount + 1);
+
+    harness.timeout.noteActivity();
+    expect(harness.abortRun.mock.calls.length).toBe(beforeCount + 2);
+
+    harness.timeout.clearTimers();
+  });
+
   it("noteActivity does not clamp when below the total cap", async () => {
     const harness = createTimeoutHarness({ timeoutMs: 1000 });
 

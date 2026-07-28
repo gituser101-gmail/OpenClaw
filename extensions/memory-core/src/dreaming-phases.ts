@@ -51,6 +51,7 @@ import {
   writeMemoryCoreWorkspaceEntries,
 } from "./dreaming-state.js";
 import { textSimilarity as snippetSimilarity } from "./memory/tokenize.js";
+import { buildCorpusSessionEntryOptions } from "./session-corpus-entry-options.js";
 import {
   filterLiveShortTermRecallEntries,
   filterFreshLightDreamingEntries,
@@ -802,15 +803,10 @@ async function collectSessionIngestionBatches(params: {
   const sessionFiles: Array<{
     agentId: string;
     absolutePath: string;
-    generatedByDreamingNarrative: boolean;
-    generatedByCronRun: boolean;
+    entryOptions: ReturnType<typeof buildCorpusSessionEntryOptions>;
     sessionId: string;
-    sessionKey?: string;
     sessionPath: string;
-    sessionKind: "interactive";
-    storePath?: string;
     transcriptSource?: "sqlite";
-    updatedAtMs?: number;
   }> = [];
   for (const agentId of agentIds) {
     for (const entry of await listSessionTranscriptCorpusEntriesForAgent(agentId)) {
@@ -829,20 +825,13 @@ async function collectSessionIngestionBatches(params: {
       sessionFiles.push({
         agentId,
         absolutePath,
-        generatedByDreamingNarrative: entry.generatedByDreamingNarrative === true,
-        generatedByCronRun: entry.generatedByCronRun === true,
+        entryOptions: buildCorpusSessionEntryOptions(entry),
         sessionId: entry.sessionId,
-        sessionKind: entry.sessionKind,
         sessionPath:
           entry.transcriptSource === "sqlite"
             ? buildSqliteDreamingSessionPath(entry.agentId, entry.sessionId)
             : sessionPathForFile(absolutePath),
         ...(entry.transcriptSource === "sqlite" ? { transcriptSource: "sqlite" as const } : {}),
-        ...(entry.sessionKey ? { sessionKey: entry.sessionKey } : {}),
-        ...(entry.transcriptSource === "sqlite" && entry.storePath
-          ? { storePath: entry.storePath }
-          : {}),
-        ...(entry.updatedAtMs !== undefined ? { updatedAtMs: entry.updatedAtMs } : {}),
       });
     }
   }
@@ -873,20 +862,7 @@ async function collectSessionIngestionBatches(params: {
     let fingerprint: { mtimeMs: number; size: number };
     let entry: Awaited<ReturnType<typeof buildSessionEntry>>;
     if (file.transcriptSource === "sqlite") {
-      entry = await buildSessionEntry(file.absolutePath, {
-        generatedByDreamingNarrative: file.generatedByDreamingNarrative,
-        generatedByCronRun: file.generatedByCronRun,
-        sessionKind: file.sessionKind,
-        ...(file.storePath
-          ? {
-              agentId: file.agentId,
-              sessionId: file.sessionId,
-              storePath: file.storePath,
-            }
-          : {}),
-        ...(file.sessionKey ? { sessionKey: file.sessionKey } : {}),
-        ...(file.updatedAtMs !== undefined ? { updatedAtMs: file.updatedAtMs } : {}),
-      });
+      entry = await buildSessionEntry(file.absolutePath, file.entryOptions);
       if (!entry) {
         if (previous) {
           changed = true;
@@ -926,11 +902,7 @@ async function collectSessionIngestionBatches(params: {
         continue;
       }
 
-      entry = await buildSessionEntry(file.absolutePath, {
-        generatedByDreamingNarrative: file.generatedByDreamingNarrative,
-        generatedByCronRun: file.generatedByCronRun,
-        sessionKind: file.sessionKind,
-      });
+      entry = await buildSessionEntry(file.absolutePath, file.entryOptions);
       if (!entry) {
         continue;
       }

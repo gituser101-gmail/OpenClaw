@@ -26,6 +26,7 @@ import {
   type MemorySyncParams,
 } from "openclaw/plugin-sdk/memory-core-host-engine-storage";
 import { normalizeAgentId } from "openclaw/plugin-sdk/routing";
+import { buildCorpusSessionEntryOptions } from "../session-corpus-entry-options.js";
 import { shouldSyncSessionsForReindex } from "./manager-session-reindex.js";
 import {
   resolveMemorySessionStartupDirtyFiles,
@@ -58,23 +59,6 @@ export abstract class MemoryManagerSessionSyncOps extends MemoryManagerWatchOps 
 
   protected legacyExtensionlessSessionPathForIdentity(agentId: string, sessionId: string): string {
     return path.join("sessions", normalizeAgentId(agentId), sessionId).replace(/\\/g, "/");
-  }
-
-  protected buildSessionEntryOptions(entry: SessionTranscriptCorpusEntry) {
-    return {
-      generatedByDreamingNarrative: entry.generatedByDreamingNarrative === true,
-      generatedByCronRun: entry.generatedByCronRun === true,
-      ...(entry.sessionKind ? { sessionKind: entry.sessionKind } : {}),
-      ...(entry.transcriptSource === "sqlite" && entry.storePath
-        ? {
-            agentId: entry.agentId,
-            sessionId: entry.sessionId,
-            storePath: entry.storePath,
-          }
-        : {}),
-      ...(entry.sessionKey ? { sessionKey: entry.sessionKey } : {}),
-      ...(entry.updatedAtMs !== undefined ? { updatedAtMs: entry.updatedAtMs } : {}),
-    };
   }
 
   protected ensureSessionListener() {
@@ -148,7 +132,7 @@ export abstract class MemoryManagerSessionSyncOps extends MemoryManagerWatchOps 
             if (corpusEntry.transcriptSource === "sqlite") {
               return statSessionEntrySync(
                 corpusEntry.sessionFile,
-                this.buildSessionEntryOptions(corpusEntry),
+                buildCorpusSessionEntryOptions(corpusEntry),
               );
             }
             const file = corpusEntry.sessionFile;

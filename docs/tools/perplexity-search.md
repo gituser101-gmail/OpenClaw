@@ -134,18 +134,22 @@ Only results published before this date (`YYYY-MM-DD`).
 Domain allowlist/denylist array (max 20).
 </ParamField>
 
-<ParamField path="search_context_size" type="'low' | 'medium' | 'high'" default="high">
-Content extraction budget. Use `low` for shorter passages, `medium` for
-balanced extraction, or `high` for detailed content. Do not combine with
+<ParamField path="search_context_size" type="'low' | 'medium' | 'high'">
+Content extraction budget on both Perplexity transports. Use `low` for shorter
+passages, `medium` for balanced extraction, or `high` for detailed content.
+Perplexity documents different upstream defaults, so set this explicitly for
+consistent behavior. On the native Search API, do not combine it with
 `max_tokens` or `max_tokens_per_page`.
 </ParamField>
 
 <ParamField path="max_tokens" type="number" default="25000">
-Total content budget (max 1000000). Do not combine with `search_context_size`.
+Native Search API total content budget (max 1000000). Do not combine with
+`search_context_size`.
 </ParamField>
 
 <ParamField path="max_tokens_per_page" type="number" default="2048">
-Per-page token limit. Do not combine with `search_context_size`.
+Native Search API per-page token limit. Do not combine with
+`search_context_size`.
 </ParamField>
 
 For the legacy Sonar/OpenRouter compatibility path:
@@ -214,7 +218,7 @@ await web_search({
 - Perplexity Search API returns structured web search results (`title`, `url`, `snippet`).
 - OpenRouter, or an explicit `plugins.entries.perplexity.config.webSearch.baseUrl` / `model`, switches Perplexity back to Sonar chat completions for compatibility.
 - Sonar/OpenRouter compatibility returns one synthesized answer with citations, not structured result rows.
-- `search_context_size` uses Perplexity's `low`, `medium`, or `high` content extraction budget and cannot be combined with explicit token budget parameters.
+- `search_context_size` is forwarded by both Perplexity transports. On the native Search API, it cannot be combined with explicit `max_tokens` / `max_tokens_per_page` budgets.
 - Results are cached for 15 minutes by default (configurable via `cacheTtlMinutes`).
 
 ## Related

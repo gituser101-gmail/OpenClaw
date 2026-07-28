@@ -484,12 +484,11 @@ provider, OpenClaw does not show the `x_search` prompt.
   accept `count` for shared-tool compatibility, but it does not change the
   grounded answer shape. Gemini treats `day` freshness as a recency hint; wider
   freshness values and explicit dates set Google Search grounding time ranges.
-  Perplexity behaves the same way when you use the Sonar/OpenRouter
-  compatibility path (`plugins.entries.perplexity.config.webSearch.baseUrl` /
-  `model` or `OPENROUTER_API_KEY`), except that `search_context_size` remains
-  available as a `low` / `medium` / `high` content extraction hint. Do not
-  combine `search_context_size` with Perplexity's explicit `max_tokens` or
-  `max_tokens_per_page` budgets.
+  Perplexity accepts `search_context_size` on both the native Search API and
+  the Sonar/OpenRouter compatibility path
+  (`plugins.entries.perplexity.config.webSearch.baseUrl` / `model` or
+  `OPENROUTER_API_KEY`). On the native path, do not combine it with
+  `max_tokens` or `max_tokens_per_page`.
   SearXNG accepts `http://` only for trusted private-network or loopback hosts;
   public SearXNG endpoints must use `https://`.
   Firecrawl and Tavily only support `query` and `count` through `web_search`

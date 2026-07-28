@@ -35,6 +35,7 @@ export function prepareEmbeddedAttemptTimeout(input: {
   markTimedOutByRunBudget: () => void;
 }) {
   const { activeSession, attempt } = input;
+  const runStartMs = Date.now();
   let abortWarnTimer: NodeJS.Timeout | undefined;
   let abortTimer: NodeJS.Timeout | undefined;
   let runAbortDeadlineAtMs = Date.now() + attempt.timeoutMs;
@@ -133,9 +134,11 @@ export function prepareEmbeddedAttemptTimeout(input: {
   /** Resets the run budget deadline on activity, subject to hard caps.
    * Uses actual wall-clock elapsed time since last activity for the total
    * extension cap, making MAX_EXTENSION_TOTAL_MS a meaningful timeout ceiling
-   * rather than a fixed multiple of the initial timeoutMs. */
+   * rather than a fixed multiple of the initial timeoutMs.
+   * The deadline is clamped to runStartMs + MAX_EXTENSION_TOTAL_MS to prevent
+   * unbounded extension from a progress event near the cap boundary. */
   const noteActivity = () => {
-    if (extensionCount >= MAX_EXTENSIONS || totalExtendedMs > MAX_EXTENSION_TOTAL_MS) {
+    if (extensionCount >= MAX_EXTENSIONS) {
       return;
     }
     extensionCount++;
@@ -143,7 +146,13 @@ export function prepareEmbeddedAttemptTimeout(input: {
     const elapsedSinceLastActivity = Math.max(0, now - lastActivityAtMs);
     lastActivityAtMs = now;
     totalExtendedMs += elapsedSinceLastActivity;
-    scheduleAbortTimer(attempt.timeoutMs, "initial");
+
+    // Clamp new deadline to the absolute maximum from run start, preventing
+    // a progress event near the cap boundary from scheduling a full timeout
+    // beyond the ceiling.
+    const newDeadline = Math.min(now + attempt.timeoutMs, runStartMs + MAX_EXTENSION_TOTAL_MS);
+    const delayMs = Math.max(1, newDeadline - now);
+    scheduleAbortTimer(delayMs, "initial");
   };
 
   return {

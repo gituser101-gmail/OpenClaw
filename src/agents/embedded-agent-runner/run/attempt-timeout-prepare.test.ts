@@ -184,6 +184,50 @@ describe("prepareEmbeddedAttemptTimeout", () => {
     harness.timeout.clearTimers();
   });
 
+  it("noteActivity clamps deadline to MAX_EXTENSION_TOTAL_MS from run start", async () => {
+    const harness = createTimeoutHarness({ timeoutMs: 30_000 }); // 30s sliding window
+
+    // runStartMs = 0, MAX_EXTENSION_TOTAL_MS = 120_000
+    // After 119s, a progress event would normally schedule deadline at 119 + 30 = 149s,
+    // but the clamp should limit it to 120s (runStartMs + MAX_EXTENSION_TOTAL_MS).
+    await vi.advanceTimersByTimeAsync(119_000);
+    harness.timeout.noteActivity();
+    expect(harness.timeout.getRunAbortDeadlineAtMs()).toBe(120_000);
+
+    // The timer fires at 120s (not 149s)
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(harness.abortRun).toHaveBeenCalledWith(true);
+    harness.timeout.clearTimers();
+  });
+
+  it("noteActivity clamps deadline on the exact cap boundary", async () => {
+    const harness = createTimeoutHarness({ timeoutMs: 120_000 });
+
+    // At t=119_990ms, noteActivity would schedule deadline at 119_990 + 5000 = 124_990,
+    // clamped to 120_000. delayMs = max(1, 120_000 - 119_990) = 10.
+    await vi.advanceTimersByTimeAsync(119_990);
+    harness.timeout.noteActivity();
+    expect(harness.timeout.getRunAbortDeadlineAtMs()).toBe(120_000);
+
+    // The old timer (at 120_000) was cleared — timer now fires in 10ms
+    await vi.advanceTimersByTimeAsync(9);
+    expect(harness.abortRun).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(2); // crosses 120_000
+    expect(harness.abortRun).toHaveBeenCalledWith(true);
+    harness.timeout.clearTimers();
+  });
+
+  it("noteActivity does not clamp when below the total cap", async () => {
+    const harness = createTimeoutHarness({ timeoutMs: 1000 });
+
+    // At t=10_000ms, 10_000 + 1000 = 11_000 < 120_000 → unclamped
+    await vi.advanceTimersByTimeAsync(10_000);
+    harness.timeout.noteActivity();
+    expect(harness.timeout.getRunAbortDeadlineAtMs()).toBe(11_000);
+
+    harness.timeout.clearTimers();
+  });
+
   it("cleans up both the timer and external abort listener", async () => {
     const harness = createTimeoutHarness();
 

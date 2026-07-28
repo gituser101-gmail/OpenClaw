@@ -359,6 +359,13 @@ describe("createIMessageTestPlugin", () => {
         messageSendingHooks: () => {
           expect(sendText).toBeTypeOf("function");
         },
+        reconcileUnknownSend: () => {
+          // Behavior coverage (sent/unresolved/fail-closed) lives in
+          // send-reconcile.test.ts; here we prove the adapter wires the
+          // declared handler and kind gate.
+          expect(adapter.durableFinal?.reconcileUnknownSend).toBeTypeOf("function");
+          expect(adapter.durableFinal?.reconcileUnknownSendKinds).toEqual({ text: true });
+        },
       },
     });
   });

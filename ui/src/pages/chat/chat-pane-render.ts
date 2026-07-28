@@ -1,3 +1,4 @@
+import { replaceModeModelSettingsHref } from "./chat-model-catalog.ts";
 import {
   activeChatRunStartupStatus,
   buildAgentMainSessionKey,
@@ -386,6 +387,10 @@ export class ChatPaneRender extends ChatPaneHeaderRender {
               gatewayAvailable: Boolean(state.client),
               loading: state.chatLoading,
               modelCatalog: state.chatModelCatalog,
+              modelSettingsHref: replaceModeModelSettingsHref(
+                state.chatModelCatalogMode,
+                state.basePath,
+              ),
               modelOverrides: state.sessions.state.modelOverrides,
               modelSelectionLocked: selectedSession?.modelSelectionLocked === true,
               modelSelectionRuntimeId: selectedSession?.agentRuntime?.id,

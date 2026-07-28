@@ -71,9 +71,7 @@ type ApiKeyProviderCapabilities = {
 };
 type ModelsListAvailability = ModelAuthAvailability;
 type ModelsListEntryEvaluation = ModelAuthAvailabilityEvaluation;
-
 let loggedSlowModelsListCatalog = false;
-
 // Unknown views are rejected by protocol validation first; this helper keeps the
 // handler default explicit for older clients that omit the field.
 function resolveModelsListView(params: Record<string, unknown>): ModelsListView {
@@ -465,7 +463,6 @@ function apiKeyProviderCapabilities(params: {
   }
   return { providers: capabilities, resolveProvider };
 }
-
 type BuildModelsListResultParams = {
   context: GatewayRequestContext;
   agentId?: string;
@@ -482,7 +479,7 @@ type BuildModelsListResultParams = {
 
 export async function buildModelsListResult(
   params: BuildModelsListResultParams,
-): Promise<{ models: ModelsListEntryWithCapabilities[] }> {
+): Promise<{ models: ModelsListEntryWithCapabilities[]; catalogMode?: "replace" }> {
   const initialConfig = params.context.getRuntimeConfig();
   const initialAgentId = normalizeAgentId(params.agentId ?? resolveDefaultAgentId(initialConfig));
   const view = resolveModelsListView(params.params);
@@ -582,6 +579,7 @@ export async function buildModelsListResult(
   const capableProviders = includeProviderCapabilities
     ? apiKeyProviderCapabilities({ cfg, workspaceDir })
     : undefined;
+  const catalogMode = view !== "all" && cfg.models?.mode === "replace" ? "replace" : undefined;
   if (view === "provider-config") {
     const sourceConfig = getRuntimeConfigSourceSnapshot() ?? cfg;
     const authoredEntries = buildProviderConfigModelCatalogForBrowse({
@@ -603,6 +601,7 @@ export async function buildModelsListResult(
     });
     const inventory = await inventoryProjector.projectCatalog();
     return {
+      ...(catalogMode ? { catalogMode } : {}),
       models: await buildPublicModelsListEntries({
         catalog: inventory,
         cfg,
@@ -668,6 +667,7 @@ export async function buildModelsListResult(
     },
   });
   return {
+    ...(catalogMode ? { catalogMode } : {}),
     models: await buildPublicModelsListEntries({
       catalog: models,
       cfg,

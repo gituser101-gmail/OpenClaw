@@ -140,7 +140,11 @@ const imessageMessageAdapter = defineChannelMessageAdapter({
       media: true,
       replyTo: true,
       messageSendingHooks: true,
+      reconcileUnknownSend: true,
     },
+    reconcileUnknownSendKinds: { text: true },
+    reconcileUnknownSend: async (ctx) =>
+      await (await loadIMessageChannelRuntime()).reconcileIMessageUnknownSendDelivery(ctx),
   },
   send: {
     text: async (ctx) => {

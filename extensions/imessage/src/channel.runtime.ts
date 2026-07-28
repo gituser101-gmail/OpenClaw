@@ -6,7 +6,7 @@ import type { ChannelPlugin } from "./channel-api.js";
 import { monitorIMessageProvider } from "./monitor.js";
 import { IMESSAGE_LEGACY_OUTBOUND_SEND_DEP_KEYS } from "./outbound-send-deps.js";
 import { probeIMessage } from "./probe.js";
-import { sendMessageIMessage } from "./send.js";
+import { reconcileIMessageUnknownSend, sendMessageIMessage } from "./send.js";
 import { imessageSetupWizard } from "./setup-surface.js";
 
 type IMessageSendFn = typeof sendMessageIMessage;
@@ -50,6 +50,12 @@ export async function sendIMessageOutbound(params: {
     ...(result.sentText ? { imessageVisibleText: result.sentText } : {}),
   };
   return Object.keys(meta).length > 0 ? { ...result, meta } : result;
+}
+
+export async function reconcileIMessageUnknownSendDelivery(
+  ctx: Parameters<typeof reconcileIMessageUnknownSend>[0],
+): ReturnType<typeof reconcileIMessageUnknownSend> {
+  return await reconcileIMessageUnknownSend(ctx);
 }
 
 export async function notifyIMessageApproval(params: {

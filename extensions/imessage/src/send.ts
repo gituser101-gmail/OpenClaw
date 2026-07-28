@@ -3,6 +3,9 @@ import { constants, accessSync } from "node:fs";
 import type { MediaPlaceholderTextFact } from "openclaw/plugin-sdk/channel-inbound";
 import {
   createMessageReceiptFromOutboundResults,
+  sanitizeForPlainText,
+  type ChannelMessageUnknownSendContext,
+  type ChannelMessageUnknownSendReconciliationResult,
   type MessageReceipt,
   type MessageReceiptPartKind,
   type MessageReceiptSourceResult,
@@ -38,6 +41,7 @@ import {
   forgetPersistedIMessageEchoKey,
   rememberPersistedIMessageEcho,
 } from "./monitor/persisted-echo-cache.js";
+import { sanitizeOutboundText } from "./monitor/sanitize-outbound.js";
 import {
   formatIMessageChatTarget,
   type IMessageService,
@@ -365,6 +369,136 @@ function shouldRecoverApprovalPromptGuid(params: {
     Boolean(params.message.trim()) &&
     Boolean(extractIMessageApprovalPromptBinding(params.message))
   );
+}
+
+const IMESSAGE_RECONCILE_CLOCK_SKEW_MS = 60_000;
+
+type IMessageReconcileUnknownSendOpts = {
+  resolveSentMessageGuidImpl?: IMessageSendOpts["resolveSentMessageGuidImpl"];
+};
+
+function collectIMessageReconcileTextCandidates(params: {
+  cfg: OpenClawConfig;
+  accountId: string;
+  text: string;
+}): string[] {
+  // Outbound text passes through the plugin sanitize stage and the send-stage
+  // markdown table conversion before hitting chat.db, so match against the
+  // transformed shapes as well as the raw queued payload text.
+  const candidates: string[] = [];
+  const push = (value: string | undefined) => {
+    const normalized = value?.trim();
+    if (normalized && !candidates.includes(normalized)) {
+      candidates.push(normalized);
+    }
+  };
+  push(params.text);
+  const sanitized = sanitizeForPlainText(sanitizeOutboundText(params.text), {
+    style: "markdown",
+  });
+  push(sanitized);
+  const tableMode = resolveMarkdownTableMode({
+    cfg: params.cfg,
+    channel: "imessage",
+    accountId: params.accountId,
+  });
+  push(convertMarkdownTables(params.text, tableMode));
+  push(convertMarkdownTables(sanitized, tableMode));
+  return candidates;
+}
+
+/**
+ * Durable-delivery reconciliation for sends whose outcome became unknown
+ * after dispatch (rpc timeout / wrapper drop). Acks the delivery only when
+ * chat.db yields exact evidence (is_from_me row matching target + text within
+ * the attempt window); otherwise stays fail-closed as retryable "unresolved"
+ * so recovery never blind-replays. Remote cliPath wrappers without a readable
+ * chat.db cannot be reconciled locally and remain unresolved. See #115328.
+ */
+export async function reconcileIMessageUnknownSend(
+  ctx: ChannelMessageUnknownSendContext,
+  opts?: IMessageReconcileUnknownSendOpts,
+): Promise<ChannelMessageUnknownSendReconciliationResult | null> {
+  const cfg = requireRuntimeConfig(ctx.cfg, "iMessage delivery reconciliation");
+  const account = resolveIMessageAccount({
+    cfg,
+    accountId: ctx.accountId ?? undefined,
+  });
+  const cliPath = account.config.cliPath?.trim() || "imsg";
+  const dbPath = account.config.dbPath?.trim();
+  const chatDbLookupPath = resolveIMessageChatDbLookupPath({
+    cliPath,
+    dbPath,
+    remoteHost: account.config.remoteHost,
+  });
+  if (
+    !canCheckSentMessageAfterRpcTimeout({
+      dbPath: chatDbLookupPath,
+      resolveSentMessageGuidImpl: opts?.resolveSentMessageGuidImpl,
+    })
+  ) {
+    return {
+      status: "unresolved",
+      error:
+        "iMessage unknown-send reconciliation requires a readable chat.db; remote cliPath wrappers without dbPath cannot be reconciled locally",
+      retryable: true,
+    };
+  }
+  const hasMedia = ctx.payloads.some(
+    (payload) => Boolean(payload.mediaUrl?.trim()) || (payload.mediaUrls?.length ?? 0) > 0,
+  );
+  const payloadTexts = ctx.payloads
+    .map((payload) => payload.text?.trim() ?? "")
+    .filter((text) => text.length > 0);
+  if (hasMedia || payloadTexts.length === 0) {
+    // Media-bearing or empty intents cannot be proven via text lookup; defer
+    // to the kind gate (reconcileUnknownSendKinds) and stay fail-closed.
+    return null;
+  }
+  const sentAfterMs =
+    (ctx.platformSendStartedAt ?? ctx.enqueuedAt) - IMESSAGE_RECONCILE_CLOCK_SKEW_MS;
+  const target = parseIMessageTarget(ctx.to);
+  const resolver = opts?.resolveSentMessageGuidImpl ?? resolveLatestSentMessageGuidFromChatDb;
+  let lastGuid: string | null = null;
+  for (const payloadText of payloadTexts) {
+    let guid: string | null = null;
+    for (const candidate of collectIMessageReconcileTextCandidates({
+      cfg,
+      accountId: account.accountId,
+      text: payloadText,
+    })) {
+      guid = normalizeResolvedMessageGuid(
+        await resolver({
+          dbPath: chatDbLookupPath,
+          target,
+          text: candidate,
+          sentAfterMs,
+        }),
+      );
+      if (guid) {
+        break;
+      }
+    }
+    if (!guid) {
+      return {
+        status: "unresolved",
+        error:
+          "no matching is_from_me iMessage row found in chat.db for the queued payload within the attempt window",
+        retryable: true,
+      };
+    }
+    lastGuid = guid;
+  }
+  if (!lastGuid) {
+    return null;
+  }
+  const receipt = createIMessageSendReceipt({
+    messageId: lastGuid,
+    target,
+    kind: "text",
+    ...(ctx.effectiveReplyToId ? { replyToId: ctx.effectiveReplyToId } : {}),
+  });
+  return { status: "sent", receipt, messageId: lastGuid };
 }
 
 function canCheckSentMessageAfterRpcTimeout(params: {

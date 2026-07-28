@@ -232,6 +232,7 @@ export const en: TranslationMap = {
         "On your phone, open WhatsApp → Settings → Linked devices → Link a device, then scan this code.",
       whatsappQrLoading: "Generating QR code…",
       whatsappQrHint: "Click Show QR to generate a pairing code.",
+      whatsappQrAlt: "WhatsApp QR",
       whatsappLinked: "WhatsApp is linked and ready.",
       regenerateQr: "New QR code",
       linkLater: "Link later",
@@ -1135,7 +1136,7 @@ export const en: TranslationMap = {
     },
   },
   // Historical namespace from the pre-restructure "quick settings" page; its
-  // keys now serve General, Privacy & Security, Appearance, and Profile.
+  // keys now serve Models, General, Privacy & Security, Appearance, and Profile.
   // Renaming would force retranslation of every key, so the name stays.
   quickSettings: {
     language: "Language",
@@ -1171,6 +1172,8 @@ export const en: TranslationMap = {
       lobsterdexSeen: "{seen}/{total} visited",
       lobsterdexFirstVisited: "{name} · first visited {date}",
       lobsterdexCardFirstVisited: "First visited {date}",
+      lobsterdexCardShinySeen: "✦ Shiny spotted {date}",
+      lobsterdexCardCopyLink: "Copy link",
       lobsterdexOpen: "Open Lobsterdex",
     },
     security: {
@@ -1768,7 +1771,7 @@ export const en: TranslationMap = {
     },
   },
   routeTitles: {
-    modelProviders: "Model Providers",
+    modelProviders: "Models",
     notifications: "Notifications",
     advanced: "Advanced",
   },
@@ -1831,7 +1834,7 @@ export const en: TranslationMap = {
     chat: "Gateway chat for quick interventions.",
     dashboards: "Threads that open on their dashboard face.",
     custodian: "System setup and care.",
-    config: "Model defaults and language.",
+    config: "Language and shortcuts to core settings.",
     profile: "Your agent's stats, streaks, and life in the reef.",
     communications: "Messages, talk, and voice settings.",
     appearance: "Theme, UI, and setup wizard settings.",
@@ -1842,9 +1845,9 @@ export const en: TranslationMap = {
     infrastructure: "Gateway, browser, node host, discovery, and ACP settings.",
     labs: "Experimental agent and tool capabilities.",
     about: "Control UI and connected Gateway build identity.",
-    aiAgents: "Global agent defaults: models, skills, tools, memory, session.",
+    aiAgents: "Global agent defaults: skills, tools, and session.",
     modelSetup: "Connect a verified AI model",
-    modelProviders: "Configured providers with plan, quota, and cost.",
+    modelProviders: "Default models, behavior, provider access, usage, and cost.",
     memoryImport: "Bring Codex and Claude Code memory into an agent workspace.",
     notifications: "Browser push notifications from your gateway.",
     security: "Gateway auth, exec policy, tool profile, and approvals.",
@@ -2031,6 +2034,14 @@ export const en: TranslationMap = {
     sessionRestarted:
       "{error} OpenClaw started a fresh session; earlier messages remain for context.",
     unsupportedGateway: "Update the Gateway to continue setup with OpenClaw.",
+    panel: {
+      title: "OpenClaw",
+      toggle: "Ask OpenClaw",
+      close: "Close Ask OpenClaw",
+      resize: "Resize Ask OpenClaw",
+      dockBottom: "Dock Ask OpenClaw at bottom",
+      dockRight: "Dock Ask OpenClaw at right",
+    },
     history: {
       button: "History",
       title: "Recent changes",
@@ -4306,6 +4317,12 @@ export const en: TranslationMap = {
       reply: "Reply",
       replyToMessage: "Reply to message",
       replyingTo: "Replying to {name}",
+      message: "message",
+      currentMessage: "current message",
+      actions: "Message actions",
+      selectionActions: "Selection actions",
+      moreDetails: "More details",
+      askInSideChat: "Ask in side chat",
       rewind: "Rewind",
       rewindConfirm: "Rewind to before this message?",
       rewindToHere: "Rewind to here",
@@ -4429,7 +4446,17 @@ export const en: TranslationMap = {
       runDone: "Done",
       runInterrupted: "Interrupted",
       runStatus: "Run status: {status}",
+      compactingContext: "Compacting context...",
+      contextCompacted: "Context compacted",
+      fallbackActive: "Fallback active: {model}",
+      fallbackCleared: "Fallback cleared: {model}",
+      fallbackSelected: "Selected: {model}",
+      fallbackCurrent: "Active: {model}",
+      fallbackPrevious: "Previous fallback: {model}",
+      fallbackReason: "Reason: {reason}",
+      fallbackAttempts: "Attempts: {attempts}",
       cancelReply: "Cancel reply",
+      attachmentPreview: "Attachment preview",
       compactRecommendedContext: "Compact recommended thread context",
       removeAttachment: "Remove attachment",
       addAttachment: "Add attachment",
@@ -4706,6 +4733,7 @@ export const en: TranslationMap = {
     ru: "Русский (Russian)",
   },
   cron: {
+    adminRequired: "Browsing only. Automation changes require operator.admin access.",
     tabs: {
       filterLabel: "Automation status",
       all: "All",

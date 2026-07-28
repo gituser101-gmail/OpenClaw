@@ -1,12 +1,11 @@
-// Shared tab strip for the Plugins hub: the plugins, skills, and skill-workshop
-// routes render it under one "Plugins" header so the three surfaces read as tabs
-// of a single page even though each tab keeps its own route and loader.
+// Shared tab strip for the Plugins hub: plugins, skills, skill workshop, and
+// gated Claws render as one hub while each surface keeps its own route and loader.
 import { html, nothing } from "lit";
 import { ref } from "lit/directives/ref.js";
 import { t } from "../i18n/index.ts";
 import "./web-awesome-tabs.ts";
 
-export type PluginsHubTab = "installed" | "discover" | "skills" | "workshop";
+export type PluginsHubTab = "installed" | "discover" | "skills" | "workshop" | "claws";
 
 const HUB_TABS: readonly PluginsHubTab[] = ["installed", "discover", "skills", "workshop"];
 
@@ -21,6 +20,8 @@ type PluginsHubTabsProps = {
   active: PluginsHubTab;
   /** Installed-plugin count badge; omit on pages without catalog data. */
   installedCount?: number | null;
+  /** Claws stays hidden until the connected Gateway advertises its read methods. */
+  showClaws?: boolean;
   onSelect: (tab: PluginsHubTab) => void;
 };
 
@@ -34,6 +35,8 @@ function hubTabLabel(tab: PluginsHubTab): string {
       return t("tabs.skills");
     case "workshop":
       return t("pluginsPage.workshopTab");
+    case "claws":
+      return t("tabs.claws");
     default:
       return tab satisfies never;
   }
@@ -76,6 +79,7 @@ function reclaimFocus(tab: PluginsHubTab, element: Element | undefined) {
  * deliberately distinct from segmented filter pills, keeping tablist semantics.
  */
 export function renderPluginsHubTabs(props: PluginsHubTabsProps) {
+  const tabs = props.showClaws ? [...HUB_TABS, "claws" as const] : HUB_TABS;
   return html`
     <wa-tab-group
       class="hub-tabs plugins-hub-tabs plugins-tabs"
@@ -86,7 +90,7 @@ export function renderPluginsHubTabs(props: PluginsHubTabsProps) {
       @wa-tab-show=${(event: CustomEvent<{ name: PluginsHubTab }>) =>
         selectHubTab(event.detail.name, props)}
     >
-      ${HUB_TABS.map((tab) => {
+      ${tabs.map((tab) => {
         const selected = props.active === tab;
         const count = tab === "installed" ? (props.installedCount ?? null) : null;
         return html`

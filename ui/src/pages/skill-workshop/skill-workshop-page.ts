@@ -8,6 +8,7 @@ import { loadSettings } from "../../app/settings.ts";
 import { renderPluginsHubTabs } from "../../components/plugins-hub-tabs.ts";
 import "../../components/tooltip.ts";
 import { t } from "../../i18n/index.ts";
+import { isGatewayMethodAdvertised } from "../../lib/gateway-methods.ts";
 import { resolveSessionKey, searchForSession } from "../../lib/sessions/index.ts";
 import { normalizeAgentId } from "../../lib/sessions/session-key.ts";
 import { filterSkillWorkshopProposals } from "../../lib/skill-workshop/index.ts";
@@ -127,6 +128,9 @@ function renderSkillWorkshopPage(
       <div class="plugins-hub-tabs-row">
         ${renderPluginsHubTabs({
           active: "workshop",
+          showClaws:
+            isGatewayMethodAdvertised(context.gateway.snapshot, "claws.status") === true &&
+            isGatewayMethodAdvertised(context.gateway.snapshot, "claws.doctor") === true,
           onSelect: (tab) => selectPluginsHubTab(context, tab),
         })}
       </div>

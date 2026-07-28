@@ -29,6 +29,7 @@ const ALL_ROUTES: RouteId[] = Array.from(
     ...SIDEBAR_NAV_ROUTES,
     "skills",
     "skill-workshop",
+    "claws",
     // Hub tabs and settings subpages route without their own nav entry.
     "worktrees",
     "memory-import",
@@ -82,6 +83,7 @@ describe("navigationIconForRoute", () => {
       Object.fromEntries(ALL_ROUTES.map((routeId) => [routeId, navigationIconForRoute(routeId)])),
     ).toEqual({
       chat: "messageSquare",
+      claws: "bot",
       custodian: "lobster",
       activity: "activity",
       apps: "layoutGrid",
@@ -141,6 +143,7 @@ describe("titleForRoute", () => {
       Object.fromEntries(ALL_ROUTES.map((routeId) => [routeId, titleForRoute(routeId)])),
     ).toEqual({
       chat: "Chat",
+      claws: "Claws",
       custodian: "OpenClaw",
       activity: "Activity",
       apps: "Apps",
@@ -186,6 +189,7 @@ describe("subtitleForRoute", () => {
       Object.fromEntries(ALL_ROUTES.map((routeId) => [routeId, subtitleForRoute(routeId)])),
     ).toEqual({
       chat: "Gateway chat for quick interventions.",
+      claws: "Portable agent setups and lifecycle health.",
       custodian: "System setup and care.",
       activity: "Browser-local tool activity summaries.",
       apps: "Companion apps for phone, watch, desktop, and browser.",
@@ -380,9 +384,11 @@ describe("SIDEBAR_NAV_ROUTES", () => {
   it("collapses the plugins hub to a single sidebar entry", () => {
     expect(SIDEBAR_NAV_ROUTES).not.toContain("skills");
     expect(SIDEBAR_NAV_ROUTES).not.toContain("skill-workshop");
+    expect(SIDEBAR_NAV_ROUTES).not.toContain("claws");
     expect(isPluginsHubRoute("plugins")).toBe(true);
     expect(isPluginsHubRoute("skills")).toBe(true);
     expect(isPluginsHubRoute("skill-workshop")).toBe(true);
+    expect(isPluginsHubRoute("claws")).toBe(true);
     expect(isPluginsHubRoute("sessions")).toBe(false);
   });
 

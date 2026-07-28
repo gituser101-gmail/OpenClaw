@@ -27,6 +27,7 @@ import {
   type McpServerSummary,
   type McpServersPatchBuildResult,
 } from "../../lib/config/mcp-servers.ts";
+import { isGatewayMethodAdvertised } from "../../lib/gateway-methods.ts";
 import {
   installPlugin,
   loadPluginCatalog,
@@ -527,6 +528,10 @@ class PluginsPage extends OpenClawLightDomElement {
       );
       return;
     }
+    if (tab === "claws") {
+      this.context.navigate("claws");
+      return;
+    }
     this.context.navigate(tab === "skills" ? "skills" : "skill-workshop");
   }
 
@@ -943,6 +948,9 @@ class PluginsPage extends OpenClawLightDomElement {
           ${renderPluginsHubTabs({
             active: this.activeTab,
             installedCount: this.result?.plugins.filter((plugin) => plugin.installed).length ?? 0,
+            showClaws:
+              isGatewayMethodAdvertised(this.context.gateway.snapshot, "claws.status") === true &&
+              isGatewayMethodAdvertised(this.context.gateway.snapshot, "claws.doctor") === true,
             onSelect: (tab) => this.selectHubTab(tab),
           })}
         </div>

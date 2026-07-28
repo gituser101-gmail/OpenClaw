@@ -59,6 +59,7 @@ export type NameWriteResult = { ok: true; label: string } | { ok: false; error: 
 export async function writeSessionLabel(
   params: HandleCommandsParams,
   title: string,
+  opts?: { expectedSessionId?: string },
 ): Promise<NameWriteResult> {
   if (!params.storePath || !params.sessionKey) {
     return { ok: false, error: "naming is not available for this session" };
@@ -74,6 +75,16 @@ export async function writeSessionLabel(
       const entry = existingEntry ?? (params.sessionEntry ? { ...params.sessionEntry } : undefined);
       if (!entry) {
         return { ok: false, error: "no active session to name" };
+      }
+      // The caller may bind the write to a specific session incarnation (the one a
+      // /new just created). If a concurrent reset rotated the session since, fail
+      // instead of relabeling the replacement session.
+      if (
+        opts?.expectedSessionId !== undefined &&
+        entry.sessionId !== undefined &&
+        entry.sessionId !== opts.expectedSessionId
+      ) {
+        return { ok: false, error: "the session changed before it could be named" };
       }
       const validated = parseSessionLabel(title);
       if (!validated.ok) {

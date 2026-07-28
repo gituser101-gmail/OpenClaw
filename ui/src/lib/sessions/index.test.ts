@@ -599,7 +599,7 @@ describe("createSessionCapability", () => {
     publish(true);
     staleReset.resolve({});
 
-    await expect(reset).resolves.toBe("uncertain");
+    await expect(reset).resolves.toEqual({ outcome: "uncertain" });
     sessions.dispose();
   });
 
@@ -620,8 +620,39 @@ describe("createSessionCapability", () => {
     const { gateway } = createGatewayHarness(client);
     const sessions = createSessionCapability(gateway);
 
-    await expect(sessions.reset("agent:main:main")).resolves.toBe("uncertain");
+    await expect(sessions.reset("agent:main:main")).resolves.toEqual({ outcome: "uncertain" });
     expect(sessions.state.error).toContain("post-commit lifecycle failed");
+    sessions.dispose();
+  });
+
+  it("surfaces the post-reset incarnation identity from the reset response", async () => {
+    // Follow-up mutations (e.g. a /new --name label patch) must be able to bind
+    // to exactly the incarnation the reset produced, so the capability may not
+    // discard the entry identity the gateway reports.
+    const request = vi.fn(async (method: string) => {
+      if (method === "sessions.reset") {
+        return {
+          ok: true,
+          key: "agent:main:main",
+          entry: { sessionId: "post-reset-session", lifecycleRevision: "rev-42", label: "x" },
+        };
+      }
+      if (method === "sessions.subscribe") {
+        return {};
+      }
+      if (method === "sessions.list") {
+        return sessionsResult([], 2);
+      }
+      throw new Error(`Unexpected request: ${method}`);
+    });
+    const client = { request } as unknown as GatewayBrowserClient;
+    const { gateway } = createGatewayHarness(client);
+    const sessions = createSessionCapability(gateway);
+
+    await expect(sessions.reset("agent:main:main")).resolves.toEqual({
+      outcome: "completed",
+      entry: { sessionId: "post-reset-session", lifecycleRevision: "rev-42" },
+    });
     sessions.dispose();
   });
 

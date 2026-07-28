@@ -23,6 +23,7 @@ import {
 } from "../../lib/sessions/session-key.ts";
 import { executeSlashCommand } from "./chat-command-executor.ts";
 import { clearChatHistory } from "./chat-history.ts";
+import type { ChatNewSessionResult } from "./chat-pane-shared.ts";
 import { enqueuePendingRunMessage } from "./chat-queue.ts";
 import { handleAbortChat } from "./run-lifecycle.ts";
 import { scheduleChatScroll } from "./scroll.ts";
@@ -59,7 +60,7 @@ export type ChatCommandHost = Parameters<typeof handleAbortChat>[0] &
     chatModelCatalog: ModelCatalogEntry[];
     sessionsResult?: SessionsListResult | null;
     sessionsResultAgentId?: string | null;
-    createChatSession?: (options?: { label?: string }) => Promise<boolean>;
+    createChatSession?: (options?: { label?: string }) => Promise<ChatNewSessionResult>;
     confirmConversationReset?: () => Promise<boolean>;
     exportCurrentChat?: () => Promise<void> | void;
     refreshCurrentSessionTools?: () => Promise<void>;
@@ -256,9 +257,15 @@ export async function dispatchChatSlashCommand(
         return "failed";
       }
       const label = parseNamedNewCommandTitle(args);
-      return (await host.createChatSession(label ? { label } : undefined))
-        ? "completed"
-        : "cancelled";
+      const created = await host.createChatSession(label ? { label } : undefined);
+      if (created === "consumed-error") {
+        // The reset landed but a follow-up step (e.g. the label patch) failed.
+        // The command is consumed: map to "uncertain" so the composer does not
+        // restore a retryable /new draft that would reset again destructively.
+        // The pane already surfaced the specific error.
+        return "uncertain";
+      }
+      return created === "completed" ? "completed" : "cancelled";
     }
     case "reset": {
       const confirmation = await confirmConversationResetForCurrentSession(host);
@@ -273,7 +280,7 @@ export async function dispatchChatSlashCommand(
       if (confirmation !== "confirmed") {
         return confirmation;
       }
-      return await clearChatHistory(host);
+      return (await clearChatHistory(host)).outcome;
     }
     case "export-session":
       await host.exportCurrentChat?.();

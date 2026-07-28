@@ -15,7 +15,7 @@ import type { ObserverDigestHistory } from "../../lib/observer-digest.ts";
 import type { SessionCapability } from "../../lib/sessions/index.ts";
 import { createStorageMock } from "../../test-helpers/storage.ts";
 import "./chat-pane.ts";
-import type { ResolvedBoardView } from "./chat-pane-shared.ts";
+import type { ChatNewSessionResult, ResolvedBoardView } from "./chat-pane-shared.ts";
 import type { ChatPageHost } from "./chat-state-host.ts";
 import {
   detachPanelToColumn,
@@ -31,7 +31,7 @@ type TestChatPane = HTMLElement & {
   connectionGeneration: number;
   context: ApplicationContext;
   state: ChatPageHost;
-  createSession: (options?: { label?: string }) => Promise<boolean>;
+  createSession: (options?: { label?: string }) => Promise<ChatNewSessionResult>;
   resetConfirmationOpen: boolean;
   routeFace: "chat" | "dashboard";
   onFaceChange?: (face: "chat" | "dashboard") => void;
@@ -267,12 +267,12 @@ describe("chat pane board shell", () => {
     expect(pane.resetConfirmationOpen).toBe(true);
     expect(sessions.create).not.toHaveBeenCalled();
     pane.settleResetConfirmation(false);
-    await expect(pending).resolves.toBe(false);
+    await expect(pending).resolves.toBe("cancelled");
     expect(sessions.create).not.toHaveBeenCalled();
   });
 
   it("resets a board-bearing session in place so its dashboard stays", async () => {
-    const reset = vi.fn(async () => "completed" as const);
+    const reset = vi.fn(async () => ({ outcome: "completed" as const }));
     const sessions = {
       create: vi.fn(async () => "agent:main:new"),
       reset,
@@ -297,13 +297,19 @@ describe("chat pane board shell", () => {
     await Promise.resolve();
     pane.settleResetConfirmation(true);
 
-    await expect(pending).resolves.toBe(true);
+    await expect(pending).resolves.toBe("completed");
     expect(reset).toHaveBeenCalledWith("agent:main:current", {});
     expect(sessions.create).not.toHaveBeenCalled();
   });
 
   it("applies a /new --name label to a board-bearing session reset in place", async () => {
-    const reset = vi.fn(async () => "completed" as const);
+    // The label patch must be bound to the incarnation the reset produced:
+    // without the CAS guards a concurrent second reset could reuse the session
+    // key and the patch would rename that replacement conversation instead.
+    const reset = vi.fn(async () => ({
+      outcome: "completed" as const,
+      entry: { sessionId: "post-reset-session", lifecycleRevision: "rev-7" },
+    }));
     const patch = vi.fn(async () => ({ key: "agent:main:current" }));
     const sessions = {
       create: vi.fn(async () => "agent:main:new"),
@@ -330,18 +336,22 @@ describe("chat pane board shell", () => {
     await Promise.resolve();
     pane.settleResetConfirmation(true);
 
-    await expect(pending).resolves.toBe(true);
+    await expect(pending).resolves.toBe("completed");
     expect(reset).toHaveBeenCalledWith("agent:main:current", {});
     expect(sessions.create).not.toHaveBeenCalled();
     expect(patch).toHaveBeenCalledWith(
       "agent:main:current",
-      { label: "Planning notes" },
+      {
+        label: "Planning notes",
+        expectedSessionId: "post-reset-session",
+        expectedLifecycleRevision: "rev-7",
+      },
       { agentId: "main" },
     );
   });
 
   it("reports partial failure when a board-session label patch does not apply", async () => {
-    const reset = vi.fn(async () => "completed" as const);
+    const reset = vi.fn(async () => ({ outcome: "completed" as const }));
     const patch = vi.fn(async () => null);
     const sessions = {
       create: vi.fn(async () => "agent:main:new"),
@@ -368,17 +378,60 @@ describe("chat pane board shell", () => {
     await Promise.resolve();
     pane.settleResetConfirmation(true);
 
-    await expect(pending).resolves.toBe(false);
+    // The reset landed, so the command is consumed: a retryable outcome would
+    // restore the /new draft and invite a second destructive reset.
+    await expect(pending).resolves.toBe("consumed-error");
     expect(reset).toHaveBeenCalledWith("agent:main:current", {});
     expect(patch).toHaveBeenCalledTimes(1);
     expect(pane.state.chatError).toContain("could not apply the name");
+  });
+
+  it("consumes the reset when the label patch is rejected for a stale incarnation", async () => {
+    // A CAS rejection (the session changed between reset and patch) surfaces as
+    // a thrown RPC error. The reset still landed, so the outcome must be
+    // consumed-error: surfaced, but never retried automatically.
+    const reset = vi.fn(async () => ({
+      outcome: "completed" as const,
+      entry: { sessionId: "post-reset-session", lifecycleRevision: "rev-7" },
+    }));
+    const patch = vi.fn(async () => {
+      throw new Error("Session agent:main:current changed before patch. Retry.");
+    });
+    const sessions = {
+      create: vi.fn(async () => "agent:main:new"),
+      reset,
+      patch,
+    } as unknown as SessionCapability;
+    const pane = createTestPane(sessions);
+    const request = vi.fn(async (method: string) => {
+      if (method === "chat.history") {
+        return { messages: [] };
+      }
+      throw new Error(`unexpected request: ${method}`);
+    });
+    const client = { request } as unknown as GatewayBrowserClient;
+    pane.state.client = client;
+    pane.context = {
+      ...pane.context,
+      gateway: { snapshot: { client, phase: "connected" } },
+    } as unknown as ApplicationContext;
+    pane.connectedClient = client;
+    pane.boardProvider = mockBoardProvider("agent:main:current");
+
+    const pending = pane.createSession({ label: "Planning notes" });
+    await Promise.resolve();
+    pane.settleResetConfirmation(true);
+
+    await expect(pending).resolves.toBe("consumed-error");
+    expect(patch).toHaveBeenCalledTimes(1);
+    expect(pane.state.chatError).toContain("changed before patch");
   });
 
   it("does not patch a label onto a board session when the reset is only uncertain", async () => {
     // An "uncertain" reset may not have landed a fresh incarnation, so patching the
     // requested /new --name label could rename the wrong (stale) conversation. The
     // label patch must be skipped for anything other than a confirmed-completed reset.
-    const reset = vi.fn(async () => "uncertain" as const);
+    const reset = vi.fn(async () => ({ outcome: "uncertain" as const }));
     const patch = vi.fn(async () => ({ key: "agent:main:current" }));
     const sessions = {
       create: vi.fn(async () => "agent:main:new"),
@@ -405,14 +458,14 @@ describe("chat pane board shell", () => {
     await Promise.resolve();
     pane.settleResetConfirmation(true);
 
-    await expect(pending).resolves.toBe(true);
+    await expect(pending).resolves.toBe("completed");
     expect(reset).toHaveBeenCalledWith("agent:main:current", {});
     expect(sessions.create).not.toHaveBeenCalled();
     expect(patch).not.toHaveBeenCalled();
   });
 
   it("does not reset when a run starts during confirmation", async () => {
-    const reset = vi.fn(async () => "completed" as const);
+    const reset = vi.fn(async () => ({ outcome: "completed" as const }));
     const sessions = {
       create: vi.fn(async () => "agent:main:new"),
       reset,
@@ -425,7 +478,7 @@ describe("chat pane board shell", () => {
     pane.state.chatRunId = "run-started-during-confirmation";
     pane.settleResetConfirmation(true);
 
-    await expect(pending).resolves.toBe(false);
+    await expect(pending).resolves.toBe("cancelled");
     expect(reset).not.toHaveBeenCalled();
     expect(sessions.create).not.toHaveBeenCalled();
   });
@@ -433,7 +486,7 @@ describe("chat pane board shell", () => {
   it("cancels New Chat when the selected session changes during confirmation", async () => {
     const sessions = {
       create: vi.fn(async () => "agent:main:new"),
-      reset: vi.fn(async () => "completed" as const),
+      reset: vi.fn(async () => ({ outcome: "completed" as const })),
     } as unknown as SessionCapability;
     const pane = createTestPane(sessions);
     pane.boardProvider = mockBoardProvider("agent:main:current");
@@ -443,7 +496,7 @@ describe("chat pane board shell", () => {
     pane.state.sessionKey = "agent:main:other";
     pane.updated();
 
-    await expect(pending).resolves.toBe(false);
+    await expect(pending).resolves.toBe("cancelled");
     expect(pane.resetConfirmationOpen).toBe(false);
     expect(sessions.create).not.toHaveBeenCalled();
     expect(sessions.reset).not.toHaveBeenCalled();

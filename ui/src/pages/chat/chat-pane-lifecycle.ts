@@ -40,6 +40,7 @@ import {
   NEW_SESSION_CREATE_FAILED_MESSAGE,
   NEW_SESSION_LIST_LOADING_MESSAGE,
   NEW_SESSION_RENAME_FAILED_MESSAGE,
+  type ChatNewSessionResult,
 } from "./chat-pane-shared.ts";
 import { handlePageGatewayEvent } from "./chat-state-events.ts";
 import { createPageState } from "./chat-state-page.ts";
@@ -136,10 +137,12 @@ export abstract class ChatPaneLifecycle extends ChatPaneBoard {
     `;
   }
 
-  protected readonly createSession = async (options?: { label?: string }): Promise<boolean> => {
+  protected readonly createSession = async (options?: {
+    label?: string;
+  }): Promise<ChatNewSessionResult> => {
     const state = this.state;
     if (!state || !state.client || !state.connected) {
-      return false;
+      return "cancelled";
     }
     const context = this.context;
     const sessions = context.sessions;
@@ -162,26 +165,26 @@ export abstract class ChatPaneLifecycle extends ChatPaneBoard {
       state.lastError = NEW_SESSION_ACTIVE_RUN_MESSAGE;
       state.chatError = state.lastError;
       state.requestUpdate?.();
-      return false;
+      return "cancelled";
     }
     if (state.sessionsLoading) {
       state.lastError = NEW_SESSION_LIST_LOADING_MESSAGE;
       state.chatError = state.lastError;
       state.requestUpdate?.();
-      return false;
+      return "cancelled";
     }
     if (
       !(await this.confirmConversationReset()) ||
       !isCurrent() ||
       !areUiSessionKeysEquivalent(state.sessionKey, previousSessionKey)
     ) {
-      return false;
+      return "cancelled";
     }
     if (!canCreateChatSession(state)) {
       state.lastError = NEW_SESSION_ACTIVE_RUN_MESSAGE;
       state.chatError = state.lastError;
       state.requestUpdate?.();
-      return false;
+      return "cancelled";
     }
 
     state.lastError = null;
@@ -193,7 +196,7 @@ export abstract class ChatPaneLifecycle extends ChatPaneBoard {
         areUiSessionKeysEquivalent(row.key, previousSessionKey),
       )?.sessionId;
       const resetResult = await clearChatHistory(state);
-      if (resetResult !== "failed") {
+      if (resetResult.outcome !== "failed") {
         // A reset reuses the session key; prior-run digests must not survive
         // into the fresh conversation or keep injecting the observer card.
         this.observerDigestHistory.markReset(
@@ -209,33 +212,44 @@ export abstract class ChatPaneLifecycle extends ChatPaneBoard {
         // patch on a confirmed-completed reset: an "uncertain" reset may not have
         // landed a fresh incarnation, so patching the label could rename the wrong
         // (stale) conversation.
-        if (options?.label && isCurrent() && resetResult === "completed") {
+        if (options?.label && isCurrent() && resetResult.outcome === "completed") {
           const labelAgentId =
             scopedAgentParamsForSession(state, previousSessionKey).agentId ??
             resolveAgentIdFromSessionKey(previousSessionKey);
-          // The reset already landed, so a failed label patch is a partial failure:
-          // surface it explicitly instead of rejecting the promise or silently
-          // reporting success without the requested name.
+          const resetEntry = resetResult.resetEntry;
+          // The reset already landed, so a failed label patch is a partial
+          // failure: surface it explicitly and consume the command — returning
+          // a retryable outcome would restore the /new draft and invite a
+          // second, destructive reset.
           let labelPatched: Awaited<ReturnType<typeof sessions.patch>> = null;
           try {
             labelPatched = await sessions.patch(
               previousSessionKey,
-              { label: options.label },
+              {
+                label: options.label,
+                // Bind the rename to the incarnation this reset produced: a
+                // concurrent second reset reuses the same session key, and an
+                // unguarded patch would rename that replacement conversation.
+                ...(resetEntry?.sessionId ? { expectedSessionId: resetEntry.sessionId } : {}),
+                ...(resetEntry?.lifecycleRevision
+                  ? { expectedLifecycleRevision: resetEntry.lifecycleRevision }
+                  : {}),
+              },
               labelAgentId ? { agentId: labelAgentId } : undefined,
             );
           } catch (error: unknown) {
             this.publishHeaderError(error);
-            return false;
+            return "consumed-error";
           }
           if (!labelPatched) {
             state.lastError = NEW_SESSION_RENAME_FAILED_MESSAGE;
             state.chatError = state.lastError;
             state.requestUpdate?.();
-            return false;
+            return "consumed-error";
           }
         }
       }
-      return resetResult !== "failed";
+      return resetResult.outcome !== "failed" ? "completed" : "cancelled";
     }
     const nextSessionKey = await sessions.create({
       currentSessionKey: previousSessionKey,
@@ -245,7 +259,7 @@ export abstract class ChatPaneLifecycle extends ChatPaneBoard {
       ...(options?.label ? { label: options.label } : {}),
     });
     if (!isCurrent()) {
-      return false;
+      return "cancelled";
     }
     if (
       !nextSessionKey ||
@@ -261,11 +275,11 @@ export abstract class ChatPaneLifecycle extends ChatPaneBoard {
         state.chatError = state.lastError;
         state.requestUpdate?.();
       }
-      return false;
+      return "cancelled";
     }
     this.chatState.captureCreatedSessionComposer(nextSessionKey);
     this.onPaneSessionChange?.(this.paneId, nextSessionKey);
-    return true;
+    return "completed";
   };
 
   protected syncActiveBindings() {

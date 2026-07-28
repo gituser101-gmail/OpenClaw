@@ -166,7 +166,22 @@ type SessionResetOptions = {
   agentId?: string | null;
 };
 
-type SessionResetResult = "completed" | "not-started" | "uncertain";
+/** Post-reset session identity for CAS-guarded follow-up mutations. */
+export type SessionResetIdentity = {
+  sessionId?: string;
+  lifecycleRevision?: string;
+};
+
+type SessionResetResult = {
+  outcome: "completed" | "not-started" | "uncertain";
+  /**
+   * Identity of the incarnation this reset produced, when the gateway reported
+   * it. Callers use it to bind follow-up mutations (e.g. a /new --name label
+   * patch) to exactly this incarnation instead of whatever currently owns the
+   * session key.
+   */
+  entry?: SessionResetIdentity;
+};
 
 type SessionGateway = {
   readonly snapshot: {
@@ -458,16 +473,37 @@ function confirmsSessionDeletion(response: SessionDeleteResponse): boolean {
   return response.deleted;
 }
 
+function readSessionResetIdentity(response: unknown): SessionResetIdentity | undefined {
+  if (!response || typeof response !== "object") {
+    return undefined;
+  }
+  const entry = (response as { entry?: unknown }).entry;
+  if (!entry || typeof entry !== "object") {
+    return undefined;
+  }
+  const { sessionId, lifecycleRevision } = entry as {
+    sessionId?: unknown;
+    lifecycleRevision?: unknown;
+  };
+  const identity: SessionResetIdentity = {
+    ...(typeof sessionId === "string" && sessionId.trim() ? { sessionId } : {}),
+    ...(typeof lifecycleRevision === "string" && lifecycleRevision.trim()
+      ? { lifecycleRevision }
+      : {}),
+  };
+  return identity.sessionId || identity.lifecycleRevision ? identity : undefined;
+}
+
 function requestSessionReset(
   client: SessionRequestClient,
   key: string,
   options: SessionResetOptions = {},
-): Promise<void> {
+): Promise<SessionResetIdentity | undefined> {
   return client
     .request("sessions.reset", {
       ...buildSessionRequestParams(key, options.agentId),
     })
-    .then(() => undefined);
+    .then((response) => readSessionResetIdentity(response));
 }
 
 function requestSessionCompact(
@@ -1569,11 +1605,17 @@ export function createSessionCapability(gateway: SessionGateway): SessionCapabil
   ): Promise<SessionResetResult> => {
     const scope = captureConnection();
     if (!scope) {
-      return "not-started";
+      return { outcome: "not-started" };
     }
     try {
-      await requestSessionReset(scope.client, key, options);
-      return isCurrentConnection(scope) ? "completed" : "uncertain";
+      const entry = await requestSessionReset(scope.client, key, options);
+      // Surface the post-reset identity even when the connection was replaced:
+      // the reset itself still committed on the gateway, and callers only act
+      // on the identity after checking the outcome.
+      return {
+        outcome: isCurrentConnection(scope) ? "completed" : "uncertain",
+        ...(entry ? { entry } : {}),
+      };
     } catch (error) {
       if (isCurrentConnection(scope)) {
         publish({ ...state, error: String(error) });
@@ -1582,7 +1624,7 @@ export function createSessionCapability(gateway: SessionGateway): SessionCapabil
       // post-reset lifecycle step finishes. Once requested, even a rejection
       // on the same connection cannot prove that the destructive reset did not
       // commit, so callers must never retry it automatically.
-      return "uncertain";
+      return { outcome: "uncertain" };
     }
   };
 

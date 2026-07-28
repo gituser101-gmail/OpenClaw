@@ -409,12 +409,12 @@ suite.define(() => {
       expect(overflowProof.revoked).toContain(evictedBlobUrl);
       expect(overflowProof.revoked).not.toContain(retainedRecentBlobUrl);
 
-      const evictedPath = new URL(
-        expectDefined(imageUrls[1], "evicted managed image URL"),
+      const evictedPreviewPath = new URL(
+        expectDefined(imageUrls[1], "evicted managed image URL").replace(/\/full$/u, "/thumbnail"),
         suite.server.baseUrl,
       ).pathname;
       const fetchesBeforeRevisit = fetchedMedia.filter(
-        (request) => request.pathname === evictedPath,
+        (request) => request.pathname === evictedPreviewPath,
       ).length;
       await replaceHistory(historyFor([1], "Refetched managed image"), "Refetched managed image 2");
       const revisitedImage = page.getByAltText("Refetched managed image 2");
@@ -428,7 +428,7 @@ suite.define(() => {
       await expect.poll(async () => (await readBlobProof()).created.length).toBe(66);
       const finalProof = await readBlobProof();
       const evictedImageFetches = fetchedMedia.filter(
-        (request) => request.pathname === evictedPath,
+        (request) => request.pathname === evictedPreviewPath,
       ).length;
       expect(evictedImageFetches).toBe(fetchesBeforeRevisit + 1);
       expect(fetchedMedia).not.toHaveLength(0);

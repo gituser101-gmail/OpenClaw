@@ -6,6 +6,10 @@ import { resolveEffectiveToolPolicy } from "../agents/agent-tools.policy.js";
 import type { ExecElevatedDefaults } from "../agents/bash-tools.exec-types.js";
 import { nodeExecSchema } from "../agents/bash-tools.schemas.js";
 import {
+  applyDelegationCapability,
+  type DelegationCapability,
+} from "../agents/delegation-capability.js";
+import {
   resolveExecDefaults,
   type ExecPolicyOverrides,
   type ExecSessionDefaults,
@@ -85,6 +89,12 @@ export function resolveGatewayScopedTools(params: {
   allowGatewaySubagentBinding?: boolean;
   allowMediaInvokeCommands?: boolean;
   surface?: GatewayScopedToolSurface;
+  /**
+   * Attempt-local authority to start or redirect delegated work. Loopback
+   * grants carry it so CLI backends get the same fallback gate as embedded
+   * attempts; unset keeps the full delegation surface.
+   */
+  delegationCapability?: DelegationCapability;
   excludeToolNames?: Iterable<string>;
   /** Server-minted coding tools that must be mediated through the loopback surface. */
   mediatedToolNames?: Iterable<string>;
@@ -490,7 +500,9 @@ export function resolveGatewayScopedTools(params: {
 
   return {
     agentId,
-    tools,
+    // Applied last so the gate sees exactly the authorized surface, matching
+    // the embedded attempt order in createOpenClawCodingToolsInternal.
+    tools: applyDelegationCapability(tools, params.delegationCapability, { surface }),
     workspaceDir,
   };
 }

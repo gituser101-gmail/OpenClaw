@@ -82,16 +82,13 @@ export function repairJson(json: string): string {
       }
 
       // When a valid JSON control escape (\\n, \\r, \\t, etc.) follows a pure
-      // Windows path prefix, it might be a malformed path component rather than
-      // an intentional escape. Only apply the path heuristic when:
-      //   1. The entire prefix is a pure drive-letter path (not mixed content), AND
-      //   2. The character after the escape continues a path segment (alphanumeric).
-      // This prevents double-escaping \\n in code content (like Python scripts)
-      // while preserving \\n in paths like C:\\newfolder or C:\\nFOO.
+      // Windows path prefix, treat it as a malformed path component rather than
+      // an intentional escape. The pure-drive-prefix check already excludes
+      // mixed content like "import sys\\nprint(1)", so no continuation guard
+      // is needed — any \\n after a drive-letter path is a path component.
       if (
         JSON_CONTROL_ESCAPES.has(nextChar) &&
-        looksLikeWindowsPathPrefix(stringValuePrefix) &&
-        looksLikePathContinuation(json.charAt(index + 2))
+        looksLikeWindowsPathPrefix(stringValuePrefix)
       ) {
         repaired += "\\\\";
         stringValuePrefix += "\\";
@@ -125,18 +122,11 @@ export function parseJsonWithRepair(json: string): unknown {
  * Returns true when the entire accumulated prefix is a pure Windows drive-letter
  * path (starts with X:\\ or X:/), so that subsequent \\n / \\r / \\t escapes
  * can be treated as potential path separators rather than intentional escapes.
+ * Mixed content like "import sys\\nC:\\\\path" won't match because the prefix
+ * before the \\n is "import sys", not a drive-letter path.
  */
 function looksLikeWindowsPathPrefix(prefix: string): boolean {
   return /^[A-Za-z]:[\\/]/.test(prefix);
-}
-
-/**
- * Returns true when the character after a control escape looks like it
- * continues a path segment (letter, digit, dash, underscore, or dot).
- * Accepts both upper and lowercase to handle paths like C:\\nFOO.
- */
-function looksLikePathContinuation(after: string): boolean {
-  return /^[a-zA-Z0-9._\-]$/.test(after);
 }
 
 function asStreamingJsonRecord(value: unknown): Record<string, unknown> {

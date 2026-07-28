@@ -1,0 +1,418 @@
+import path from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { useAutoCleanupTempDirTracker } from "../../../test/helpers/temp-dir.js";
+import type { OpenClawConfig } from "../../config/config.js";
+import type {
+  OperationalReplyPendingOnceReservation,
+  SessionEntry,
+} from "../../config/sessions.js";
+import { loadSessionEntry, replaceSessionEntry } from "../../config/sessions/session-accessor.js";
+import {
+  getReplyPayloadMetadata,
+  markOperationalReplyPayloadForSourceSuppressionDelivery,
+  markReplyPayloadForSourceSuppressionDelivery,
+} from "../reply-payload.js";
+import { createCompactionNoticePayload } from "./compaction-notice.js";
+import {
+  applyOperationalReplyPolicy,
+  isOperationalReplyPayload,
+  markOperationalReplyPolicyDelivered,
+} from "./operational-reply-policy.js";
+import {
+  clearOperationalReplyPolicyStateForTest,
+  formatOperationalReplyRedirectTextForTest,
+} from "./operational-reply-policy.test-support.js";
+
+const tempDirs = useAutoCleanupTempDirTracker(afterEach);
+
+async function createSessionStoreFixture(params?: {
+  operationalReplyOnceKeys?: string[];
+  operationalReplyPendingOnceKeys?: OperationalReplyPendingOnceReservation[];
+}) {
+  const root = tempDirs.make("openclaw-operational-reply-policy-");
+  const storePath = path.join(root, "sessions.json");
+  const sessionKey = "agent:main:visiblechat:direct:user";
+  const entry: SessionEntry = {
+    sessionId: "s1",
+    updatedAt: Date.now(),
+    ...(params?.operationalReplyOnceKeys
+      ? { operationalReplyOnceKeys: params.operationalReplyOnceKeys }
+      : {}),
+    ...(params?.operationalReplyPendingOnceKeys
+      ? { operationalReplyPendingOnceKeys: params.operationalReplyPendingOnceKeys }
+      : {}),
+  };
+  await replaceSessionEntry({ sessionKey, storePath }, entry);
+  return { sessionKey, storePath };
+}
+
+async function readSessionStoreEntry(storePath: string, sessionKey: string): Promise<SessionEntry> {
+  const entry = loadSessionEntry({ sessionKey, storePath, readConsistency: "latest" });
+  if (!entry) {
+    throw new Error(`missing session fixture entry: ${sessionKey}`);
+  }
+  return entry;
+}
+
+function onceConfig(storePath?: string): OpenClawConfig {
+  return {
+    ...(storePath ? { session: { store: storePath } } : {}),
+    messages: { operationalReplies: { policy: "once" } },
+  } as OpenClawConfig;
+}
+
+function applyOncePolicy(params: {
+  cfg: OpenClawConfig;
+  sessionKey: string;
+  storePath?: string;
+  text: string;
+}) {
+  return applyOperationalReplyPolicy({
+    cfg: params.cfg,
+    payload: markReplyPayloadForSourceSuppressionDelivery({
+      text: params.text,
+      isError: true,
+    }),
+    explicitCommandTurn: false,
+    sendPolicyDenied: false,
+    sourceSessionKey: params.sessionKey,
+    sourceStorePath: params.storePath,
+    sourceEventKey: "event-1",
+    sourceChannel: "visiblechat",
+  });
+}
+
+function applyMemoryOncePolicy(text: string) {
+  return applyOperationalReplyPolicy({
+    cfg: onceConfig(),
+    payload: markReplyPayloadForSourceSuppressionDelivery({
+      text,
+      isError: true,
+    }),
+    explicitCommandTurn: false,
+    sendPolicyDenied: false,
+    sourceChannel: "visiblechat",
+    sourceEventKey: "event-1",
+  });
+}
+
+describe("operational reply policy", () => {
+  beforeEach(() => {
+    clearOperationalReplyPolicyStateForTest();
+  });
+
+  afterEach(() => {
+    clearOperationalReplyPolicyStateForTest();
+  });
+
+  it("keeps plain error payloads outside host operational policy", async () => {
+    const payload = { text: "provider failed", isError: true };
+
+    expect(isOperationalReplyPayload({ payload, explicitCommandTurn: false })).toBe(false);
+    await expect(
+      applyOperationalReplyPolicy({
+        cfg: { messages: { operationalReplies: { policy: "silent" } } } as OpenClawConfig,
+        payload,
+        explicitCommandTurn: false,
+        sendPolicyDenied: false,
+        sourceEventKey: "event-1",
+      }),
+    ).resolves.toMatchObject({ shouldDeliver: true });
+  });
+
+  it("does not classify a generic source-suppression bypass as operational", async () => {
+    const payload = markReplyPayloadForSourceSuppressionDelivery({
+      text: "ordinary marked assistant reply",
+    });
+
+    expect(isOperationalReplyPayload({ payload, explicitCommandTurn: false })).toBe(false);
+    await expect(
+      applyOperationalReplyPolicy({
+        cfg: { messages: { operationalReplies: { policy: "silent" } } } as OpenClawConfig,
+        payload,
+        explicitCommandTurn: false,
+        sendPolicyDenied: false,
+        sourceEventKey: "event-1",
+      }),
+    ).resolves.toMatchObject({ shouldDeliver: true });
+  });
+
+  it("marks host compaction notices for operational source delivery", () => {
+    const payload = createCompactionNoticePayload({ phase: "start" });
+
+    expect(getReplyPayloadMetadata(payload)).toMatchObject({
+      deliverDespiteSourceReplySuppression: true,
+      operationalNotice: true,
+    });
+  });
+
+  it("silences text-only host operational notices", async () => {
+    const payload = markOperationalReplyPayloadForSourceSuppressionDelivery({
+      text: "usage limit reached",
+    });
+
+    await expect(
+      applyOperationalReplyPolicy({
+        cfg: { messages: { operationalReplies: { policy: "silent" } } } as OpenClawConfig,
+        payload,
+        explicitCommandTurn: false,
+        sendPolicyDenied: false,
+        sourceEventKey: "event-1",
+      }),
+    ).resolves.toMatchObject({ intentionalSilence: true, shouldDeliver: false });
+  });
+
+  it("preserves media references in redirected notices", () => {
+    const text = formatOperationalReplyRedirectTextForTest({
+      payload: {
+        text: "generated evidence",
+        mediaUrl: "https://example.test/one.png",
+        mediaUrls: ["https://example.test/two.png"],
+      },
+      sourceChannel: "telegram",
+      sourceEventKey: "event-1",
+      sourceSessionKey: "agent:main:telegram:direct:user",
+    });
+
+    expect(text).toContain("generated evidence");
+    expect(text).toContain("media: https://example.test/one.png");
+    expect(text).toContain("media: https://example.test/two.png");
+  });
+
+  it("fails redirect before source suppression when no target is available", async () => {
+    await expect(
+      applyOperationalReplyPolicy({
+        cfg: { messages: { operationalReplies: { policy: "redirect" } } } as OpenClawConfig,
+        payload: markOperationalReplyPayloadForSourceSuppressionDelivery({
+          text: "provider failed",
+        }),
+        explicitCommandTurn: false,
+        sendPolicyDenied: false,
+        sourceEventKey: "event-1",
+      }),
+    ).rejects.toThrow("redirectSessionKey is required");
+  });
+
+  it("reserves once keys before delivery and releases failed deliveries", async () => {
+    const { sessionKey, storePath } = await createSessionStoreFixture();
+    const cfg = onceConfig(storePath);
+
+    const first = await applyOncePolicy({
+      cfg,
+      sessionKey,
+      storePath,
+      text: "backend failed",
+    });
+    const duplicateWhilePending = await applyOncePolicy({
+      cfg,
+      sessionKey,
+      storePath,
+      text: "backend failed",
+    });
+
+    expect(first.shouldDeliver).toBe(true);
+    expect(duplicateWhilePending).toMatchObject({
+      pendingDelivery: true,
+      shouldDeliver: false,
+    });
+
+    await markOperationalReplyPolicyDelivered(first, false);
+
+    const retryAfterFailure = await applyOncePolicy({
+      cfg,
+      sessionKey,
+      storePath,
+      text: "backend failed",
+    });
+
+    expect(retryAfterFailure.shouldDeliver).toBe(true);
+
+    await markOperationalReplyPolicyDelivered(retryAfterFailure, true);
+
+    const duplicateAfterSuccess = await applyOncePolicy({
+      cfg,
+      sessionKey,
+      storePath,
+      text: "backend failed",
+    });
+
+    expect(duplicateAfterSuccess.shouldDeliver).toBe(false);
+    expect(duplicateAfterSuccess).toMatchObject({ intentionalSilence: true });
+  });
+
+  it("allows only one concurrent once reservation", async () => {
+    const { sessionKey, storePath } = await createSessionStoreFixture();
+    const cfg = onceConfig(storePath);
+
+    const results = await Promise.all([
+      applyOncePolicy({ cfg, sessionKey, storePath, text: "concurrent notice" }),
+      applyOncePolicy({ cfg, sessionKey, storePath, text: "concurrent notice" }),
+    ]);
+
+    expect(results.filter((result) => result.shouldDeliver)).toHaveLength(1);
+    expect(results).toContainEqual(
+      expect.objectContaining({ pendingDelivery: true, shouldDeliver: false }),
+    );
+    const reserved = results.find((result) => result.shouldDeliver);
+    if (!reserved) {
+      throw new Error("expected one concurrent reservation");
+    }
+    await markOperationalReplyPolicyDelivered(reserved, true);
+  });
+
+  it("retries stale durable pending once reservations after restart", async () => {
+    const { sessionKey, storePath } = await createSessionStoreFixture();
+    const cfg = onceConfig(storePath);
+
+    const first = await applyOncePolicy({
+      cfg,
+      sessionKey,
+      storePath,
+      text: "backend failed after reservation",
+    });
+
+    expect(first.shouldDeliver).toBe(true);
+
+    const pendingEntry = await readSessionStoreEntry(storePath, sessionKey);
+    expect(pendingEntry.operationalReplyOnceKeys).toBeUndefined();
+    expect(pendingEntry.operationalReplyPendingOnceKeys).toEqual([
+      {
+        expiresAt: expect.any(Number),
+        key: expect.any(String),
+        owner: expect.any(String),
+      },
+    ]);
+
+    clearOperationalReplyPolicyStateForTest();
+    await replaceSessionEntry(
+      { sessionKey, storePath },
+      {
+        ...pendingEntry,
+        operationalReplyPendingOnceKeys: pendingEntry.operationalReplyPendingOnceKeys?.map(
+          (reservation) => ({
+            key: reservation.key,
+            owner: reservation.owner,
+            expiresAt: Date.now() - 1,
+          }),
+        ),
+      },
+    );
+
+    const retryAfterRestart = await applyOncePolicy({
+      cfg,
+      sessionKey,
+      storePath,
+      text: "backend failed after reservation",
+    });
+
+    expect(retryAfterRestart.shouldDeliver).toBe(true);
+
+    await markOperationalReplyPolicyDelivered(retryAfterRestart, true);
+
+    const deliveredEntry = await readSessionStoreEntry(storePath, sessionKey);
+    expect(deliveredEntry.operationalReplyPendingOnceKeys).toBeUndefined();
+    expect(deliveredEntry.operationalReplyOnceKeys).toEqual([expect.any(String)]);
+
+    clearOperationalReplyPolicyStateForTest();
+
+    const duplicateAfterDelivery = await applyOncePolicy({
+      cfg,
+      sessionKey,
+      storePath,
+      text: "backend failed after reservation",
+    });
+
+    expect(duplicateAfterDelivery.shouldDeliver).toBe(false);
+  });
+
+  it("keeps an active durable reservation owned by another process", async () => {
+    const { sessionKey, storePath } = await createSessionStoreFixture();
+    const cfg = onceConfig(storePath);
+
+    const first = await applyOncePolicy({
+      cfg,
+      sessionKey,
+      storePath,
+      text: "cross-process notice",
+    });
+    expect(first.shouldDeliver).toBe(true);
+
+    const pendingEntry = await readSessionStoreEntry(storePath, sessionKey);
+    await replaceSessionEntry(
+      { sessionKey, storePath },
+      {
+        ...pendingEntry,
+        operationalReplyPendingOnceKeys: pendingEntry.operationalReplyPendingOnceKeys?.map(
+          (reservation) => ({
+            key: reservation.key,
+            owner: "another-process",
+            expiresAt: reservation.expiresAt,
+          }),
+        ),
+      },
+    );
+    clearOperationalReplyPolicyStateForTest();
+
+    const duplicateFromAnotherProcess = await applyOncePolicy({
+      cfg,
+      sessionKey,
+      storePath,
+      text: "cross-process notice",
+    });
+
+    expect(duplicateFromAnotherProcess.shouldDeliver).toBe(false);
+    expect(duplicateFromAnotherProcess).toMatchObject({ pendingDelivery: true });
+
+    await markOperationalReplyPolicyDelivered(first, true);
+    const retainedEntry = await readSessionStoreEntry(storePath, sessionKey);
+    expect(retainedEntry.operationalReplyOnceKeys).toBeUndefined();
+    expect(retainedEntry.operationalReplyPendingOnceKeys?.[0]?.owner).toBe("another-process");
+  });
+
+  it("bounds durable pending reservations", async () => {
+    const pendingReservations = Array.from({ length: 1023 }, (_, index) => ({
+      key: `pending-${index}`,
+      owner: `owner-${index}`,
+      expiresAt: Date.now() + 60_000,
+    }));
+    const { sessionKey, storePath } = await createSessionStoreFixture({
+      operationalReplyPendingOnceKeys: pendingReservations,
+    });
+
+    const result = await applyOncePolicy({
+      cfg: onceConfig(storePath),
+      sessionKey,
+      storePath,
+      text: "new bounded notice",
+    });
+    expect(result.shouldDeliver).toBe(true);
+
+    const entry = await readSessionStoreEntry(storePath, sessionKey);
+    expect(entry.operationalReplyPendingOnceKeys).toHaveLength(1024);
+
+    clearOperationalReplyPolicyStateForTest();
+    const overflow = await applyOncePolicy({
+      cfg: onceConfig(storePath),
+      sessionKey,
+      storePath,
+      text: "overflow notice",
+    });
+    expect(overflow.shouldDeliver).toBe(false);
+    expect(overflow).toMatchObject({ pendingDelivery: true });
+
+    const boundedEntry = await readSessionStoreEntry(storePath, sessionKey);
+    expect(boundedEntry.operationalReplyPendingOnceKeys).toHaveLength(1024);
+  });
+
+  it("bounds in-memory once keys to the same recent delivered window", async () => {
+    for (let index = 0; index < 1025; index += 1) {
+      const result = await applyMemoryOncePolicy(`memory bounded notice ${index}`);
+      expect(result.shouldDeliver).toBe(true);
+      await markOperationalReplyPolicyDelivered(result, true);
+    }
+
+    const firstAgain = await applyMemoryOncePolicy("memory bounded notice 0");
+
+    expect(firstAgain.shouldDeliver).toBe(true);
+  });
+});

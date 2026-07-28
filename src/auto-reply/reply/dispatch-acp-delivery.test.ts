@@ -298,7 +298,9 @@ describe("createAcpDispatchDeliveryCoordinator", () => {
       },
     });
     const coordinator = createAcpDispatchDeliveryCoordinator({
-      cfg: createAcpTestConfig(),
+      cfg: createAcpTestConfig({
+        messages: { operationalReplies: { policy: "once" } },
+      }),
       ctx: buildTestCtx({
         Provider: "visiblechat",
         Surface: "visiblechat",
@@ -1070,7 +1072,7 @@ describe("createAcpDispatchDeliveryCoordinator", () => {
     await expect(coordinator.resolveAccumulatedDeliveredTranscriptText()).resolves.toBe("");
   });
 
-  it("treats hook-suppressed routed ACP block text as handled", async () => {
+  it("treats hook-suppressed routed ACP block text as not delivered", async () => {
     deliveryMocks.routeReply.mockResolvedValueOnce({
       ok: true,
       suppressed: true,
@@ -1090,12 +1092,15 @@ describe("createAcpDispatchDeliveryCoordinator", () => {
       originatingTo: "channel:thread-1",
     });
 
-    const delivered = await coordinator.deliver("block", { text: "hello" }, { skipTts: true });
+    const notice = { text: "hello", isStatusNotice: true };
+    const delivered = await coordinator.deliver("block", notice, { skipTts: true });
+    const retryDelivered = await coordinator.deliver("block", notice, { skipTts: true });
 
-    expect(delivered).toBe(true);
+    expect(delivered).toBe(false);
+    expect(retryDelivered).toBe(true);
     expect(coordinator.hasDeliveredVisibleText()).toBe(true);
     expect(coordinator.hasFailedVisibleTextDelivery()).toBe(false);
-    expect(coordinator.getRoutedCounts().block).toBe(0);
+    expect(coordinator.getRoutedCounts().block).toBe(1);
     await expect(coordinator.resolveAccumulatedDeliveredTranscriptText()).resolves.toBe("");
   });
 });

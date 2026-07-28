@@ -78,15 +78,16 @@ export async function chooseDispatchRoute(state: PrepareDispatchOperationReadySt
     shouldEmitVerboseProgress,
     shouldRouteToOriginating,
     sourceReplyDeliveryMode,
-    suppressAutomaticSourceDelivery,
     suppressDelivery,
     suppressHookReplyLifecycle,
     suppressHookUserDelivery,
+    suppressUserDeliveryBySourceReplyPolicy,
     traceReplyPhase,
     trackDispatchLifecycleWork,
   } = state;
   const shouldSuppressProgressDelivery = () =>
     sendPolicyDenied ||
+    (suppressHookUserDelivery && !suppressUserDeliveryBySourceReplyPolicy) ||
     (suppressDelivery && !shouldDeliverVerboseProgressDespiteSourceSuppression());
   const shouldSuppressDefaultToolProgressMessages = () => !shouldEmitVerboseProgress();
   const shouldSendVerboseProgressMessages = () => !shouldSuppressDefaultToolProgressMessages();
@@ -116,20 +117,20 @@ export async function chooseDispatchRoute(state: PrepareDispatchOperationReadySt
     params.onSessionMetadataChanges?.(freshChanges);
   };
   const shouldDeliverVerboseProgressDespiteSourceSuppression = () =>
-    suppressAutomaticSourceDelivery &&
+    suppressUserDeliveryBySourceReplyPolicy &&
     sourceReplyDeliveryMode === "message_tool_only" &&
     ctx.InboundEventKind !== "room_event" &&
     !sendPolicyDenied &&
     shouldEmitVerboseProgress() &&
     shouldSendVerboseProgressMessages();
   const shouldDeliverForcedToolProgressDespiteSourceSuppression = () =>
-    suppressAutomaticSourceDelivery &&
+    suppressUserDeliveryBySourceReplyPolicy &&
     sourceReplyDeliveryMode === "message_tool_only" &&
     ctx.InboundEventKind !== "room_event" &&
     !sendPolicyDenied &&
     params.replyOptions?.forceToolResultProgress === true;
   const shouldDeliverFastModeAutoProgressDespiteSourceSuppression = () =>
-    suppressAutomaticSourceDelivery &&
+    suppressUserDeliveryBySourceReplyPolicy &&
     sourceReplyDeliveryMode === "message_tool_only" &&
     ctx.InboundEventKind !== "room_event" &&
     !sendPolicyDenied;
@@ -546,6 +547,7 @@ export async function chooseDispatchRoute(state: PrepareDispatchOperationReadySt
                   ttsChannel: deliveryChannel,
                   suppressUserDelivery: suppressHookUserDelivery,
                   suppressReplyLifecycle: suppressHookReplyLifecycle,
+                  suppressUserDeliveryBySourceReplyPolicy,
                   sourceReplyDeliveryMode,
                   shouldRouteToOriginating,
                   originatingChannel: routeReplyChannel,

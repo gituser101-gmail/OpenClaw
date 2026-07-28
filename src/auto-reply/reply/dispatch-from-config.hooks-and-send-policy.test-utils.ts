@@ -1849,9 +1849,11 @@ describe("sendPolicy deny — suppress delivery, not processing (#53328)", () =>
           sourceReplyDeliveryMode?: unknown;
           suppressReplyLifecycle?: unknown;
           suppressUserDelivery?: unknown;
+          suppressUserDeliveryBySourceReplyPolicy?: unknown;
         }
       | undefined;
     expect(replyDispatchEvent?.suppressUserDelivery).toBe(true);
+    expect(replyDispatchEvent?.suppressUserDeliveryBySourceReplyPolicy).toBe(true);
     expect(replyDispatchEvent?.suppressReplyLifecycle).toBe(false);
     expect(replyDispatchEvent?.sourceReplyDeliveryMode).toBe("message_tool_only");
     expect(replyDispatchEvent?.sendPolicy).toBe("allow");

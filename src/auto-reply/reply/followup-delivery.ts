@@ -1,4 +1,5 @@
 /** Prepares queued follow-up payloads for source-channel delivery. */
+import crypto from "node:crypto";
 import { hasOutboundReplyContent } from "openclaw/plugin-sdk/reply-payload";
 import {
   hasCommittedSourceReplyDeliveryEvidence,
@@ -15,7 +16,9 @@ import { isInternalMessageChannel } from "../../utils/message-channel.js";
 import {
   getReplyPayloadMetadata,
   isReplyPayloadStatusNotice,
+  markOperationalReplyPayloadForSourceSuppressionDelivery,
   markReplyPayloadForSourceSuppressionDelivery,
+  setReplyPayloadMetadata,
 } from "../reply-payload.js";
 import type { ReplyPayload } from "../types.js";
 import { normalizeAssistantFinalDeliveryText } from "./agent-runner-core.js";
@@ -26,9 +29,20 @@ import { appendUsageLine, resolveResponseUsageLine } from "./agent-runner-usage-
 import { resolveFollowupDeliveryPayloads } from "./followup-delivery-payloads.js";
 import type { AdmittedFollowupTurn, FollowupRunnerParams } from "./followup-turn-admission.js";
 import type { InternalGetReplyOptions } from "./get-reply.types.js";
+import {
+  applyOperationalReplyPolicy,
+  isOperationalReplyPayload,
+  markOperationalReplyPolicyDelivered,
+  resolveOperationalReplyPolicy,
+} from "./operational-reply-policy.js";
 import { resolveOriginMessageProvider } from "./origin-routing.js";
 import { warnPrivateMessageToolFinal } from "./private-message-tool-final.js";
-import { enqueueFollowupRun, resolveQueueSettings, type FollowupRun } from "./queue.js";
+import {
+  enqueueFollowupRun,
+  isFollowupRunAborted,
+  resolveQueueSettings,
+  type FollowupRun,
+} from "./queue.js";
 import type { ReplyDispatchKind } from "./reply-dispatcher.types.js";
 import { isRoutableChannel, routeReply } from "./route-reply.js";
 import { resolveSourceReplyVisibilityPolicy } from "./source-reply-delivery-mode.js";
@@ -60,6 +74,45 @@ type FollowupDeliveryDecision =
       resolved: { provider: string; model: string };
     };
 
+function resolveFollowupOperationalReplySourceEventKey(params: {
+  queued: FollowupRun;
+  runId?: string;
+}): string {
+  const sourceMessageKey =
+    params.queued.messageId ?? params.queued.originatingReplyToId ?? params.runId;
+  if (sourceMessageKey) {
+    return sourceMessageKey;
+  }
+  // One queued event may cross progress/final lanes, so its redirect key must
+  // stay stable across lanes but differ from later events in the same session.
+  return crypto
+    .createHash("sha256")
+    .update(
+      JSON.stringify({
+        enqueuedAt: params.queued.enqueuedAt,
+        prompt: params.queued.prompt,
+        sessionId: params.queued.run.sessionId,
+      }),
+    )
+    .digest("hex");
+}
+
+function filterRoomEventOperationalPayloads(params: {
+  payloads: ReplyPayload[];
+  turn: AdmittedFollowupTurn;
+}): ReplyPayload[] {
+  if (params.turn.queued.currentInboundEventKind !== "room_event") {
+    return params.payloads;
+  }
+  const policy = resolveOperationalReplyPolicy(params.turn.config).policy;
+  if (policy !== "redirect" && policy !== "silent") {
+    return [];
+  }
+  return params.payloads.filter((payload) =>
+    isOperationalReplyPayload({ payload, explicitCommandTurn: false }),
+  );
+}
+
 /** Resolves one final queued delivery action without performing transport I/O. */
 export function resolveFollowupDeliveryDecision(params: {
   turn: AdmittedFollowupTurn;
@@ -70,9 +123,6 @@ export function resolveFollowupDeliveryDecision(params: {
   const { turn, execution, accounting, opts } = params;
   if (turn.sendPolicy === "deny") {
     return { kind: "suppress", reason: "send-policy" };
-  }
-  if (turn.queued.currentInboundEventKind === "room_event") {
-    return { kind: "suppress", reason: "room-event" };
   }
   if (
     execution.outcome.kind === "aborted" ||
@@ -109,22 +159,32 @@ export function resolveFollowupDeliveryDecision(params: {
     if (
       sourcePolicy.sourceReplyDeliveryMode === "message_tool_only" &&
       getReplyPayloadMetadata(execution.outcome.payload)?.deliverDespiteSourceReplySuppression !==
-        true
+        true &&
+      !(
+        ["redirect", "silent"].includes(resolveOperationalReplyPolicy(turn.config).policy) &&
+        isOperationalReplyPayload({
+          payload: execution.outcome.payload,
+          explicitCommandTurn: false,
+        })
+      )
     ) {
       return { kind: "suppress", reason: "message-tool-only" };
     }
-    const payloads = resolveFollowupDeliveryPayloads({
-      cfg: turn.config,
-      payloads: [execution.outcome.payload],
-      messageProvider: turn.queued.run.messageProvider,
-      originatingAccountId: turn.queued.originatingAccountId ?? turn.queued.run.agentAccountId,
-      originatingChannel: turn.queued.originatingChannel,
-      originatingChatType: turn.queued.originatingChatType,
-      originatingReplyToMode: turn.queued.originatingReplyToMode,
-      originatingTo: turn.queued.originatingTo,
-      originatingThreadId: turn.queued.originatingThreadId,
-      reasoningPayloadsEnabled: opts?.reasoningPayloadsEnabled === true,
-      commentaryPayloadsEnabled: opts?.commentaryPayloadsEnabled === true,
+    const payloads = filterRoomEventOperationalPayloads({
+      turn,
+      payloads: resolveFollowupDeliveryPayloads({
+        cfg: turn.config,
+        payloads: [execution.outcome.payload],
+        messageProvider: turn.queued.run.messageProvider,
+        originatingAccountId: turn.queued.originatingAccountId ?? turn.queued.run.agentAccountId,
+        originatingChannel: turn.queued.originatingChannel,
+        originatingChatType: turn.queued.originatingChatType,
+        originatingReplyToMode: turn.queued.originatingReplyToMode,
+        originatingTo: turn.queued.originatingTo,
+        originatingThreadId: turn.queued.originatingThreadId,
+        reasoningPayloadsEnabled: opts?.reasoningPayloadsEnabled === true,
+        commentaryPayloadsEnabled: opts?.commentaryPayloadsEnabled === true,
+      }),
     });
     return payloads.length > 0
       ? {
@@ -135,7 +195,10 @@ export function resolveFollowupDeliveryDecision(params: {
       : { kind: "suppress", reason: "silent" };
   }
   if (!accounting) {
-    return { kind: "suppress", reason: "silent" };
+    return {
+      kind: "suppress",
+      reason: turn.queued.currentInboundEventKind === "room_event" ? "room-event" : "silent",
+    };
   }
   const runtimeResolved = {
     provider: accounting.providerUsed,
@@ -164,8 +227,21 @@ export function resolveFollowupDeliveryDecision(params: {
     sentTargets: result.messagingToolSentTargets,
     sentTexts: result.messagingToolSentTexts,
   });
+  if (result.meta?.error?.kind === "hook_block") {
+    payloads = payloads.map((payload) =>
+      setReplyPayloadMetadata(payload, { beforeAgentRunBlocked: true }),
+    );
+  }
+  payloads = filterRoomEventOperationalPayloads({ payloads, turn });
+  if (payloads.length === 0 && turn.queued.currentInboundEventKind === "room_event") {
+    return { kind: "suppress", reason: "room-event" };
+  }
+  const operationalPolicy = resolveOperationalReplyPolicy(turn.config).policy;
   const hasExplicitlyDeliverablePayload = payloads.some(
-    (payload) => getReplyPayloadMetadata(payload)?.deliverDespiteSourceReplySuppression === true,
+    (payload) =>
+      getReplyPayloadMetadata(payload)?.deliverDespiteSourceReplySuppression === true ||
+      ((operationalPolicy === "redirect" || operationalPolicy === "silent") &&
+        isOperationalReplyPayload({ payload, explicitCommandTurn: false })),
   );
   const recovery =
     hasExplicitlyDeliverablePayload || accounting.terminalFailurePayload
@@ -263,7 +339,9 @@ export function resolveFollowupDeliveryDecision(params: {
   if (accounting.compactionNotice) {
     const compactionNotices = resolveFollowupDeliveryPayloads({
       cfg: turn.config,
-      payloads: [accounting.compactionNotice],
+      payloads: [
+        markOperationalReplyPayloadForSourceSuppressionDelivery(accounting.compactionNotice),
+      ],
       messageProvider: turn.queued.run.messageProvider,
       originatingAccountId: turn.queued.originatingAccountId ?? turn.queued.run.agentAccountId,
       originatingChannel: turn.queued.originatingChannel,
@@ -292,7 +370,10 @@ export function resolveFollowupDeliveryDecision(params: {
   }
   if (sourcePolicy.sourceReplyDeliveryMode === "message_tool_only") {
     const explicitlyDeliverable = payloads.filter(
-      (payload) => getReplyPayloadMetadata(payload)?.deliverDespiteSourceReplySuppression === true,
+      (payload) =>
+        getReplyPayloadMetadata(payload)?.deliverDespiteSourceReplySuppression === true ||
+        ((operationalPolicy === "redirect" || operationalPolicy === "silent") &&
+          isOperationalReplyPayload({ payload, explicitCommandTurn: false })),
     );
     return explicitlyDeliverable.length > 0
       ? { kind: "deliver", payloads: explicitlyDeliverable, resolved: runtimeResolved }
@@ -331,20 +412,53 @@ async function sendFollowupPayloads(params: {
   if (payloads.length === 0) {
     return;
   }
-  if (!originRoutable && !defaults.opts?.onBlockReply) {
-    defaultRuntime.error?.(
-      "followup queue: completed with payloads but no origin route or visible dispatcher is available",
-    );
-    return;
-  }
   const typing = createTypingSignaler({
     typing: defaults.typing,
     mode: defaults.typingMode,
     isHeartbeat: defaults.opts?.isHeartbeat === true,
   });
+  const applyFollowupPayloadPolicy = async (payload: ReplyPayload) =>
+    await applyOperationalReplyPolicy({
+      cfg: turn.config,
+      payload,
+      explicitCommandTurn: false,
+      sendPolicyDenied: turn.sendPolicy === "deny",
+      sourceSessionKey:
+        turn.queued.run.runtimePolicySessionKey ??
+        turn.queued.run.sessionKey ??
+        (turn.session.kind === "session" ? turn.session.key : undefined),
+      sourceStorePath: turn.session.kind === "session" ? turn.session.storePath : undefined,
+      sourceEventKey: resolveFollowupOperationalReplySourceEventKey({
+        queued: turn.queued,
+        runId: params.runId,
+      }),
+      sourceChannel: turn.queued.originatingChannel ?? turn.queued.run.messageProvider,
+      sourceConversationKey: JSON.stringify({
+        accountId: turn.queued.originatingAccountId ?? turn.queued.run.agentAccountId,
+        channel: turn.queued.originatingChannel ?? turn.queued.run.messageProvider,
+        threadId: turn.queued.originatingThreadId,
+        to: turn.queued.originatingTo,
+      }),
+      provider: turn.queued.run.messageProvider,
+      surface: turn.queued.originatingChannel,
+      chatType: turn.queued.originatingChatType ?? turn.queued.run.chatType,
+      inboundEventKind: turn.queued.currentInboundEventKind,
+      messageKey: turn.queued.messageId,
+      logPrefix: "followup queue",
+    });
   let crossChannelFailure = false;
   let deliveredCrossChannelOrigin = false;
   for (const payload of payloads) {
+    if (!originRoutable && !defaults.opts?.onBlockReply) {
+      const policyResult = await applyFollowupPayloadPolicy(payload);
+      if (policyResult.shouldDeliver) {
+        await markOperationalReplyPolicyDelivered(policyResult, false);
+        defaultRuntime.error?.(
+          "followup queue: completed with payloads but no origin route or visible dispatcher is available",
+        );
+      }
+      continue;
+    }
     const providerRoute = deliveryPlan.resolveFollowupRoute({
       payload,
       originatingChannel,
@@ -363,62 +477,94 @@ async function sendFollowupPayloads(params: {
           : originRoutable
             ? "origin"
             : "dispatcher";
-    await typing.signalTextDelta(payload.text);
     if (route !== "origin") {
+      await typing.signalTextDelta(payload.text);
+      // The dispatcher applies and settles operational policy for this path.
       await defaults.opts?.onBlockReply?.(payload);
     } else if (isRoutableChannel(originatingChannel) && originatingTo) {
+      const policyResult = await applyFollowupPayloadPolicy(payload);
+      if (!policyResult.shouldDeliver) {
+        continue;
+      }
+      if (isFollowupRunAborted(turn.queued)) {
+        await markOperationalReplyPolicyDelivered(policyResult, false);
+        continue;
+      }
+      let policySettled = false;
+      const settleOperationalPolicy = async (delivered: boolean) => {
+        policySettled = true;
+        await markOperationalReplyPolicyDelivered(policyResult, delivered);
+      };
       const metadata = getReplyPayloadMetadata(payload);
-      const result = await routeReply({
-        payload,
-        channel: originatingChannel,
-        to: originatingTo,
-        sessionKey: turn.queued.run.sessionKey,
-        accountId: turn.queued.originatingAccountId,
-        requesterSenderId: turn.queued.run.senderId,
-        requesterSenderName: turn.queued.run.senderName,
-        requesterSenderUsername: turn.queued.run.senderUsername,
-        requesterSenderE164: turn.queued.run.senderE164,
-        threadId: turn.queued.originatingThreadId,
-        cfg: turn.config,
-        mirror:
-          metadata?.assistantMessageIndex !== undefined ||
-          metadata?.assistantTranscriptOwned === true
-            ? false
-            : params.mirror,
-        replyKind: params.kind,
-        runId: params.runId,
-      });
-      if (!result.ok) {
-        logVerbose(`followup queue: route-reply failed: ${result.error ?? "unknown error"}`);
-        const provider = resolveOriginMessageProvider({
-          provider: turn.queued.run.messageProvider,
+      try {
+        await typing.signalTextDelta(payload.text);
+        const result = await routeReply({
+          payload,
+          channel: originatingChannel,
+          to: originatingTo,
+          sessionKey: turn.queued.run.sessionKey,
+          accountId: turn.queued.originatingAccountId,
+          requesterSenderId: turn.queued.run.senderId,
+          requesterSenderName: turn.queued.run.senderName,
+          requesterSenderUsername: turn.queued.run.senderUsername,
+          requesterSenderE164: turn.queued.run.senderE164,
+          threadId: turn.queued.originatingThreadId,
+          cfg: turn.config,
+          mirror:
+            metadata?.assistantMessageIndex !== undefined ||
+            metadata?.assistantTranscriptOwned === true
+              ? false
+              : params.mirror,
+          replyKind: params.kind,
+          runId: params.runId,
         });
-        const origin = resolveOriginMessageProvider({ originatingChannel });
-        if (origin && origin === provider && defaults.opts?.onBlockReply) {
-          await defaults.opts.onBlockReply(payload);
-        } else if (defaults.opts?.onBlockReply) {
-          crossChannelFailure = true;
-        } else {
-          defaultRuntime.error?.(
-            `followup queue: route-reply failed: ${result.error ?? "unknown error"}`,
-          );
+        if (!result.ok) {
+          logVerbose(`followup queue: route-reply failed: ${result.error ?? "unknown error"}`);
+          const provider = resolveOriginMessageProvider({
+            provider: turn.queued.run.messageProvider,
+          });
+          const origin = resolveOriginMessageProvider({ originatingChannel });
+          if (origin && origin === provider && defaults.opts?.onBlockReply) {
+            await settleOperationalPolicy(false);
+            // Release any `once` reservation before the dispatcher applies policy.
+            await defaults.opts.onBlockReply(payload);
+          } else {
+            crossChannelFailure = true;
+            if (!defaults.opts?.onBlockReply) {
+              defaultRuntime.error?.(
+                `followup queue: route-reply failed: ${result.error ?? "unknown error"}`,
+              );
+            }
+          }
+        } else if (!result.suppressed) {
+          await settleOperationalPolicy(true);
+          const provider = resolveOriginMessageProvider({
+            provider: turn.queued.run.messageProvider,
+          });
+          const origin = resolveOriginMessageProvider({ originatingChannel });
+          deliveredCrossChannelOrigin ||= Boolean(origin && provider && origin !== provider);
         }
-      } else if (!result.suppressed) {
-        const provider = resolveOriginMessageProvider({
-          provider: turn.queued.run.messageProvider,
-        });
-        const origin = resolveOriginMessageProvider({ originatingChannel });
-        deliveredCrossChannelOrigin ||= Boolean(origin && provider && origin !== provider);
+      } finally {
+        if (!policySettled) {
+          await settleOperationalPolicy(false);
+        }
       }
     }
   }
-  if (crossChannelFailure && !deliveredCrossChannelOrigin && defaults.opts?.onBlockReply) {
-    await defaults.opts.onBlockReply({
+  if (crossChannelFailure && !deliveredCrossChannelOrigin) {
+    const routeFailureNotice = markOperationalReplyPayloadForSourceSuppressionDelivery({
       text:
         "Follow-up completed, but OpenClaw could not deliver it to the originating channel. " +
         "The reply content was not forwarded to this channel to avoid cross-channel misdelivery.",
       isError: true,
     });
+    if (defaults.opts?.onBlockReply) {
+      // The dispatcher applies and settles operational policy for this fallback.
+      await defaults.opts.onBlockReply(routeFailureNotice);
+    } else {
+      const policyResult = await applyFollowupPayloadPolicy(routeFailureNotice);
+      await markOperationalReplyPolicyDelivered(policyResult, false);
+    }
   }
 }
 

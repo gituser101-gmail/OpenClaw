@@ -1,6 +1,10 @@
 // Imported by dispatch-from-config.test.ts to keep its mocked suite in one Vitest module graph.
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../../config/config.js";
+import {
+  markReplyPayloadForSourceSuppressionDelivery,
+  setReplyPayloadMetadata,
+} from "../reply-payload.js";
 import type { MsgContext } from "../templating.js";
 import type { GetReplyOptions, ReplyPayload } from "../types.js";
 import {
@@ -22,6 +26,7 @@ import {
   globalBeforeAll0,
   describe0BeforeEach0,
 } from "./dispatch-from-config.test-harness.js";
+import { clearOperationalReplyPolicyStateForTest } from "./operational-reply-policy.test-support.js";
 import { buildTestCtx } from "./test-ctx.js";
 
 beforeAll(globalBeforeAll0);
@@ -508,6 +513,52 @@ describe("dispatchReplyFromConfig", () => {
     expect(dispatcher.sendFinalReply).toHaveBeenCalledTimes(1);
   });
 
+  it("releases once reservations when cancellation lands during tool policy", async () => {
+    clearOperationalReplyPolicyStateForTest();
+    setNoAbort();
+    const cfg = {
+      ...emptyConfig,
+      agents: { defaults: { verboseDefault: "on" } },
+      messages: { operationalReplies: { policy: "once" } },
+    } satisfies OpenClawConfig;
+    const ctx = buildTestCtx({ Provider: "telegram", ChatType: "direct" });
+    const payload = setReplyPayloadMetadata(
+      { text: "host tool status", isStatusNotice: true },
+      { operationalNotice: true },
+    );
+    const abortController = new AbortController();
+    const abortedDispatcher = createDispatcher();
+
+    await dispatchReplyFromConfig({
+      ctx,
+      cfg,
+      dispatcher: abortedDispatcher,
+      replyOptions: { abortSignal: abortController.signal },
+      replyResolver: async (_ctx, opts) => {
+        const delivery = opts?.onToolResult?.(payload);
+        abortController.abort();
+        await delivery;
+        return undefined;
+      },
+    });
+
+    expect(abortedDispatcher.sendToolResult).not.toHaveBeenCalled();
+
+    const retryDispatcher = createDispatcher();
+    await dispatchReplyFromConfig({
+      ctx,
+      cfg,
+      dispatcher: retryDispatcher,
+      replyResolver: async (_ctx, opts) => {
+        await opts?.onToolResult?.(payload);
+        return undefined;
+      },
+    });
+
+    expect(retryDispatcher.sendToolResult).toHaveBeenCalledWith(payload);
+    clearOperationalReplyPolicyStateForTest();
+  });
+
   it("delivers deterministic exec approval tool payloads in groups", async () => {
     setNoAbort();
     const cfg = automaticGroupReplyConfig;
@@ -690,6 +741,303 @@ describe("dispatchReplyFromConfig", () => {
     });
     expect(dispatcher.sendToolResult).toHaveBeenCalledTimes(1);
     expect(dispatcher.sendFinalReply).toHaveBeenCalledWith({ text: "done" });
+  });
+
+  it("keeps missing-final recovery eligible when silent policy hides only progress", async () => {
+    setNoAbort();
+    const cfg = {
+      ...emptyConfig,
+      messages: {
+        operationalReplies: { policy: "silent" },
+      },
+      agents: {
+        defaults: {
+          verboseDefault: "on",
+        },
+      },
+    } satisfies OpenClawConfig;
+    const dispatcher = createDispatcher();
+
+    const result = await dispatchReplyFromConfig({
+      ctx: buildTestCtx({
+        Provider: "telegram",
+        ChatType: "direct",
+      }),
+      cfg,
+      dispatcher,
+      replyResolver: async (_ctx, opts) => {
+        await opts?.onPlanUpdate?.({
+          phase: "update",
+          steps: [{ step: "Inspect code", status: "in_progress" }],
+        });
+        return undefined;
+      },
+    });
+
+    expect(dispatcher.sendToolResult).not.toHaveBeenCalled();
+    expect(dispatcher.sendFinalReply).not.toHaveBeenCalled();
+    expect(result).toMatchObject({
+      queuedFinal: false,
+      noVisibleReplyFallbackEligible: true,
+    });
+  });
+
+  it("keeps unmarked operational block payloads private in message-tool-only mode", async () => {
+    setNoAbort();
+    const dispatcher = createDispatcher();
+
+    await dispatchReplyFromConfig({
+      ctx: buildTestCtx({
+        Provider: "telegram",
+        ChatType: "direct",
+      }),
+      cfg: {
+        ...emptyConfig,
+        messages: { operationalReplies: { policy: "once" } },
+      },
+      dispatcher,
+      replyResolver: async (_ctx, opts) => {
+        await opts?.onBlockReply?.({
+          text: "agent-authored status block",
+          isStatusNotice: true,
+        });
+        return { text: "ordinary final reply" };
+      },
+      replyOptions: {
+        sourceReplyDeliveryMode: "message_tool_only",
+      },
+    });
+
+    expect(dispatcher.sendBlockReply).not.toHaveBeenCalled();
+    expect(dispatcher.sendFinalReply).not.toHaveBeenCalled();
+  });
+
+  it("keeps unmarked operational finals private in message-tool-only mode", async () => {
+    setNoAbort();
+    const dispatcher = createDispatcher();
+
+    await dispatchReplyFromConfig({
+      ctx: buildTestCtx({
+        Provider: "telegram",
+        ChatType: "direct",
+      }),
+      cfg: {
+        ...emptyConfig,
+        messages: { operationalReplies: { policy: "always" } },
+      },
+      dispatcher,
+      replyResolver: async () => ({
+        text: "agent-authored status final",
+        isStatusNotice: true,
+      }),
+      replyOptions: {
+        sourceReplyDeliveryMode: "message_tool_only",
+      },
+    });
+
+    expect(dispatcher.sendFinalReply).not.toHaveBeenCalled();
+  });
+
+  it("keeps parent-owned operational replies private before redirect policy", async () => {
+    setNoAbort();
+    sessionStoreMocks.currentEntry = {
+      sessionId: "child-session",
+      updatedAt: Date.now(),
+      spawnedBy: "agent:main:parent",
+      acp: { backend: "acpx" },
+    };
+    const dispatcher = createDispatcher();
+    const blockPayload = setReplyPayloadMetadata(
+      { text: "private child status", isStatusNotice: true },
+      { operationalNotice: true },
+    );
+    const finalPayload = setReplyPayloadMetadata(
+      { text: "private child failure", isError: true },
+      { operationalNotice: true },
+    );
+    const toolPayload = setReplyPayloadMetadata(
+      { text: "private child tool status", isStatusNotice: true },
+      { operationalNotice: true },
+    );
+
+    await expect(
+      dispatchReplyFromConfig({
+        ctx: buildTestCtx({
+          Provider: "telegram",
+          ChatType: "direct",
+          SessionKey: "agent:main:child",
+        }),
+        cfg: {
+          ...emptyConfig,
+          messages: { operationalReplies: { policy: "redirect" } },
+        },
+        dispatcher,
+        replyResolver: async (_ctx, opts) => {
+          await opts?.onToolResult?.(toolPayload);
+          await opts?.onBlockReply?.(blockPayload);
+          return finalPayload;
+        },
+      }),
+    ).resolves.toMatchObject({ queuedFinal: false });
+
+    expect(dispatcher.sendToolResult).not.toHaveBeenCalled();
+    expect(dispatcher.sendBlockReply).not.toHaveBeenCalled();
+    expect(dispatcher.sendFinalReply).not.toHaveBeenCalled();
+  });
+
+  it("evaluates redirect policy for source-suppressed room-event finals", async () => {
+    setNoAbort();
+    const payload = setReplyPayloadMetadata(
+      { text: "room operational failure", isError: true },
+      { operationalNotice: true },
+    );
+
+    await expect(
+      dispatchReplyFromConfig({
+        ctx: buildTestCtx({
+          Provider: "telegram",
+          ChatType: "group",
+          InboundEventKind: "room_event",
+        }),
+        cfg: {
+          ...emptyConfig,
+          messages: { operationalReplies: { policy: "redirect" } },
+        },
+        dispatcher: createDispatcher(),
+        replyResolver: async () => payload,
+        replyOptions: {
+          sourceReplyDeliveryMode: "message_tool_only",
+        },
+      }),
+    ).rejects.toThrow("redirectSessionKey is required");
+  });
+
+  it("keeps missing-final recovery when policy silence is mixed with a hidden ordinary final", async () => {
+    setNoAbort();
+    const cfg = {
+      ...emptyConfig,
+      messages: {
+        operationalReplies: { policy: "silent" },
+      },
+    } satisfies OpenClawConfig;
+    const dispatcher = createDispatcher();
+
+    const result = await dispatchReplyFromConfig({
+      ctx: buildTestCtx({
+        Provider: "telegram",
+        ChatType: "direct",
+      }),
+      cfg,
+      dispatcher,
+      replyResolver: async () =>
+        [
+          { text: "provider is temporarily unavailable", isStatusNotice: true },
+          { text: "ordinary final reply" },
+        ] satisfies ReplyPayload[],
+      replyOptions: {
+        sourceReplyDeliveryMode: "message_tool_only",
+      },
+    });
+
+    expect(dispatcher.sendFinalReply).not.toHaveBeenCalled();
+    expect(result).toMatchObject({
+      queuedFinal: false,
+      noVisibleReplyFallbackEligible: true,
+    });
+  });
+
+  it("releases once reservations when visible final deduplication skips delivery", async () => {
+    clearOperationalReplyPolicyStateForTest();
+    const cfg = {
+      ...emptyConfig,
+      messages: {
+        operationalReplies: { policy: "once" },
+      },
+    } satisfies OpenClawConfig;
+    const ctx = buildTestCtx({
+      Provider: "telegram",
+      ChatType: "direct",
+    });
+    const firstDispatcher = createDispatcher();
+    const firstPayloads = [
+      setReplyPayloadMetadata({ text: "same visible notice" }, { operationalNotice: true }),
+      setReplyPayloadMetadata(
+        { text: "same visible notice" },
+        { nonTerminalToolErrorWarning: true },
+      ),
+    ] satisfies ReplyPayload[];
+
+    await dispatchReplyFromConfig({
+      ctx,
+      cfg,
+      dispatcher: firstDispatcher,
+      replyResolver: async () => firstPayloads,
+    });
+    expect(firstDispatcher.sendFinalReply).toHaveBeenCalledTimes(1);
+
+    const retryDispatcher = createDispatcher();
+    await dispatchReplyFromConfig({
+      ctx,
+      cfg,
+      dispatcher: retryDispatcher,
+      replyResolver: async () =>
+        setReplyPayloadMetadata(
+          { text: "same visible notice" },
+          { nonTerminalToolErrorWarning: true },
+        ),
+    });
+
+    expect(retryDispatcher.sendFinalReply).toHaveBeenCalledTimes(1);
+    clearOperationalReplyPolicyStateForTest();
+  });
+
+  it("releases once reservations when block preparation fails before dispatch", async () => {
+    clearOperationalReplyPolicyStateForTest();
+    const cfg = {
+      ...emptyConfig,
+      messages: {
+        operationalReplies: { policy: "once" },
+      },
+    } satisfies OpenClawConfig;
+    const ctx = buildTestCtx({
+      Provider: "telegram",
+      ChatType: "direct",
+    });
+    const payload = setReplyPayloadMetadata(
+      { text: "host status block", isStatusNotice: true },
+      { operationalNotice: true },
+    );
+
+    await expect(
+      dispatchReplyFromConfig({
+        ctx,
+        cfg,
+        dispatcher: createDispatcher(),
+        replyResolver: async (_ctx, opts) => {
+          await opts?.onBlockReply?.(payload);
+          return undefined;
+        },
+        replyOptions: {
+          onBlockReplyQueued: () => {
+            throw new Error("preview failed");
+          },
+        },
+      }),
+    ).rejects.toThrow("preview failed");
+
+    const retryDispatcher = createDispatcher();
+    await dispatchReplyFromConfig({
+      ctx,
+      cfg,
+      dispatcher: retryDispatcher,
+      replyResolver: async (_ctx, opts) => {
+        await opts?.onBlockReply?.(payload);
+        return undefined;
+      },
+    });
+
+    expect(retryDispatcher.sendBlockReply).toHaveBeenCalledWith(payload);
+    clearOperationalReplyPolicyStateForTest();
   });
 
   it("sends only one plan status notice per reply run", async () => {
@@ -1163,6 +1511,42 @@ describe("dispatchReplyFromConfig", () => {
     expect(dispatcher.sendFinalReply).not.toHaveBeenCalled();
   });
 
+  it("delivers explicitly marked runtime errors from the tool progress lane", async () => {
+    setNoAbort();
+    sessionStoreMocks.currentEntry = {
+      sessionId: "s1",
+      updatedAt: 0,
+      sendPolicy: "allow",
+      verboseLevel: "on",
+    };
+    const dispatcher = createDispatcher();
+    const runtimeError = markReplyPayloadForSourceSuppressionDelivery({
+      text: "provider failed",
+      isError: true,
+    });
+    const ctx = buildTestCtx({
+      Provider: "telegram",
+      ChatType: "direct",
+      SessionKey: "agent:main:telegram:direct:U1",
+    });
+
+    await dispatchReplyFromConfig({
+      ctx,
+      cfg: emptyConfig,
+      dispatcher,
+      replyResolver: async (_ctx, opts) => {
+        await opts?.onToolResult?.(runtimeError);
+        return { text: "done" } satisfies ReplyPayload;
+      },
+      replyOptions: {
+        sourceReplyDeliveryMode: "message_tool_only",
+      },
+    });
+
+    expect(dispatcher.sendToolResult).toHaveBeenCalledWith(runtimeError);
+    expect(dispatcher.sendFinalReply).not.toHaveBeenCalled();
+  });
+
   it("allows message-tool-only failed tool output in verbose full mode", async () => {
     setNoAbort();
     sessionStoreMocks.currentEntry = {
@@ -1171,7 +1555,10 @@ describe("dispatchReplyFromConfig", () => {
       sendPolicy: "allow",
       verboseLevel: "full",
     };
-    const cfg = emptyConfig;
+    const cfg = {
+      ...emptyConfig,
+      messages: { operationalReplies: { policy: "silent" } },
+    } satisfies OpenClawConfig;
     const dispatcher = createDispatcher();
     const ctx = buildTestCtx({
       Provider: "telegram",

@@ -1,12 +1,20 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { markReplyPayloadForSourceSuppressionDelivery } from "../auto-reply/reply-payload.js";
+import {
+  applyOperationalReplyPolicy,
+  markOperationalReplyPolicyDelivered,
+} from "../auto-reply/reply/operational-reply-policy.js";
+import { clearOperationalReplyPolicyStateForTest } from "../auto-reply/reply/operational-reply-policy.test-support.js";
 import type { OpenClawConfig } from "../config/config.js";
 import { patchSessionEntry } from "../config/sessions/session-accessor.js";
+import * as sessionTranscript from "../config/sessions/transcript.js";
 import { runHeartbeatOnce, type HeartbeatDeps } from "./heartbeat-runner.js";
 import { installHeartbeatRunnerTestRuntime } from "./heartbeat-runner.test-harness.js";
 import {
   type HeartbeatReplySpy,
   readSessionStoreForTest,
   seedMainSessionStore,
+  seedSessionStore,
   withTempHeartbeatSandbox,
 } from "./heartbeat-runner.test-utils.js";
 
@@ -16,6 +24,10 @@ type StoredEntry = Record<string, unknown> | undefined;
 
 describe("runHeartbeatOnce clears stuck pendingFinalDelivery state once delivery is satisfied", () => {
   const TELEGRAM_GROUP = "-1001234567890";
+
+  beforeEach(() => {
+    clearOperationalReplyPolicyStateForTest();
+  });
 
   function createHeartbeatConfig(storePath: string): OpenClawConfig {
     return {
@@ -105,7 +117,11 @@ describe("runHeartbeatOnce clears stuck pendingFinalDelivery state once delivery
       // Substantive reply text forces the post-success store write path
       // (heartbeat-runner.ts:~2120, `if (visibleSendSucceeded && !shouldSkipMain ...)`).
       const replyText = "Heartbeat update: everything is green.";
-      replySpy.mockResolvedValue({ text: replyText });
+      replySpy.mockResolvedValue({
+        text: replyText,
+        replyToId: "stale-parent",
+        replyToCurrent: true,
+      });
       const sendTelegram = vi.fn().mockResolvedValue({ messageId: "m1", toJid: "jid" });
 
       const result = await runHeartbeatOnce({
@@ -115,11 +131,401 @@ describe("runHeartbeatOnce clears stuck pendingFinalDelivery state once delivery
 
       expect(result.status).toBe("ran");
       expect(sendTelegram).toHaveBeenCalledTimes(1);
+      expect(sendTelegram.mock.calls[0]?.[2]).not.toHaveProperty("replyToId");
 
       const entry = await readEntry(storePath, sessionKey);
       expect(entry?.lastHeartbeatText).toBe(replyText);
       expect(typeof entry?.lastHeartbeatSentAt).toBe("number");
       expectPendingFinalDeliveryCleared(entry);
+    });
+  });
+
+  it("clears run-owned pendingFinalDelivery when an operational heartbeat notice is silenced", async () => {
+    await withTempHeartbeatSandbox(async ({ storePath, replySpy }) => {
+      const cfg = {
+        ...createHeartbeatConfig(storePath),
+        messages: {
+          operationalReplies: { policy: "silent" },
+        },
+      } as unknown as OpenClawConfig;
+      const NOW = Date.now();
+      const operationalText = "usage limit reached";
+      const sessionKey = await seedMainSessionStore(storePath, cfg, {
+        lastChannel: "telegram",
+        lastProvider: "telegram",
+        lastTo: TELEGRAM_GROUP,
+        updatedAt: NOW - 60_000,
+        pendingFinalDelivery: true,
+        pendingFinalDeliveryText: operationalText,
+        pendingFinalDeliveryCreatedAt: NOW,
+        pendingFinalDeliveryAttemptCount: 2,
+        pendingFinalDeliveryLastError: "prior-delivery-failure",
+      });
+      await patchEntry(storePath, sessionKey, {
+        pendingFinalDeliveryLastAttemptAt: NOW,
+        pendingFinalDeliveryContext: { channel: "telegram" },
+        pendingFinalDeliveryIntentId: "intent-silenced-operational",
+      });
+
+      replySpy.mockResolvedValue(
+        markReplyPayloadForSourceSuppressionDelivery({ text: operationalText, isError: true }),
+      );
+      const sendTelegram = vi.fn().mockResolvedValue({ messageId: "m1", toJid: "jid" });
+
+      const result = await runHeartbeatOnce({
+        cfg,
+        deps: heartbeatDeps(sendTelegram, replySpy, NOW),
+      });
+
+      expect(result.status).toBe("ran");
+      expect(sendTelegram).not.toHaveBeenCalled();
+
+      const entry = await readEntry(storePath, sessionKey);
+      expect(entry?.lastHeartbeatText).toBeUndefined();
+      expectPendingFinalDeliveryCleared(entry);
+    });
+  });
+
+  it("clears a matching older pending final when its operational retry is silenced", async () => {
+    await withTempHeartbeatSandbox(async ({ storePath, replySpy }) => {
+      const cfg = {
+        ...createHeartbeatConfig(storePath),
+        messages: {
+          operationalReplies: { policy: "silent" },
+        },
+      } as unknown as OpenClawConfig;
+      const NOW = Date.now();
+      const operationalText = "usage limit reached";
+      const sessionKey = await seedMainSessionStore(storePath, cfg, {
+        lastChannel: "telegram",
+        lastProvider: "telegram",
+        lastTo: TELEGRAM_GROUP,
+        updatedAt: NOW - 60_000,
+        pendingFinalDelivery: true,
+        pendingFinalDeliveryText: operationalText,
+        pendingFinalDeliveryCreatedAt: NOW - 30_000,
+        pendingFinalDeliveryAttemptCount: 2,
+        pendingFinalDeliveryLastError: "prior-delivery-failure",
+      });
+      await patchEntry(storePath, sessionKey, {
+        pendingFinalDeliveryIntentId: "intent-older-silenced-operational",
+      });
+
+      replySpy.mockResolvedValue(
+        markReplyPayloadForSourceSuppressionDelivery({ text: operationalText, isError: true }),
+      );
+      const sendTelegram = vi.fn().mockResolvedValue({ messageId: "m1", toJid: "jid" });
+
+      const result = await runHeartbeatOnce({
+        cfg,
+        deps: heartbeatDeps(sendTelegram, replySpy, NOW),
+      });
+
+      expect(result.status).toBe("ran");
+      expect(sendTelegram).not.toHaveBeenCalled();
+      expectPendingFinalDeliveryCleared(await readEntry(storePath, sessionKey));
+    });
+  });
+
+  it("releases operational once reservations when heartbeat send fails", async () => {
+    await withTempHeartbeatSandbox(async ({ storePath, replySpy }) => {
+      const cfg = {
+        ...createHeartbeatConfig(storePath),
+        messages: {
+          operationalReplies: { policy: "once" },
+        },
+      } as unknown as OpenClawConfig;
+      const NOW = Date.now();
+      const sessionKey = await seedMainSessionStore(storePath, cfg, {
+        lastChannel: "telegram",
+        lastProvider: "telegram",
+        lastTo: TELEGRAM_GROUP,
+        updatedAt: NOW - 60_000,
+      });
+      const operationalText = "usage limit reached";
+      replySpy.mockResolvedValue(
+        markReplyPayloadForSourceSuppressionDelivery({ text: operationalText, isError: true }),
+      );
+      const sendTelegram = vi.fn().mockRejectedValue(new Error("telegram send failed"));
+
+      const result = await runHeartbeatOnce({
+        cfg,
+        deps: heartbeatDeps(sendTelegram, replySpy, NOW),
+      });
+
+      expect(result).toMatchObject({ status: "failed", reason: "telegram send failed" });
+      const entry = await readEntry(storePath, sessionKey);
+      expect(entry?.operationalReplyOnceKeys).toBeUndefined();
+      expect(entry?.operationalReplyPendingOnceKeys).toBeUndefined();
+    });
+  });
+
+  it("keeps pending-final state when another once delivery is still in flight", async () => {
+    await withTempHeartbeatSandbox(async ({ storePath, replySpy }) => {
+      const cfg = {
+        ...createHeartbeatConfig(storePath),
+        messages: {
+          operationalReplies: { policy: "once" },
+        },
+      } as unknown as OpenClawConfig;
+      const NOW = Date.now();
+      const operationalText = "usage limit reached";
+      const sessionKey = await seedMainSessionStore(storePath, cfg, {
+        lastChannel: "telegram",
+        lastProvider: "telegram",
+        lastTo: TELEGRAM_GROUP,
+        updatedAt: NOW - 60_000,
+        pendingFinalDelivery: true,
+        pendingFinalDeliveryText: operationalText,
+        pendingFinalDeliveryCreatedAt: NOW,
+        pendingFinalDeliveryAttemptCount: 2,
+      });
+      await patchEntry(storePath, sessionKey, {
+        pendingFinalDeliveryIntentId: "intent-once-pending",
+      });
+      const payload = markReplyPayloadForSourceSuppressionDelivery({
+        text: operationalText,
+        isError: true,
+      });
+      const owner = await applyOperationalReplyPolicy({
+        cfg,
+        payload,
+        explicitCommandTurn: false,
+        sendPolicyDenied: false,
+        sourceSessionKey: sessionKey,
+        sourceStorePath: storePath,
+        sourceEventKey: "owner",
+      });
+      expect(owner.shouldDeliver).toBe(true);
+      replySpy.mockResolvedValue(payload);
+      const sendTelegram = vi.fn();
+
+      const result = await runHeartbeatOnce({
+        cfg,
+        deps: heartbeatDeps(sendTelegram, replySpy, NOW),
+      });
+
+      expect(result.status).toBe("ran");
+      expect(sendTelegram).not.toHaveBeenCalled();
+      const entry = await readEntry(storePath, sessionKey);
+      expect(entry?.pendingFinalDelivery).toBe(true);
+      expect(entry?.pendingFinalDeliveryIntentId).toBe("intent-once-pending");
+      expect(entry?.updatedAt).toBe(NOW - 60_000);
+
+      await markOperationalReplyPolicyDelivered(owner, false);
+    });
+  });
+
+  it("keeps heartbeat pending-final state retryable when redirect fails", async () => {
+    await withTempHeartbeatSandbox(async ({ storePath, replySpy }) => {
+      const cfg = {
+        ...createHeartbeatConfig(storePath),
+        messages: {
+          operationalReplies: { policy: "redirect" },
+        },
+      } as unknown as OpenClawConfig;
+      const NOW = Date.now();
+      const operationalText = "usage limit reached";
+      const sessionKey = await seedMainSessionStore(storePath, cfg, {
+        lastChannel: "telegram",
+        lastProvider: "telegram",
+        lastTo: TELEGRAM_GROUP,
+        updatedAt: NOW - 60_000,
+        pendingFinalDelivery: true,
+        pendingFinalDeliveryText: operationalText,
+        pendingFinalDeliveryCreatedAt: NOW,
+        pendingFinalDeliveryAttemptCount: 1,
+      });
+      await patchEntry(storePath, sessionKey, {
+        pendingFinalDeliveryIntentId: "intent-redirect-retry",
+      });
+      replySpy.mockResolvedValue(
+        markReplyPayloadForSourceSuppressionDelivery({
+          text: operationalText,
+          isError: true,
+        }),
+      );
+      const sendTelegram = vi.fn();
+
+      const result = await runHeartbeatOnce({
+        cfg,
+        deps: heartbeatDeps(sendTelegram, replySpy, NOW),
+      });
+
+      expect(result).toMatchObject({
+        status: "failed",
+        reason: expect.stringContaining("redirectSessionKey is required"),
+      });
+      expect(sendTelegram).not.toHaveBeenCalled();
+      const entry = await readEntry(storePath, sessionKey);
+      expect(entry?.pendingFinalDelivery).toBe(true);
+      expect(entry?.pendingFinalDeliveryIntentId).toBe("intent-redirect-retry");
+      expect(entry?.updatedAt).toBe(NOW - 60_000);
+    });
+  });
+
+  it("deduplicates heartbeat redirects across pending-final retry attempts", async () => {
+    await withTempHeartbeatSandbox(async ({ storePath, replySpy }) => {
+      const appendSpy = vi.spyOn(sessionTranscript, "appendAssistantMessageToSessionTranscript");
+      const redirectSessionKey = "agent:main:ops";
+      const cfg = {
+        ...createHeartbeatConfig(storePath),
+        messages: {
+          operationalReplies: { policy: "redirect", redirectSessionKey },
+        },
+      } as unknown as OpenClawConfig;
+      const NOW = Date.now();
+      const operationalText = "usage limit reached";
+      const sessionKey = await seedMainSessionStore(storePath, cfg, {
+        lastChannel: "telegram",
+        lastProvider: "telegram",
+        lastTo: TELEGRAM_GROUP,
+        updatedAt: NOW - 60_000,
+        pendingFinalDelivery: true,
+        pendingFinalDeliveryText: operationalText,
+        pendingFinalDeliveryCreatedAt: NOW,
+        pendingFinalDeliveryIntentId: "stable-redirect-intent",
+      });
+      await seedSessionStore(storePath, redirectSessionKey, {
+        lastChannel: "telegram",
+        lastProvider: "telegram",
+        lastTo: TELEGRAM_GROUP,
+        sessionId: "ops-session",
+      });
+      replySpy.mockResolvedValue(
+        markReplyPayloadForSourceSuppressionDelivery({
+          text: operationalText,
+          isError: true,
+        }),
+      );
+      const sendTelegram = vi.fn();
+
+      await runHeartbeatOnce({
+        cfg,
+        deps: heartbeatDeps(sendTelegram, replySpy, NOW),
+      });
+
+      await patchEntry(storePath, sessionKey, {
+        updatedAt: NOW - 60_000,
+        pendingFinalDelivery: true,
+        pendingFinalDeliveryText: operationalText,
+        pendingFinalDeliveryCreatedAt: NOW + 1_000,
+        pendingFinalDeliveryIntentId: "stable-redirect-intent",
+      });
+      await runHeartbeatOnce({
+        cfg,
+        deps: heartbeatDeps(sendTelegram, replySpy, NOW + 1_000),
+      });
+
+      const redirectKeys = appendSpy.mock.calls.map(([params]) => params.idempotencyKey);
+      appendSpy.mockRestore();
+      expect(sendTelegram).not.toHaveBeenCalled();
+      expect(redirectKeys).toHaveLength(2);
+      expect(redirectKeys[1]).toBe(redirectKeys[0]);
+    });
+  });
+
+  it("releases operational once reservations when heartbeat channel readiness fails", async () => {
+    await withTempHeartbeatSandbox(async ({ storePath, replySpy }) => {
+      const cfg = {
+        agents: {
+          defaults: {
+            heartbeat: { every: "5m", target: "whatsapp" },
+          },
+        },
+        channels: {
+          whatsapp: {
+            allowFrom: ["*"],
+            heartbeat: { showOk: false },
+          },
+        },
+        session: { store: storePath },
+        messages: {
+          operationalReplies: { policy: "once" },
+        },
+      } as unknown as OpenClawConfig;
+      const NOW = Date.now();
+      const sessionKey = await seedMainSessionStore(storePath, cfg, {
+        lastChannel: "whatsapp",
+        lastProvider: "whatsapp",
+        lastTo: "whatsapp-chat",
+        updatedAt: NOW - 60_000,
+      });
+      replySpy.mockResolvedValue(
+        markReplyPayloadForSourceSuppressionDelivery({
+          text: "usage limit reached",
+          isError: true,
+        }),
+      );
+      const sendWhatsApp = vi.fn();
+
+      const result = await runHeartbeatOnce({
+        cfg,
+        deps: {
+          ...heartbeatDeps(sendWhatsApp, replySpy, NOW),
+          whatsapp: sendWhatsApp,
+          webAuthExists: async () => false,
+        },
+      });
+
+      expect(result).toEqual({ status: "skipped", reason: "whatsapp-not-linked" });
+      expect(sendWhatsApp).not.toHaveBeenCalled();
+      const entry = await readEntry(storePath, sessionKey);
+      expect(entry?.operationalReplyOnceKeys).toBeUndefined();
+      expect(entry?.operationalReplyPendingOnceKeys).toBeUndefined();
+    });
+  });
+
+  it("releases operational once reservations when heartbeat readiness throws", async () => {
+    await withTempHeartbeatSandbox(async ({ storePath, replySpy }) => {
+      const cfg = {
+        agents: {
+          defaults: {
+            heartbeat: { every: "5m", target: "whatsapp" },
+          },
+        },
+        channels: {
+          whatsapp: {
+            allowFrom: ["*"],
+            heartbeat: { showOk: false },
+          },
+        },
+        session: { store: storePath },
+        messages: {
+          operationalReplies: { policy: "once" },
+        },
+      } as unknown as OpenClawConfig;
+      const NOW = Date.now();
+      const sessionKey = await seedMainSessionStore(storePath, cfg, {
+        lastChannel: "whatsapp",
+        lastProvider: "whatsapp",
+        lastTo: "whatsapp-chat",
+        updatedAt: NOW - 60_000,
+      });
+      replySpy.mockResolvedValue(
+        markReplyPayloadForSourceSuppressionDelivery({
+          text: "usage limit reached",
+          isError: true,
+        }),
+      );
+      const sendWhatsApp = vi.fn();
+
+      const result = await runHeartbeatOnce({
+        cfg,
+        deps: {
+          ...heartbeatDeps(sendWhatsApp, replySpy, NOW),
+          whatsapp: sendWhatsApp,
+          webAuthExists: async () => {
+            throw new Error("readiness probe failed");
+          },
+        },
+      });
+
+      expect(result).toMatchObject({ status: "failed", reason: "readiness probe failed" });
+      expect(sendWhatsApp).not.toHaveBeenCalled();
+      const entry = await readEntry(storePath, sessionKey);
+      expect(entry?.operationalReplyOnceKeys).toBeUndefined();
+      expect(entry?.operationalReplyPendingOnceKeys).toBeUndefined();
     });
   });
 

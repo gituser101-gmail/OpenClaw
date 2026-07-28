@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import {
   normalizeLowercaseStringOrEmpty,
   normalizeOptionalString,
@@ -32,7 +33,11 @@ import {
 import { resolveSendPolicy } from "../../sessions/send-policy.js";
 import { resolveSilentReplyPolicyFromPolicies } from "../../shared/silent-reply-policy.js";
 import { sessionDeliveryChannel } from "../../utils/delivery-context.shared.js";
-import type { ReplyPayload } from "../reply-payload.js";
+import {
+  copyReplyPayloadMetadata,
+  markOperationalReplyPayloadForSourceSuppressionDelivery,
+  type ReplyPayload,
+} from "../reply-payload.js";
 import { resolveConversationBindingContextFromMessage } from "./conversation-binding-input.js";
 import { capturePendingConversationTurnReply } from "./conversation-turn-capture.js";
 import {
@@ -49,6 +54,11 @@ import type { PrepareDispatchDeliveryReadyState } from "./dispatch-from-config.p
 import { createInternalHookEvent, triggerInternalHook } from "./dispatch-from-config.runtime.js";
 import type { DispatchFromConfigResult } from "./dispatch-from-config.types.js";
 import { claimInboundDedupe, commitInboundDedupe, releaseInboundDedupe } from "./inbound-dedupe.js";
+import {
+  applyOperationalReplyPolicy as applyOperationalReplyPolicyFromConfig,
+  markOperationalReplyPolicyDelivered,
+  resolveOperationalReplyPolicy,
+} from "./operational-reply-policy.js";
 import { resolveOriginMessageProvider } from "./origin-routing.js";
 import { waitForReplyDispatcherIdle } from "./reply-dispatcher.js";
 import { isDuplicateRestartRecoverySource } from "./restart-recovery-claim.js";
@@ -84,6 +94,7 @@ export async function prepareDispatchOperationContext(state: PrepareDispatchDeli
     releasePreDispatchLifecycleAdmission,
     replyRoute,
     routeReplyChannel,
+    routeReplyThreadId,
     sessionAgentId,
     sessionKey,
     sessionStoreEntry,
@@ -97,10 +108,37 @@ export async function prepareDispatchOperationContext(state: PrepareDispatchDeli
     mode: "additive" | "terminal",
     transcriptOwner?: PluginBindingTranscriptOwner,
   ): Promise<boolean> => {
-    if (suppressAutomaticSourceDelivery) {
+    const noticePayload = markOperationalReplyPayloadForSourceSuppressionDelivery(
+      payload.isError ||
+        payload.isFallbackNotice ||
+        payload.isCompactionNotice ||
+        payload.isStatusNotice
+        ? payload
+        : copyReplyPayloadMetadata(payload, { ...payload, isStatusNotice: true }),
+    );
+    if (
+      sendPolicyDenied ||
+      (suppressHookUserDelivery && !suppressUserDeliveryBySourceReplyPolicy)
+    ) {
       return false;
     }
-    return await deliverBindingPayload(payload, mode, transcriptOwner);
+    const policyResult = await applyDispatchOperationalReplyPolicy(noticePayload);
+    if (!policyResult.shouldDeliver) {
+      return policyResult.redirected === true;
+    }
+    if (ctx.InboundEventKind === "room_event" && suppressAutomaticSourceDelivery) {
+      await markOperationalReplyPolicyDelivered(policyResult, false);
+      return false;
+    }
+    let delivered: boolean;
+    try {
+      delivered = await deliverBindingPayload(noticePayload, mode, transcriptOwner);
+    } catch (error) {
+      await markOperationalReplyPolicyDelivered(policyResult, false);
+      throw error;
+    }
+    await markOperationalReplyPolicyDelivered(policyResult, delivered);
+    return delivered;
   };
 
   // Hook contexts use transport-native ids (for example Slack `U123`), while
@@ -334,6 +372,7 @@ export async function prepareDispatchOperationContext(state: PrepareDispatchDeli
     sendPolicyDenied,
     deliverySuppressionReason,
     suppressHookUserDelivery,
+    suppressUserDeliveryBySourceReplyPolicy,
     suppressHookReplyLifecycle,
   } = sourceReplyPolicy;
   const reasoningPayloadsEnabled = params.replyOptions?.reasoningPayloadsEnabled === true;
@@ -349,6 +388,42 @@ export async function prepareDispatchOperationContext(state: PrepareDispatchDeli
         }
       : result;
   const explicitCommandTurnCtx = isExplicitSourceReplyCommand(ctx, cfg);
+  const operationalReplyPolicy = resolveOperationalReplyPolicy(cfg);
+  const operationalReplySourceSessionKey =
+    acpDispatchSessionKey ?? sessionStoreEntry.sessionKey ?? sessionKey;
+  const operationalReplySourceEventKey =
+    normalizeOptionalString(ctx.MessageSidFull) ??
+    normalizeOptionalString(ctx.MessageSid) ??
+    normalizeOptionalString(ctx.AmbientTranscriptMessageId) ??
+    normalizeOptionalString(ctx.MessageSidLast) ??
+    normalizeOptionalString(ctx.MessageSidFirst) ??
+    params.replyOptions?.runId ??
+    crypto.randomUUID();
+  const applyDispatchOperationalReplyPolicy = async (payload: ReplyPayload) => {
+    return await applyOperationalReplyPolicyFromConfig({
+      cfg,
+      payload,
+      explicitCommandTurn: explicitCommandTurnCtx,
+      sendPolicyDenied,
+      sourceSessionKey: operationalReplySourceSessionKey,
+      sourceStorePath: sessionStoreEntry.storePath,
+      sourceEventKey: operationalReplySourceEventKey,
+      sourceChannel: routeReplyChannel,
+      sourceConversationKey: JSON.stringify({
+        accountId: replyRoute.accountId,
+        channel: routeReplyChannel ?? ctx.Provider ?? ctx.Surface,
+        from: ctx.From,
+        threadId: routeReplyThreadId,
+        to: replyRoute.to ?? ctx.To,
+      }),
+      provider: ctx.Provider,
+      surface: ctx.Surface,
+      chatType,
+      inboundEventKind: ctx.InboundEventKind,
+      messageKey: ctx.MessageSidFull ?? ctx.MessageSid,
+      logPrefix: "dispatch-from-config",
+    });
+  };
   const unauthorizedTextSlashSourceReplyCtx =
     (chatType === "group" || chatType === "channel") && isUnauthorizedTextSlashCommand(ctx);
   const shouldDeliverPluginBindingReply =
@@ -516,8 +591,11 @@ export async function prepareDispatchOperationContext(state: PrepareDispatchDeli
       suppressAutomaticSourceDelivery,
       suppressDelivery,
       sendPolicyDenied,
+      operationalReplyPolicy,
+      applyDispatchOperationalReplyPolicy,
       deliverySuppressionReason,
       suppressHookUserDelivery,
+      suppressUserDeliveryBySourceReplyPolicy,
       suppressHookReplyLifecycle,
       reasoningPayloadsEnabled,
       commentaryPayloadsEnabled,

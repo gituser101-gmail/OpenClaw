@@ -1,7 +1,11 @@
 // Tests follow-up reply delivery and route preservation.
 import { describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../../config/config.js";
-import { getReplyPayloadMetadata, setReplyPayloadMetadata } from "../reply-payload.js";
+import {
+  getReplyPayloadMetadata,
+  markOperationalReplyPayloadForSourceSuppressionDelivery,
+  setReplyPayloadMetadata,
+} from "../reply-payload.js";
 import type { ReplyPayload } from "../types.js";
 import type { AgentTurnExecutionResult } from "./agent-runner-execution.types.js";
 import { resolveFollowupDeliveryPayloads } from "./followup-delivery-payloads.js";
@@ -464,6 +468,35 @@ describe("resolveFollowupDeliveryDecision", () => {
     ).toEqual({ kind: "suppress", reason: "room-event" });
   });
 
+  it("keeps room-event operational notices available to redirect policy", () => {
+    const turn = createTurn({
+      config: {
+        messages: {
+          operationalReplies: {
+            policy: "redirect",
+            redirectSessionKey: "agent:main:operator",
+          },
+        },
+      },
+      queued: {
+        ...createTurn().queued,
+        currentInboundEventKind: "room_event",
+      },
+    });
+    const notice = markOperationalReplyPayloadForSourceSuppressionDelivery({
+      text: "runtime warning",
+      isStatusNotice: true,
+    });
+
+    expect(
+      resolveFollowupDeliveryDecision({
+        turn,
+        execution: createSettledExecution(),
+        accounting: createAccounting([notice]),
+      }),
+    ).toMatchObject({ kind: "deliver", payloads: [{ text: "runtime warning" }] });
+  });
+
   it("honors the admission-time send policy before any final projection", () => {
     expect(
       resolveFollowupDeliveryDecision({
@@ -872,5 +905,34 @@ describe("deliverFollowupDecision", () => {
     expect(deliveryState.runtimeError).toHaveBeenCalledWith(
       expect.stringContaining("route-reply failed: offline"),
     );
+  });
+
+  it("applies redirect policy to route failures without a dispatcher", async () => {
+    deliveryState.routeReply.mockReset();
+    deliveryState.routeReply.mockResolvedValue({ ok: false, error: "offline" });
+    const turn = createTurn({
+      config: {
+        messages: {
+          operationalReplies: {
+            policy: "redirect",
+          },
+        },
+      },
+    });
+    turn.queued.run.messageProvider = "slack";
+
+    await expect(
+      deliverFollowupDecision({
+        decision: { kind: "deliver", payloads: [{ text: "private reply" }] },
+        turn,
+        defaults: {
+          defaultModel: "claude",
+          typingMode: "never",
+          typing: createDefaults(vi.fn(async (_payload: ReplyPayload) => {})).typing,
+        },
+        runId: "run-1",
+        runFollowup: vi.fn(async () => {}),
+      }),
+    ).rejects.toThrow("messages.operationalReplies.redirectSessionKey is required");
   });
 });

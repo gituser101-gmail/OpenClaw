@@ -33,7 +33,10 @@ import { createLazyImportLoader } from "../../shared/lazy-promise.js";
 import { resolveStatusTtsSnapshot } from "../../tts/status-config.js";
 import { resolveConfiguredTtsMode } from "../../tts/tts-config.js";
 import type { SourceReplyDeliveryMode } from "../get-reply-options.types.js";
-import { markReplyPayloadAsTtsSupplement } from "../reply-payload.js";
+import {
+  markOperationalReplyPayloadForSourceSuppressionDelivery,
+  markReplyPayloadAsTtsSupplement,
+} from "../reply-payload.js";
 import type { FinalizedRuntimeMsgContext } from "../templating.js";
 import { createAcpReplyProjector } from "./acp-projector.js";
 import {
@@ -401,6 +404,8 @@ export async function tryDispatchAcpReply(params: {
   ttsChannel?: string;
   suppressUserDelivery?: boolean;
   suppressReplyLifecycle?: boolean;
+  suppressUserDeliveryBySourceReplyPolicy?: boolean;
+  sendPolicy?: "allow" | "deny";
   sourceReplyDeliveryMode?: SourceReplyDeliveryMode;
   shouldRouteToOriginating: boolean;
   originatingChannel?: string;
@@ -461,6 +466,9 @@ export async function tryDispatchAcpReply(params: {
     ttsChannel: params.ttsChannel,
     suppressUserDelivery: params.suppressUserDelivery,
     suppressReplyLifecycle: params.suppressReplyLifecycle,
+    suppressUserDeliveryBySourceReplyPolicy: params.suppressUserDeliveryBySourceReplyPolicy,
+    sourceReplyDeliveryMode: params.sourceReplyDeliveryMode,
+    sendPolicyDenied: params.sendPolicy === "deny",
     shouldRouteToOriginating: params.shouldRouteToOriginating,
     originatingChannel: params.originatingChannel,
     originatingTo: params.originatingTo,
@@ -640,10 +648,13 @@ export async function tryDispatchAcpReply(params: {
         targetSessionKey: canonicalSessionKey,
         error: acpResolution.error,
       });
-      const delivered = await delivery.deliver("final", {
-        text: formatAcpRuntimeErrorText(acpResolution.error),
-        isError: true,
-      });
+      const delivered = await delivery.deliver(
+        "final",
+        markOperationalReplyPayloadForSourceSuppressionDelivery({
+          text: formatAcpRuntimeErrorText(acpResolution.error),
+          isError: true,
+        }),
+      );
       return finishAttempt({
         queuedFinal: delivered,
         outcome: { kind: "error", error: acpResolution.error },
@@ -823,10 +834,13 @@ export async function tryDispatchAcpReply(params: {
     // Snapshot streamed output before delivering the error: delivery accumulates
     // what it sends, so reading after would fold the error text in twice.
     const partialText = delivery.getAccumulatedTranscriptText();
-    const delivered = await delivery.deliver("final", {
-      text: errorText,
-      isError: true,
-    });
+    const delivered = await delivery.deliver(
+      "final",
+      markOperationalReplyPayloadForSourceSuppressionDelivery({
+        text: errorText,
+        isError: true,
+      }),
+    );
     // Record what the channel actually showed. Without this a failed bound turn
     // leaves the ACP transcript empty while the user sees the reply, and the next
     // turn resumes from history that never mentions it. Setup failures before

@@ -5,10 +5,14 @@ import {
 } from "openclaw/plugin-sdk/reply-payload";
 import { copyReplyPayloadMetadata } from "../auto-reply/reply-payload.js";
 import { replaceGenericExternalRunFailureText } from "../auto-reply/reply/agent-runner-failure-copy.js";
+import {
+  applyOperationalReplyPolicy,
+  markOperationalReplyPolicyDelivered,
+} from "../auto-reply/reply/operational-reply-policy.js";
 import { buildRecoverablePendingFinalDeliveryText } from "../auto-reply/reply/pending-final-delivery.js";
 import { sendDurableMessageBatch } from "../channels/message/runtime.js";
 import { markCommitmentsStatus } from "../commitments/store.js";
-import { patchSessionEntry } from "../config/sessions/session-accessor.js";
+import { loadSessionEntry, patchSessionEntry } from "../config/sessions/session-accessor.js";
 import type { SessionEntry } from "../config/sessions/types.js";
 import { formatErrorMessage } from "./errors.js";
 import {
@@ -59,6 +63,20 @@ function heartbeatRunOwnsPendingFinalDelivery(
 ): boolean {
   const createdAt = entry?.pendingFinalDeliveryCreatedAt;
   return typeof createdAt === "number" && createdAt >= runStartedAt;
+}
+
+function resolveHeartbeatOperationalReplySourceEventKey(
+  entry: SessionEntry | undefined,
+  startedAt: number,
+): string {
+  const intentId = normalizeOptionalString(entry?.pendingFinalDeliveryIntentId);
+  if (intentId) {
+    return `pending-final:${intentId}`;
+  }
+  const createdAt = entry?.pendingFinalDeliveryCreatedAt;
+  return typeof createdAt === "number" && Number.isFinite(createdAt)
+    ? `pending-final-created:${createdAt}`
+    : `heartbeat:${startedAt}`;
 }
 
 export function classifyHeartbeatAgentOutcome(params: {
@@ -141,6 +159,7 @@ export function classifyHeartbeatAgentOutcome(params: {
     kind: "delivery",
     normalized,
     deliveredAgentRunFailure,
+    replyPayload,
     mediaUrls:
       heartbeatToolResponse || !replyPayload
         ? []
@@ -342,48 +361,151 @@ export async function finalizeHeartbeatOutcome(params: {
     return { status: "ran", durationMs: Date.now() - startedAt };
   }
 
-  const deliveryAccountId = delivery.accountId;
-  const heartbeatPlugin = resolveHeartbeatChannelPlugin(delivery.channel);
-  if (heartbeatPlugin?.heartbeat?.checkReady) {
-    const readiness = await heartbeatPlugin.heartbeat.checkReady({
+  const mainDeliveryPayload = outcome.replyPayload
+    ? copyReplyPayloadMetadata(outcome.replyPayload, {
+        text: normalized.text,
+        mediaUrls,
+        ...(outcome.replyPayload.isError === true ? { isError: true } : {}),
+        ...(outcome.replyPayload.isStatusNotice === true ? { isStatusNotice: true } : {}),
+        ...(outcome.replyPayload.isFallbackNotice === true ? { isFallbackNotice: true } : {}),
+        ...(outcome.replyPayload.isCompactionNotice === true ? { isCompactionNotice: true } : {}),
+      })
+    : { text: normalized.text, mediaUrls };
+  // The agent run may have created recovery state after heartbeat preparation.
+  // Re-read it so redirect retries reuse one event id instead of the attempt time.
+  const operationalReplySourceEntry = loadSessionEntry({
+    storePath,
+    sessionKey,
+    readConsistency: "latest",
+  });
+  let policyResult: Awaited<ReturnType<typeof applyOperationalReplyPolicy>>;
+  try {
+    policyResult = await applyOperationalReplyPolicy({
       cfg,
-      accountId: deliveryAccountId,
-      deps: params.opts.deps,
+      payload: mainDeliveryPayload,
+      explicitCommandTurn: false,
+      sendPolicyDenied: false,
+      sourceSessionKey: sessionKey,
+      sourceStorePath: storePath,
+      sourceEventKey: resolveHeartbeatOperationalReplySourceEventKey(
+        operationalReplySourceEntry,
+        startedAt,
+      ),
+      sourceChannel: delivery.channel,
+      sourceConversationKey: JSON.stringify({
+        accountId: delivery.accountId,
+        channel: delivery.channel,
+        threadId: delivery.threadId,
+        to: delivery.to,
+      }),
+      provider: params.prepared.hasExecCompletion
+        ? "exec-event"
+        : params.prepared.hasCronEvents
+          ? "cron-event"
+          : "heartbeat",
+      chatType: delivery.chatType,
+      inboundEventKind: "heartbeat",
+      messageKey: params.opts.reason,
+      logPrefix: "heartbeat",
     });
-    if (!readiness.ok) {
+  } catch (error) {
+    // Redirect failures did not visibly deliver the pending heartbeat.
+    // Restore activity so the same pending final remains eligible for retry.
+    await restoreHeartbeatUpdatedAt({ storePath, sessionKey, updatedAt: previousUpdatedAt });
+    throw error;
+  }
+  if (!policyResult.shouldDeliver) {
+    if (policyResult.pendingDelivery) {
+      // Another delivery owns the once lease but has not succeeded yet. Keep
+      // recovery state and wake events so lease release or expiry can retry.
+      await restoreHeartbeatUpdatedAt({ storePath, sessionKey, updatedAt: previousUpdatedAt });
       emitHeartbeatEvent({
         status: "skipped",
-        reason: readiness.reason,
+        reason: "operational-replies-pending",
         preview: truncateHeartbeatPreview(previewText),
         durationMs: Date.now() - startedAt,
         hasMedia: mediaUrls.length > 0,
         channel: delivery.channel,
         accountId: delivery.accountId,
       });
-      log.info("heartbeat: channel not ready", {
-        channel: delivery.channel,
-        reason: readiness.reason,
-      });
-      return { status: "skipped", reason: readiness.reason };
+      return { status: "ran", durationMs: Date.now() - startedAt };
     }
+    await clearHeartbeatPendingFinalDeliveryIfHandled({
+      storePath,
+      sessionKey,
+      startedAt,
+      capturedEntry: operationalReplySourceEntry,
+    });
+    await restoreHeartbeatUpdatedAt({ storePath, sessionKey, updatedAt: previousUpdatedAt });
+    emitHeartbeatEvent({
+      status: "skipped",
+      reason: "operational-replies",
+      preview: truncateHeartbeatPreview(previewText),
+      durationMs: Date.now() - startedAt,
+      hasMedia: mediaUrls.length > 0,
+      channel: delivery.channel,
+      accountId: delivery.accountId,
+    });
+    consumeInspectedSystemEvents(params.wake, params.prepared);
+    return { status: "ran", durationMs: Date.now() - startedAt };
   }
 
-  const send = await sendDurableMessageBatch({
-    cfg,
-    channel: delivery.channel,
-    to: delivery.to,
-    accountId: deliveryAccountId,
-    session: params.outboundSession,
-    identity: params.outboundIdentity,
-    threadId: delivery.threadId,
-    payloads: [{ text: normalized.text, mediaUrls }],
-    deps: params.opts.deps,
-    silent: normalized.silent,
-  });
+  const deliveryAccountId = delivery.accountId;
+  try {
+    const heartbeatPlugin = resolveHeartbeatChannelPlugin(delivery.channel);
+    if (heartbeatPlugin?.heartbeat?.checkReady) {
+      const readiness = await heartbeatPlugin.heartbeat.checkReady({
+        cfg,
+        accountId: deliveryAccountId,
+        deps: params.opts.deps,
+      });
+      if (!readiness.ok) {
+        emitHeartbeatEvent({
+          status: "skipped",
+          reason: readiness.reason,
+          preview: truncateHeartbeatPreview(previewText),
+          durationMs: Date.now() - startedAt,
+          hasMedia: mediaUrls.length > 0,
+          channel: delivery.channel,
+          accountId: delivery.accountId,
+        });
+        log.info("heartbeat: channel not ready", {
+          channel: delivery.channel,
+          reason: readiness.reason,
+        });
+        await markOperationalReplyPolicyDelivered(policyResult, false);
+        return { status: "skipped", reason: readiness.reason };
+      }
+    }
+  } catch (error) {
+    await markOperationalReplyPolicyDelivered(policyResult, false);
+    throw error;
+  }
+
+  let send: Awaited<ReturnType<typeof sendDurableMessageBatch>>;
+  try {
+    send = await sendDurableMessageBatch({
+      cfg,
+      channel: delivery.channel,
+      to: delivery.to,
+      accountId: deliveryAccountId,
+      session: params.outboundSession,
+      identity: params.outboundIdentity,
+      threadId: delivery.threadId,
+      payloads: [mainDeliveryPayload],
+      deps: params.opts.deps,
+      silent: normalized.silent,
+    });
+  } catch (error) {
+    await markOperationalReplyPolicyDelivered(policyResult, false);
+    throw error;
+  }
+  const visibleSendSucceeded = send.status === "sent";
+  const payloadDelivered = send.payloadOutcomes?.[0]?.status === "sent" || visibleSendSucceeded;
+  await markOperationalReplyPolicyDelivered(policyResult, payloadDelivered);
   if (send.status === "failed" || send.status === "partial_failed") {
     throw send.error;
   }
-  const visibleSendSucceeded = send.status === "sent";
   // Suppressed durable sends committed no visible channel message. Keep due
   // commitments and heartbeat dedupe state active so a later heartbeat can retry.
   if (visibleSendSucceeded) {
@@ -424,7 +546,7 @@ export async function finalizeHeartbeatOutcome(params: {
     status: eventStatus,
     to: delivery.to,
     ...(deliveredAgentRunFailure ? { reason: "agent-runner-failure" } : {}),
-    ...(!deliveredAgentRunFailure && !visibleSendSucceeded ? { reason: send.reason } : {}),
+    ...(!deliveredAgentRunFailure && send.status === "suppressed" ? { reason: send.reason } : {}),
     preview: truncateHeartbeatPreview(previewText),
     durationMs: Date.now() - startedAt,
     hasMedia: mediaUrls.length > 0,
@@ -480,4 +602,40 @@ function consumeInspectedSystemEvents(wake: ReadyHeartbeatWake, prepared: Prepar
   if (wake.preflight.shouldInspectPendingEvents && prepared.inspectedSystemEventsToConsume.length) {
     consumeSelectedSystemEventEntries(prepared.sessionKey, prepared.inspectedSystemEventsToConsume);
   }
+}
+
+async function clearHeartbeatPendingFinalDeliveryIfHandled(params: {
+  storePath: string;
+  sessionKey: string;
+  startedAt: number;
+  capturedEntry: SessionEntry | undefined;
+}): Promise<void> {
+  const capturedIntentId = normalizeOptionalString(
+    params.capturedEntry?.pendingFinalDeliveryIntentId,
+  );
+  const capturedCreatedAt = params.capturedEntry?.pendingFinalDeliveryCreatedAt;
+  const capturedText = normalizeOptionalString(params.capturedEntry?.pendingFinalDeliveryText);
+  await patchSessionEntry(
+    { storePath: params.storePath, sessionKey: params.sessionKey },
+    (current) => {
+      if (heartbeatRunOwnsPendingFinalDelivery(current, params.startedAt)) {
+        return CLEARED_PENDING_FINAL_DELIVERY_FIELDS;
+      }
+      // Silent/redirect can satisfy a recovery from an earlier heartbeat.
+      // Match the captured identity so a newer concurrent final survives.
+      const matchesCapturedIntent =
+        capturedIntentId !== undefined &&
+        normalizeOptionalString(current?.pendingFinalDeliveryIntentId) === capturedIntentId;
+      const matchesCapturedFallback =
+        capturedIntentId === undefined &&
+        typeof capturedCreatedAt === "number" &&
+        current?.pendingFinalDeliveryCreatedAt === capturedCreatedAt &&
+        capturedText !== undefined &&
+        normalizeOptionalString(current?.pendingFinalDeliveryText) === capturedText;
+      return matchesCapturedIntent || matchesCapturedFallback
+        ? CLEARED_PENDING_FINAL_DELIVERY_FIELDS
+        : null;
+    },
+    { preserveActivity: true },
+  );
 }

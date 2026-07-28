@@ -1,0 +1,668 @@
+import crypto from "node:crypto";
+import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
+import { hasOutboundReplyContent } from "openclaw/plugin-sdk/reply-payload";
+import { resolveSessionAgentId } from "../../agents/agent-scope.js";
+import { runAgentHarnessBeforeMessageWriteHook } from "../../agents/harness/hook-helpers.js";
+import { resolveStorePath } from "../../config/sessions/paths.js";
+import { patchSessionEntry } from "../../config/sessions/session-accessor.js";
+import { appendAssistantMessageToSessionTranscript } from "../../config/sessions/transcript.js";
+import type {
+  OperationalReplyPendingOnceReservation,
+  SessionEntry,
+} from "../../config/sessions/types.js";
+import type { OpenClawConfig } from "../../config/types.openclaw.js";
+import { logVerbose } from "../../globals.js";
+import { formatErrorMessage } from "../../infra/errors.js";
+import {
+  getReplyPayloadMetadata,
+  isReplyPayloadOperationalNotice,
+  type ReplyPayload,
+} from "../reply-payload.js";
+
+const deliveredOperationalReplyOnceKeys = new Set<string>();
+const pendingOperationalReplyOnceKeys = new Set<string>();
+const MAX_OPERATIONAL_REPLY_ONCE_KEYS = 1024;
+const OPERATIONAL_REPLY_ONCE_LEASE_MS = 5 * 60_000;
+const operationalReplyOnceLeaseOwner = crypto.randomUUID();
+
+type OperationalReplyPolicy = "always" | "once" | "redirect" | "silent";
+
+type OperationalReplyPolicyResult =
+  | { markDelivered?: (delivered: boolean) => Promise<void> | void; shouldDeliver: true }
+  | {
+      intentionalSilence: true;
+      pendingDelivery?: false;
+      redirected?: boolean;
+      shouldDeliver: false;
+    }
+  | {
+      intentionalSilence?: false;
+      pendingDelivery: true;
+      redirected?: false;
+      shouldDeliver: false;
+    };
+
+export async function markOperationalReplyPolicyDelivered(
+  result: OperationalReplyPolicyResult,
+  delivered: boolean,
+): Promise<void> {
+  if (result.shouldDeliver) {
+    await result.markDelivered?.(delivered);
+  }
+}
+
+function clearOperationalReplyPolicyStateForTest(): void {
+  deliveredOperationalReplyOnceKeys.clear();
+  pendingOperationalReplyOnceKeys.clear();
+}
+
+if (process.env.VITEST || process.env.NODE_ENV === "test") {
+  (globalThis as Record<PropertyKey, unknown>)[
+    Symbol.for("openclaw.operationalReplyPolicyTestApi")
+  ] = {
+    clearOperationalReplyPolicyStateForTest,
+    formatOperationalReplyRedirectText,
+  };
+}
+
+export function resolveOperationalReplyPolicy(cfg: OpenClawConfig): {
+  policy: OperationalReplyPolicy;
+  redirectSessionKey?: string;
+} {
+  const operationalReplies = cfg.messages?.operationalReplies;
+  return {
+    policy: operationalReplies?.policy ?? "always",
+    ...(normalizeOptionalString(operationalReplies?.redirectSessionKey)
+      ? { redirectSessionKey: normalizeOptionalString(operationalReplies?.redirectSessionKey) }
+      : {}),
+  };
+}
+
+export function isOperationalReplyPayload(params: {
+  payload: ReplyPayload;
+  explicitCommandTurn: boolean;
+}): boolean {
+  const metadata = getReplyPayloadMetadata(params.payload);
+  if (metadata?.beforeAgentRunBlocked === true) {
+    return false;
+  }
+  if (params.explicitCommandTurn && metadata?.commandReply === true) {
+    return false;
+  }
+  return (
+    metadata?.operationalNotice === true ||
+    (metadata?.deliverDespiteSourceReplySuppression === true &&
+      !metadata.sourceReplyTranscriptMirror &&
+      isReplyPayloadOperationalNotice(params.payload))
+  );
+}
+
+function resolveOperationalReplyKind(payload: ReplyPayload): string {
+  const metadata = getReplyPayloadMetadata(payload);
+  if (payload.isError === true) {
+    return "error";
+  }
+  if (payload.isFallbackNotice === true) {
+    return "fallback";
+  }
+  if (payload.isCompactionNotice === true) {
+    return "compaction";
+  }
+  if (payload.isStatusNotice === true) {
+    return "status";
+  }
+  if (metadata?.nonTerminalToolErrorWarning === true) {
+    return "tool-warning";
+  }
+  if (metadata?.operationalNotice === true) {
+    return "runtime-notice";
+  }
+  return "notice";
+}
+
+function createOperationalReplyOnceKey(params: {
+  payload: ReplyPayload;
+  sessionKey?: string;
+}): string {
+  return crypto
+    .createHash("sha256")
+    .update(
+      JSON.stringify({
+        sessionKey: params.sessionKey ?? "unknown",
+        kind: resolveOperationalReplyKind(params.payload),
+        text: params.payload.text ?? "",
+        mediaUrl: params.payload.mediaUrl ?? "",
+        mediaUrls: params.payload.mediaUrls ?? [],
+      }),
+    )
+    .digest("hex");
+}
+
+function createOperationalReplyRedirectKey(params: {
+  payload: ReplyPayload;
+  sourceConversationKey?: string;
+  sourceEventKey: string;
+  sourceSessionKey?: string;
+}): string {
+  return crypto
+    .createHash("sha256")
+    .update(
+      JSON.stringify({
+        conversationKey: params.sourceConversationKey ?? "unknown",
+        sourceEventKey: params.sourceEventKey,
+        sessionKey: params.sourceSessionKey ?? "unknown",
+        kind: resolveOperationalReplyKind(params.payload),
+        text: params.payload.text ?? "",
+        mediaUrl: params.payload.mediaUrl ?? "",
+        mediaUrls: params.payload.mediaUrls ?? [],
+      }),
+    )
+    .digest("hex");
+}
+
+function reserveOperationalReplyOnceKeyInMemory(key: string): "delivered" | "pending" | "reserved" {
+  if (deliveredOperationalReplyOnceKeys.has(key)) {
+    return "delivered";
+  }
+  if (pendingOperationalReplyOnceKeys.has(key)) {
+    return "pending";
+  }
+  pendingOperationalReplyOnceKeys.add(key);
+  return "reserved";
+}
+
+function releaseOperationalReplyOnceKeyInMemory(key: string): void {
+  pendingOperationalReplyOnceKeys.delete(key);
+}
+
+function markOperationalReplyOnceKeyDeliveredInMemory(key: string): void {
+  pendingOperationalReplyOnceKeys.delete(key);
+  deliveredOperationalReplyOnceKeys.delete(key);
+  deliveredOperationalReplyOnceKeys.add(key);
+  while (deliveredOperationalReplyOnceKeys.size > MAX_OPERATIONAL_REPLY_ONCE_KEYS) {
+    const oldestKey = deliveredOperationalReplyOnceKeys.values().next().value;
+    if (!oldestKey) {
+      return;
+    }
+    deliveredOperationalReplyOnceKeys.delete(oldestKey);
+  }
+}
+
+function normalizeOperationalReplyOnceKeys(
+  value: SessionEntry["operationalReplyOnceKeys"],
+): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.filter((key): key is string => typeof key === "string" && key.trim().length > 0);
+}
+
+function normalizeOperationalReplyPendingOnceReservations(
+  value: SessionEntry["operationalReplyPendingOnceKeys"],
+): OperationalReplyPendingOnceReservation[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.filter(
+    (reservation): reservation is OperationalReplyPendingOnceReservation =>
+      typeof reservation === "object" &&
+      reservation !== null &&
+      typeof reservation.key === "string" &&
+      reservation.key.trim().length > 0 &&
+      typeof reservation.owner === "string" &&
+      reservation.owner.trim().length > 0 &&
+      typeof reservation.expiresAt === "number" &&
+      Number.isFinite(reservation.expiresAt),
+  );
+}
+
+function appendOperationalReplyOnceKey(keys: readonly string[], key: string): string[] {
+  return [...keys, key];
+}
+
+function removeOperationalReplyOnceKey(keys: readonly string[], key: string): string[] {
+  return keys.filter((existingKey) => existingKey !== key);
+}
+
+function boundOperationalReplyOnceKeys(keys: readonly string[]): string[] {
+  return keys.slice(-MAX_OPERATIONAL_REPLY_ONCE_KEYS);
+}
+
+function resolveOperationalReplySourceScope(params: {
+  cfg: OpenClawConfig;
+  sourceSessionKey?: string;
+  sourceStorePath?: string;
+}): { sessionKey: string; storePath: string } | null {
+  const sessionKey = normalizeOptionalString(params.sourceSessionKey);
+  if (!sessionKey) {
+    return null;
+  }
+  const explicitStorePath = normalizeOptionalString(params.sourceStorePath);
+  if (explicitStorePath) {
+    return { sessionKey, storePath: explicitStorePath };
+  }
+  try {
+    const agentId = resolveSessionAgentId({
+      sessionKey,
+      config: params.cfg,
+    });
+    return {
+      sessionKey,
+      storePath: resolveStorePath(params.cfg.session?.store, { agentId }),
+    };
+  } catch (error) {
+    logVerbose(`operational-reply-policy: once scope unavailable: ${formatErrorMessage(error)}`);
+    return null;
+  }
+}
+
+type OperationalReplyOnceReservation = {
+  durableReserved: boolean;
+  key: string;
+  owner: string;
+  scope?: { sessionKey: string; storePath: string };
+};
+
+type OperationalReplyOnceReservationResult =
+  | { status: "delivered" }
+  | { status: "pending" }
+  | { reservation: OperationalReplyOnceReservation; status: "reserved" };
+
+async function reserveOperationalReplyOnceKey(params: {
+  cfg: OpenClawConfig;
+  key: string;
+  sourceSessionKey?: string;
+  sourceStorePath?: string;
+}): Promise<OperationalReplyOnceReservationResult> {
+  // Claim the key before the first await. Concurrent callers in this process
+  // must not both pass the durable-store check and reserve the same notice.
+  const inMemoryStatus = reserveOperationalReplyOnceKeyInMemory(params.key);
+  if (inMemoryStatus !== "reserved") {
+    return { status: inMemoryStatus };
+  }
+  const scope = resolveOperationalReplySourceScope(params);
+  if (!scope) {
+    return {
+      status: "reserved",
+      reservation: {
+        durableReserved: false,
+        key: params.key,
+        owner: operationalReplyOnceLeaseOwner,
+      },
+    };
+  }
+  try {
+    let reserved = false;
+    let observedStatus: "delivered" | "pending" | undefined;
+    await patchSessionEntry(
+      scope,
+      (entry) => {
+        const deliveredKeys = normalizeOperationalReplyOnceKeys(entry.operationalReplyOnceKeys);
+        if (deliveredKeys.includes(params.key)) {
+          observedStatus = "delivered";
+          return null;
+        }
+        const now = Date.now();
+        const activeReservations = normalizeOperationalReplyPendingOnceReservations(
+          entry.operationalReplyPendingOnceKeys,
+        ).filter((reservation) => reservation.expiresAt > now);
+        if (activeReservations.some((reservation) => reservation.key === params.key)) {
+          observedStatus = "pending";
+          return activeReservations.length === entry.operationalReplyPendingOnceKeys?.length
+            ? null
+            : { operationalReplyPendingOnceKeys: activeReservations };
+        }
+        // Owner leases coordinate overlapping gateway processes. Expiry recovers
+        // crashed owners; a full lease set fails closed instead of evicting a live claim.
+        if (activeReservations.length >= MAX_OPERATIONAL_REPLY_ONCE_KEYS) {
+          observedStatus = "pending";
+          return activeReservations.length === entry.operationalReplyPendingOnceKeys?.length
+            ? null
+            : { operationalReplyPendingOnceKeys: activeReservations };
+        }
+        reserved = true;
+        return {
+          operationalReplyPendingOnceKeys: activeReservations.concat({
+            key: params.key,
+            owner: operationalReplyOnceLeaseOwner,
+            expiresAt: now + OPERATIONAL_REPLY_ONCE_LEASE_MS,
+          }),
+        };
+      },
+      { preserveActivity: true },
+    );
+    if (observedStatus) {
+      releaseOperationalReplyOnceKeyInMemory(params.key);
+      return { status: observedStatus };
+    }
+    if (reserved) {
+      return {
+        status: "reserved",
+        reservation: {
+          durableReserved: true,
+          key: params.key,
+          owner: operationalReplyOnceLeaseOwner,
+          scope,
+        },
+      };
+    }
+    return {
+      status: "reserved",
+      reservation: {
+        durableReserved: false,
+        key: params.key,
+        owner: operationalReplyOnceLeaseOwner,
+      },
+    };
+  } catch (error) {
+    logVerbose(`operational-reply-policy: once persistence skipped: ${formatErrorMessage(error)}`);
+    return {
+      status: "reserved",
+      reservation: {
+        durableReserved: false,
+        key: params.key,
+        owner: operationalReplyOnceLeaseOwner,
+      },
+    };
+  }
+}
+
+async function releaseOperationalReplyOnceReservation(
+  reservation: OperationalReplyOnceReservation,
+): Promise<void> {
+  releaseOperationalReplyOnceKeyInMemory(reservation.key);
+  if (!reservation.durableReserved || !reservation.scope) {
+    return;
+  }
+  try {
+    await patchSessionEntry(
+      reservation.scope,
+      (entry) => {
+        const reservations = normalizeOperationalReplyPendingOnceReservations(
+          entry.operationalReplyPendingOnceKeys,
+        );
+        const nextReservations = reservations.filter(
+          (candidate) => candidate.key !== reservation.key || candidate.owner !== reservation.owner,
+        );
+        if (nextReservations.length === reservations.length) {
+          return null;
+        }
+        return {
+          operationalReplyPendingOnceKeys:
+            nextReservations.length > 0 ? nextReservations : undefined,
+        };
+      },
+      { preserveActivity: true },
+    );
+  } catch (error) {
+    logVerbose(
+      `operational-reply-policy: once reservation release skipped: ${formatErrorMessage(error)}`,
+    );
+  }
+}
+
+async function finalizeOperationalReplyOnceReservation(
+  reservation: OperationalReplyOnceReservation,
+): Promise<void> {
+  if (!reservation.durableReserved || !reservation.scope) {
+    markOperationalReplyOnceKeyDeliveredInMemory(reservation.key);
+    return;
+  }
+  try {
+    let finalized = false;
+    await patchSessionEntry(
+      reservation.scope,
+      (entry) => {
+        const deliveredKeys = normalizeOperationalReplyOnceKeys(entry.operationalReplyOnceKeys);
+        const pendingReservations = normalizeOperationalReplyPendingOnceReservations(
+          entry.operationalReplyPendingOnceKeys,
+        );
+        const ownsReservation = pendingReservations.some(
+          (candidate) => candidate.key === reservation.key && candidate.owner === reservation.owner,
+        );
+        if (!ownsReservation) {
+          return null;
+        }
+        finalized = true;
+        const nextDeliveredKeys = boundOperationalReplyOnceKeys(
+          appendOperationalReplyOnceKey(
+            removeOperationalReplyOnceKey(deliveredKeys, reservation.key),
+            reservation.key,
+          ),
+        );
+        const nextPendingReservations = pendingReservations.filter(
+          (candidate) => candidate.key !== reservation.key || candidate.owner !== reservation.owner,
+        );
+        return {
+          operationalReplyOnceKeys: nextDeliveredKeys.length > 0 ? nextDeliveredKeys : undefined,
+          operationalReplyPendingOnceKeys:
+            nextPendingReservations.length > 0 ? nextPendingReservations : undefined,
+        };
+      },
+      { preserveActivity: true },
+    );
+    if (finalized) {
+      markOperationalReplyOnceKeyDeliveredInMemory(reservation.key);
+    } else {
+      releaseOperationalReplyOnceKeyInMemory(reservation.key);
+    }
+  } catch (error) {
+    // Delivery already succeeded. Keep process-local dedupe even when the
+    // durable lease cannot be finalized; the lease will expire for recovery.
+    markOperationalReplyOnceKeyDeliveredInMemory(reservation.key);
+    logVerbose(
+      `operational-reply-policy: once reservation finalization skipped: ${formatErrorMessage(error)}`,
+    );
+  }
+}
+
+function formatOperationalReplyPayloadForLog(reply: ReplyPayload): string {
+  const parts = [
+    reply.text ? `text=${JSON.stringify(reply.text.slice(0, 160))}` : undefined,
+    reply.mediaUrl ? "mediaUrl=true" : undefined,
+    reply.mediaUrls?.length ? `mediaUrls=${reply.mediaUrls.length}` : undefined,
+    reply.isError ? "isError=true" : undefined,
+    reply.isFallbackNotice ? "isFallbackNotice=true" : undefined,
+    reply.isCompactionNotice ? "isCompactionNotice=true" : undefined,
+    reply.isStatusNotice ? "isStatusNotice=true" : undefined,
+  ];
+  return parts.filter((part): part is string => Boolean(part)).join(" ");
+}
+
+function formatOperationalReplyRedirectText(params: {
+  payload: ReplyPayload;
+  sourceChannel?: string;
+  sourceEventKey?: string;
+  sourceSessionKey?: string;
+}): string {
+  const kind = resolveOperationalReplyKind(params.payload);
+  const sourceSessionKey = normalizeOptionalString(params.sourceSessionKey) ?? "unknown";
+  const sourceChannel = normalizeOptionalString(params.sourceChannel) ?? "unknown";
+  const sourceEventKey = normalizeOptionalString(params.sourceEventKey);
+  const text = normalizeOptionalString(params.payload.text) ?? "[non-text operational notice]";
+  const mediaUrls = [
+    ...(normalizeOptionalString(params.payload.mediaUrl)
+      ? [normalizeOptionalString(params.payload.mediaUrl) as string]
+      : []),
+    ...(params.payload.mediaUrls ?? [])
+      .map((url) => normalizeOptionalString(url))
+      .filter((url): url is string => Boolean(url)),
+  ];
+  return [
+    "OpenClaw operational notice",
+    `sourceSessionKey: ${sourceSessionKey}`,
+    `sourceChannel: ${sourceChannel}`,
+    ...(sourceEventKey ? [`sourceEventKey: ${sourceEventKey}`] : []),
+    `kind: ${kind}`,
+    "",
+    text,
+    ...mediaUrls.map((url) => `media: ${url}`),
+  ].join("\n");
+}
+
+async function redirectOperationalReply(params: {
+  cfg: OpenClawConfig;
+  payload: ReplyPayload;
+  redirectSessionKey: string;
+  sourceChannel?: string;
+  sourceConversationKey?: string;
+  sourceEventKey: string;
+  sourceSessionKey?: string;
+}): Promise<void> {
+  const idempotencyKey = createOperationalReplyRedirectKey({
+    payload: params.payload,
+    sourceConversationKey: params.sourceConversationKey,
+    sourceEventKey: params.sourceEventKey,
+    sourceSessionKey: params.sourceSessionKey,
+  });
+  try {
+    // This helper persists an openclaw/delivery-mirror transcript artifact.
+    // Embedded runtimes filter that model before provider-history replay.
+    const result = await appendAssistantMessageToSessionTranscript({
+      sessionKey: params.redirectSessionKey,
+      agentId: resolveSessionAgentId({
+        sessionKey: params.redirectSessionKey,
+        config: params.cfg,
+      }),
+      text: formatOperationalReplyRedirectText({
+        payload: params.payload,
+        sourceChannel: params.sourceChannel,
+        sourceEventKey: params.sourceEventKey,
+        sourceSessionKey: params.sourceSessionKey,
+      }),
+      idempotencyKey: `operational-reply:${idempotencyKey}`,
+      updateMode: "inline",
+      config: params.cfg,
+      beforeMessageWrite: runAgentHarnessBeforeMessageWriteHook,
+    });
+    if (!result.ok) {
+      throw new Error(`redirect skipped: ${result.reason}`);
+    }
+  } catch (error) {
+    logVerbose(`operational-reply-policy: redirect failed: ${formatErrorMessage(error)}`);
+    throw error;
+  }
+}
+
+function logOperationalReplyPolicySuppression(params: {
+  payload: ReplyPayload;
+  reason: string;
+  sourceSessionKey?: string;
+  provider?: string;
+  surface?: string;
+  chatType?: string;
+  inboundEventKind?: string;
+  messageKey?: string;
+  logPrefix?: string;
+}) {
+  if (!hasOutboundReplyContent(params.payload, { trimText: true })) {
+    return;
+  }
+  logVerbose(
+    [
+      `${params.logPrefix ?? "operational-reply-policy"}: operational reply ${params.reason}`,
+      `(session=${params.sourceSessionKey ?? "unknown"}`,
+      `provider=${params.provider ?? "unknown"}`,
+      `surface=${params.surface ?? "unknown"}`,
+      `chatType=${params.chatType ?? "unknown"}`,
+      `inboundEventKind=${params.inboundEventKind ?? "unknown"}`,
+      `message=${params.messageKey ?? "unknown"}`,
+      `${formatOperationalReplyPayloadForLog(params.payload)})`,
+    ].join(" "),
+  );
+}
+
+export async function applyOperationalReplyPolicy(params: {
+  cfg: OpenClawConfig;
+  payload: ReplyPayload;
+  explicitCommandTurn: boolean;
+  sendPolicyDenied: boolean;
+  sourceSessionKey?: string;
+  sourceStorePath?: string;
+  sourceEventKey: string;
+  sourceChannel?: string;
+  sourceConversationKey?: string;
+  provider?: string;
+  surface?: string;
+  chatType?: string;
+  inboundEventKind?: string;
+  messageKey?: string;
+  logPrefix?: string;
+}): Promise<OperationalReplyPolicyResult> {
+  if (
+    !isOperationalReplyPayload({
+      payload: params.payload,
+      explicitCommandTurn: params.explicitCommandTurn,
+    }) ||
+    params.sendPolicyDenied
+  ) {
+    return { shouldDeliver: true };
+  }
+  const operationalReplyPolicy = resolveOperationalReplyPolicy(params.cfg);
+  if (operationalReplyPolicy.policy === "silent") {
+    logOperationalReplyPolicySuppression({
+      ...params,
+      reason: "suppressed by messages.operationalReplies",
+    });
+    return { intentionalSilence: true, shouldDeliver: false };
+  }
+  if (operationalReplyPolicy.policy === "once") {
+    const onceKey = createOperationalReplyOnceKey({
+      payload: params.payload,
+      sessionKey: params.sourceSessionKey,
+    });
+    const reservationResult = await reserveOperationalReplyOnceKey({
+      cfg: params.cfg,
+      key: onceKey,
+      sourceSessionKey: params.sourceSessionKey,
+      sourceStorePath: params.sourceStorePath,
+    });
+    if (reservationResult.status === "pending") {
+      logOperationalReplyPolicySuppression({
+        ...params,
+        reason: "deferred by an active messages.operationalReplies once reservation",
+      });
+      return { pendingDelivery: true, shouldDeliver: false };
+    }
+    if (reservationResult.status === "delivered") {
+      logOperationalReplyPolicySuppression({
+        ...params,
+        reason: "suppressed by messages.operationalReplies once policy",
+      });
+      return { intentionalSilence: true, shouldDeliver: false };
+    }
+    const { reservation } = reservationResult;
+    return {
+      shouldDeliver: true,
+      markDelivered: async (delivered) => {
+        if (!delivered) {
+          await releaseOperationalReplyOnceReservation(reservation);
+        } else {
+          await finalizeOperationalReplyOnceReservation(reservation);
+        }
+      },
+    };
+  }
+  if (operationalReplyPolicy.policy === "redirect") {
+    if (!operationalReplyPolicy.redirectSessionKey) {
+      throw new Error(
+        "messages.operationalReplies.redirectSessionKey is required for redirect policy",
+      );
+    }
+    await redirectOperationalReply({
+      cfg: params.cfg,
+      payload: params.payload,
+      redirectSessionKey: operationalReplyPolicy.redirectSessionKey,
+      sourceChannel: params.sourceChannel,
+      sourceConversationKey: params.sourceConversationKey,
+      sourceEventKey: params.sourceEventKey,
+      sourceSessionKey: params.sourceSessionKey,
+    });
+    logOperationalReplyPolicySuppression({
+      ...params,
+      reason: "redirected by messages.operationalReplies",
+    });
+    return { intentionalSilence: true, redirected: true, shouldDeliver: false };
+  }
+  return { shouldDeliver: true };
+}

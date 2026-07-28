@@ -501,6 +501,7 @@ enum class GatewayMethod(
   SessionsCompanionState("sessions.companion.state"),
   SessionsCompanionReset("sessions.companion.reset"),
   MemorySearch("memory.search"),
+  MemoryList("memory.list"),
 }
 
 enum class GatewayEvent(

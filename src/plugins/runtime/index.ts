@@ -44,9 +44,6 @@ const loadMediaUnderstandingRuntime = createLazyRuntimeModule(
 const loadModelAuthRuntime = createLazyRuntimeModule(
   () => import("./runtime-model-auth.runtime.js"),
 );
-const loadProviderUsageRuntime = createLazyRuntimeModule(
-  () => import("./runtime-provider-usage.runtime.js"),
-);
 const loadGatewayPluginRuntime = createLazyRuntimeModule(
   () => import("../../gateway/server-plugins.js"),
 );
@@ -170,23 +167,6 @@ function createRuntimeModelAuth(): PluginRuntime["modelAuth"] {
         provider: params.provider,
         cfg: params.cfg,
         workspaceDir: params.workspaceDir,
-      }),
-  };
-}
-
-function createRuntimeProviderUsage(): PluginRuntime["providerUsage"] {
-  const readProviderUsageProfile = createLazyRuntimeMethod(
-    loadProviderUsageRuntime,
-    (runtime) => runtime.readProviderUsageProfileForRuntime,
-  );
-  return {
-    read: (params) =>
-      readProviderUsageProfile({
-        providerId: params.providerId,
-        authProfileId: params.authProfileId,
-        includeIdentity: params.includeIdentity,
-        refreshCredentials: params.refreshCredentials,
-        timeoutMs: params.timeoutMs,
       }),
   };
 }
@@ -384,7 +364,6 @@ export function createPluginRuntime(_options: CreatePluginRuntimeOptions = {}): 
     | "tts"
     | "mediaUnderstanding"
     | "modelAuth"
-    | "providerUsage"
     | "imageGeneration"
     | "videoGeneration"
     | "musicGeneration"
@@ -396,7 +375,6 @@ export function createPluginRuntime(_options: CreatePluginRuntimeOptions = {}): 
         | "tts"
         | "mediaUnderstanding"
         | "modelAuth"
-        | "providerUsage"
         | "imageGeneration"
         | "videoGeneration"
         | "musicGeneration"
@@ -407,7 +385,6 @@ export function createPluginRuntime(_options: CreatePluginRuntimeOptions = {}): 
   defineCachedValue(runtime, "tts", createRuntimeTts);
   defineCachedValue(runtime, "mediaUnderstanding", () => mediaUnderstanding);
   defineCachedValue(runtime, "modelAuth", createRuntimeModelAuth);
-  defineCachedValue(runtime, "providerUsage", createRuntimeProviderUsage);
   defineCachedValue(runtime, "imageGeneration", createRuntimeImageGeneration);
   defineCachedValue(runtime, "videoGeneration", createRuntimeVideoGeneration);
   defineCachedValue(runtime, "musicGeneration", createRuntimeMusicGeneration);

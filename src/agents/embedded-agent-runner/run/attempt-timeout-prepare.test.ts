@@ -125,24 +125,20 @@ describe("prepareEmbeddedAttemptTimeout", () => {
     harness.timeout.clearTimers();
   });
 
-  it("noteActivity enforces hard cap on extension count", async () => {
-    const harness = createTimeoutHarness({ timeoutMs: 10 });
+  it("noteActivity does not cap on extension count — only absolute deadline bounds", async () => {
+    const harness = createTimeoutHarness({ timeoutMs: 100 });
 
-    // First 10 calls extend the deadline
-    for (let i = 0; i < 10; i++) {
+    // Many sequential noteActivity calls all extend the deadline
+    // (no extension-count cutoff — only the 120s absolute cap matters)
+    for (let i = 0; i < 50; i++) {
       const deadlineBefore = harness.timeout.getRunAbortDeadlineAtMs();
-      await vi.advanceTimersByTimeAsync(5);
+      await vi.advanceTimersByTimeAsync(1);
       harness.timeout.noteActivity();
       expect(harness.timeout.getRunAbortDeadlineAtMs()).toBeGreaterThan(deadlineBefore);
     }
 
-    // 11th call is silently ignored (hard cap hit)
-    const deadlineAfterCaps = harness.timeout.getRunAbortDeadlineAtMs();
-    harness.timeout.noteActivity();
-    expect(harness.timeout.getRunAbortDeadlineAtMs()).toBe(deadlineAfterCaps);
-
-    // The timer fires on schedule
-    await vi.advanceTimersByTimeAsync(10);
+    // The timer fires at the last-slid deadline, not prematurely
+    await vi.advanceTimersByTimeAsync(100);
     expect(harness.abortRun).toHaveBeenCalledWith(true);
     harness.timeout.clearTimers();
   });

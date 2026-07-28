@@ -40,10 +40,8 @@ export function prepareEmbeddedAttemptTimeout(input: {
   let abortTimer: NodeJS.Timeout | undefined;
   let runAbortDeadlineAtMs = Date.now() + attempt.timeoutMs;
   let compactionGraceUsed = false;
-  let extensionCount = 0;
   let totalExtendedMs = 0;
   let lastActivityAtMs = Date.now();
-  const MAX_EXTENSIONS = 10;
   const MAX_EXTENSION_TOTAL_MS = 120_000;
 
   const scheduleAbortTimer = (delayMs: number, reason: "initial" | "compaction-grace") => {
@@ -136,12 +134,11 @@ export function prepareEmbeddedAttemptTimeout(input: {
    * extension cap, making MAX_EXTENSION_TOTAL_MS a meaningful timeout ceiling
    * rather than a fixed multiple of the initial timeoutMs.
    * The deadline is clamped to runStartMs + MAX_EXTENSION_TOTAL_MS to prevent
-   * unbounded extension from a progress event near the cap boundary. */
+   * unbounded extension from a progress event near the cap boundary.
+   * Note: there is no extension-count cutoff — only the absolute 120s
+   * run-start deadline bounds the sliding window, so a legitimate embedded
+   * run with many progress events can keep extending until the cap. */
   const noteActivity = () => {
-    if (extensionCount >= MAX_EXTENSIONS) {
-      return;
-    }
-    extensionCount++;
     const now = Date.now();
     const elapsedSinceLastActivity = Math.max(0, now - lastActivityAtMs);
     lastActivityAtMs = now;

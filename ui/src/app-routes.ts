@@ -1,6 +1,7 @@
 import { createRouter } from "@openclaw/uirouter";
 import type { PageDefinition, Router, RouterHistory } from "@openclaw/uirouter";
 import {
+  APP_ROUTE_IDS,
   INTERNAL_SESSION_PATH_PARAM,
   pathForRoute,
   routeIdFromPath,
@@ -127,6 +128,10 @@ function routerHistoryLocation(location: ReturnType<RouterHistory["location"]>, 
   };
 }
 
+function firstEnabledRoute(context: ApplicationContext<RouteId>): RouteId {
+  return APP_ROUTE_IDS.find((routeId) => context.hostPolicy.isRouteEnabled(routeId)) ?? "chat";
+}
+
 export async function startApplicationRouter(
   router: ApplicationRouter,
   history: RouterHistory,
@@ -134,12 +139,15 @@ export async function startApplicationRouter(
   context: ApplicationContext<RouteId>,
 ): Promise<void> {
   let location = history.location();
+  const initialRouteId = routeIdFromPath(location.pathname, basePath);
   // Unknown paths (including retired routes like /overview) land on chat, so
   // removed pages need no legacy aliases for stale bookmarks or history.
-  if (routeIdFromPath(location.pathname, basePath) === null) {
+  if (initialRouteId === null || !context.hostPolicy.isRouteEnabled(initialRouteId)) {
     history.replace({
       ...location,
-      pathname: router.pathForRoute("chat", basePath),
+      pathname: router.pathForRoute(firstEnabledRoute(context), basePath),
+      search: "",
+      hash: "",
     });
     location = history.location();
   }
@@ -152,6 +160,15 @@ export async function startApplicationRouter(
       history.listen((next) => {
         const dynamicRoute = dynamicRouteFromPath(next.pathname, basePath);
         if (dynamicRoute) {
+          if (!context.hostPolicy.isRouteEnabled(dynamicRoute[0])) {
+            history.replace({
+              ...next,
+              pathname: router.pathForRoute(firstEnabledRoute(context), basePath),
+              search: "",
+              hash: "",
+            });
+            return;
+          }
           void router
             .navigate(dynamicRoute[0], context, { history: "none" }, next)
             .catch((error: unknown) => {

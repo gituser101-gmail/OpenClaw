@@ -36,6 +36,7 @@ type QuickSettingsProps = {
   /** Capability-authoritative unsaved raw draft; apply() refuses while set. */
   configRawDraftPending?: boolean;
   configAutoSaveStatus?: ConfigAutoSaveStatus;
+  readOnly?: boolean;
   onApplyConfig?: () => void;
   onRetrySaveConfig?: () => void;
   onDiscardConfig?: () => void;
@@ -90,6 +91,7 @@ export function renderQuickSettings(props: QuickSettingsProps) {
         props.configLoading === true ||
         props.configUpdating === true ||
         props.configAutoSaveStatus === "saving" ||
+        props.readOnly === true ||
         props.configRawDraftPending === true,
       connected: props.connected,
       onApply: () => props.onApplyConfig?.(),

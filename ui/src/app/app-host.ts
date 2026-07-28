@@ -1014,6 +1014,9 @@ class OpenClawShell extends OpenClawLightDomElement {
     if (!context || !isRouteId(routeId)) {
       return;
     }
+    if (!context.hostPolicy.isRouteEnabled(routeId)) {
+      return;
+    }
     this.closeNavDrawer({ restoreFocus: true });
     context.navigate(
       routeId,
@@ -1637,9 +1640,15 @@ class OpenClawShell extends OpenClawLightDomElement {
   }
 
   private enabledRouteIds(): readonly RouteId[] {
-    return isWorkboardEnabledInConfigSnapshot(this.context?.runtimeConfig.state.configSnapshot)
+    const context = this.context;
+    const configEnabledRoutes = isWorkboardEnabledInConfigSnapshot(
+      context?.runtimeConfig.state.configSnapshot,
+    )
       ? APP_ROUTE_IDS
       : ROUTE_IDS_WITHOUT_WORKBOARD;
+    return context
+      ? configEnabledRoutes.filter((routeId) => context.hostPolicy.isRouteEnabled(routeId))
+      : configEnabledRoutes;
   }
 
   /** Sidebar draft-row hint while the new-session page is open, keyed off its ?agent param. */
@@ -1886,6 +1895,7 @@ class OpenClawShell extends OpenClawLightDomElement {
       ? renderSettingsSidebar({
           basePath: context.basePath,
           activeRouteId: activeRoute,
+          enabledRouteIds: this.enabledRouteIds(),
           activeSearch: this.routeState.location?.search ?? "",
           activeHash: this.routeState.location?.hash ?? "",
           offline: gatewaySnapshot.offlineStable,

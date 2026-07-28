@@ -873,6 +873,7 @@ export class ConfigPage extends OpenClawLightDomElement {
       saving: configState.configSaving,
       applying: configState.configApplying,
       updating: this.isUpdateBusy(),
+      readOnly: !this.context.hostPolicy.isSettingEditable("*"),
       autoSaveStatus: configState.configAutoSaveStatus,
       needsApply: configState.configNeedsApply,
       connected: configState.connected,
@@ -1091,6 +1092,7 @@ export class ConfigPage extends OpenClawLightDomElement {
       configRawDraftPending:
         runtimeConfig.state.configFormMode === "raw" && runtimeConfig.state.configFormDirty,
       configAutoSaveStatus: runtimeConfig.state.configAutoSaveStatus,
+      readOnly: !this.context.hostPolicy.isSettingEditable("*"),
       onApplyConfig: () => void runtimeConfig.apply(),
       onRetrySaveConfig: () => void runtimeConfig.save(),
       onDiscardConfig: () => void runtimeConfig.discardDraft(),

@@ -292,7 +292,10 @@ export type SessionCapability = {
   /** Adds one group to the catalog; stale means the initiating connection retired. */
   groupsAdd: (name: string) => Promise<SessionGroupMutationResult>;
   /** Reorders the group catalog; stale means the initiating connection retired. */
-  groupsReorder: (names: readonly string[]) => Promise<SessionGroupMutationResult>;
+  groupsReorder: (
+    names: readonly string[],
+    sectionOrder?: readonly string[],
+  ) => Promise<SessionGroupMutationResult>;
   /** Renames a group; stale means the initiating connection retired before reconciliation. */
   groupsRename: (from: string, to: string) => Promise<SessionGroupMutationResult>;
   /** Deletes a group; stale means the initiating connection retired before reconciliation. */
@@ -1380,8 +1383,9 @@ export function createSessionCapability(gateway: SessionGateway): SessionCapabil
       }
     | {
         method: typeof GROUPS_REORDER_METHOD;
-        params: { names: string[] };
+        params: { names: string[]; sectionOrder?: string[] };
         fallbackNames: readonly string[];
+        sectionOrder?: readonly string[];
       };
 
   const requestGroupMutation = async (
@@ -1399,9 +1403,13 @@ export function createSessionCapability(gateway: SessionGateway): SessionCapabil
         return "completed";
       }
       // Legacy gateways only expose the full-replacement method.
-      const result = await scope.client.request(GROUPS_PUT_METHOD, {
+      const fallbackParams: { names: string[]; sectionOrder?: string[] } = {
         names: [...request.fallbackNames],
-      });
+      };
+      if (request.method === GROUPS_REORDER_METHOD && request.sectionOrder !== undefined) {
+        fallbackParams.sectionOrder = [...request.sectionOrder];
+      }
+      const result = await scope.client.request(GROUPS_PUT_METHOD, fallbackParams);
       if (!isCurrentConnection(scope)) {
         return "stale";
       }
@@ -1425,15 +1433,19 @@ export function createSessionCapability(gateway: SessionGateway): SessionCapabil
     });
   };
 
-  const groupsReorder = async (names: readonly string[]): Promise<SessionGroupMutationResult> => {
+  const groupsReorder = async (
+    names: readonly string[],
+    sectionOrder?: readonly string[],
+  ): Promise<SessionGroupMutationResult> => {
     const scope = captureConnection();
     if (!scope) {
       return "stale";
     }
     return requestGroupMutation(scope, {
       method: GROUPS_REORDER_METHOD,
-      params: { names: [...names] },
+      params: { names: [...names], sectionOrder: sectionOrder ? [...sectionOrder] : undefined },
       fallbackNames: names,
+      sectionOrder,
     });
   };
 

@@ -19,6 +19,7 @@ import {
   type SystemAgentApprovalIntent,
 } from "./approval-intent.js";
 import type { SystemAgentAssistantPlanner, SystemAgentAssistantTurn } from "./assistant.js";
+import type { SystemAgentChatReply } from "./chat-contract.js";
 import { approvalQuestion } from "./dialogue.js";
 import type {
   SystemAgentGreetingFacts,
@@ -81,28 +82,21 @@ export type SystemAgentChatEngineOptions = {
     channel: string,
     prompter: WizardPrompterLike,
     beforePersistentApply: (runtime: RuntimeEnv) => Promise<void>,
+    abortSignal: AbortSignal,
   ) => Promise<void>;
   /** Exact route/credential that passed the host's live inference gate. */
   readonly verifiedInference: SystemAgentVerifiedInferenceBinding;
   /** Delegated chats accept approval only from the operator registry. */
   operatorApprovalOnly?: boolean;
+  /** Whether hosted channel work has an owner that can recover after reconnect. */
+  allowHostedChannelSetup?: boolean;
 };
-type SystemAgentChatReplyAction = "none" | "exit" | "open-tui" | "open-setup";
+type RetainedTerminalWizardReply = {
+  reply: SystemAgentChatReply;
+  expiresAt: number;
+};
 
-type SystemAgentChatReply = {
-  text: string;
-  action: SystemAgentChatReplyAction;
-  /** Client-localized draft intent for the destination agent chat. */
-  agentDraft?: "hatch";
-  /** The next hosted-wizard reply contains a secret and must be masked/redacted by hosts. */
-  sensitive?: boolean;
-  /** The hosted wizard will consume the next message as its current step answer. */
-  wizardInputPending?: boolean;
-  /** Present when the host must leave chat for an interactive handoff. */
-  handoff?: SystemAgentOperation;
-  /** Structured choice mirroring the awaited wizard step for card-capable clients. */
-  question?: SystemAgentChatQuestion;
-};
+const TERMINAL_WIZARD_REPLY_RETENTION_MS = 5 * 60 * 1_000;
 
 type WizardPrompterLike = import("../wizard/prompts.js").WizardPrompter;
 
@@ -119,6 +113,7 @@ type CaptureRuntime = RuntimeEnv & {
 };
 
 const log = createSubsystemLogger("system-agent/chat-engine");
+const HOSTED_CHANNEL_SETUP_TIMEOUT_MS = 25 * 60 * 1000;
 
 function createHostedWizardRuntime(runtime: RuntimeEnv): RuntimeEnv {
   return {
@@ -144,6 +139,7 @@ function createCaptureRuntime(): CaptureRuntime {
 function defaultChannelSetupWizardRunner(
   channel: string,
   beforePersistentApply: (runtime: RuntimeEnv) => Promise<void>,
+  abortSignal: AbortSignal,
 ): (prompter: WizardPrompterLike) => Promise<void> {
   return async (prompter) => {
     const [
@@ -177,6 +173,7 @@ function defaultChannelSetupWizardRunner(
       quickstartDefaults: true,
       skipDmPolicyPrompt: true,
       skipConfirm: true,
+      abortSignal,
       beforePersistentEffect: async () => await beforePersistentApply(runtime),
       onPostWriteHook: (hook) => postWriteHooks.collect(hook),
     });
@@ -389,6 +386,7 @@ export class SystemAgentChatEngine {
   private readonly history: SystemAgentAssistantTurn[] = [];
   private readonly agentSession: SystemAgentSession;
   private verifiedInference: SystemAgentVerifiedInferenceBinding;
+  private retainedTerminalWizardReply: RetainedTerminalWizardReply | null = null;
   /** Turns run strictly one at a time; interleaved handles corrupt wizard/pending state. */
   private turnQueue: Promise<unknown> = Promise.resolve();
 
@@ -459,12 +457,66 @@ export class SystemAgentChatEngine {
     return this.history.slice(index).map((turn) => ({ role: turn.role, text: turn.text }));
   }
 
-  async dispose(): Promise<void> {
-    this.wizardBridge?.session.cancel();
+  async dispose(): Promise<boolean> {
+    const wizardSession = this.wizardBridge?.session;
+    if (this.readRetainedTerminalWizardReply() || wizardSession?.isCancellationLocked()) {
+      return false;
+    }
+    wizardSession?.cancel();
     this.wizardBridge = null;
     this.lastSensitiveChannel = undefined;
     this.awaitingSetupChannel = false;
     await cleanupSystemAgentSession(this.agentSession);
+    return true;
+  }
+
+  hasLockedHostedWizard(): boolean {
+    return (
+      this.readRetainedTerminalWizardReply() !== null ||
+      this.wizardBridge?.session.isCancellationLocked() === true
+    );
+  }
+
+  async resumeLockedHostedWizard(): Promise<SystemAgentChatReply | null> {
+    const turn = this.turnQueue.then(async () => {
+      if (!this.hasLockedHostedWizard()) {
+        return null;
+      }
+      const retainedReply = this.readRetainedTerminalWizardReply();
+      if (retainedReply) {
+        return { ...retainedReply };
+      }
+      const bridgeBeforeRecovery = this.wizardBridge;
+      const stepIdBeforeRecovery = bridgeBeforeRecovery?.step?.id;
+      const reply = this.projectWizardReply({
+        text: await this.pumpWizardBridge(),
+        action: "none",
+      });
+      const recoveryAdvanced =
+        this.wizardBridge !== bridgeBeforeRecovery ||
+        this.wizardBridge?.step?.id !== stepIdBeforeRecovery;
+      if (reply.text && recoveryAdvanced) {
+        // Recovery can be the only delivery of a terminal setup result. Record
+        // only newly advanced replies; retained and pending-step replays do not
+        // duplicate durable transcript turns.
+        this.history.push({ role: "assistant", text: reply.text });
+      }
+      return reply;
+    });
+    this.turnQueue = turn.catch(() => undefined);
+    return await turn;
+  }
+
+  private readRetainedTerminalWizardReply(): SystemAgentChatReply | null {
+    const retained = this.retainedTerminalWizardReply;
+    if (!retained) {
+      return null;
+    }
+    if (Date.now() >= retained.expiresAt) {
+      this.retainedTerminalWizardReply = null;
+      return null;
+    }
+    return retained.reply;
   }
 
   async handle(text: string): Promise<SystemAgentChatReply> {
@@ -475,7 +527,16 @@ export class SystemAgentChatEngine {
   }
 
   private async handleSerialized(text: string): Promise<SystemAgentChatReply> {
-    await this.requireVerifiedInference();
+    if (!this.wizardBridge) {
+      // A same-session follow-up acknowledges the previously returned
+      // terminal wizard reply; cross-session recovery reads it first.
+      this.retainedTerminalWizardReply = null;
+    }
+    // Hosted wizard replies are deterministic, and a locked flow may be the
+    // only recovery path after its durable effect changes the inference route.
+    if (!this.wizardBridge?.session.isCancellationLocked()) {
+      await this.requireVerifiedInference();
+    }
     // Snapshot before resolving: wizard answers to sensitive steps (tokens,
     // passwords) must never enter the AI-visible history.
     const sensitiveTurn = this.wizardBridge?.step?.sensitive === true;
@@ -489,6 +550,10 @@ export class SystemAgentChatEngine {
     }
     // While a hosted wizard awaits a step, every turn routes to it, so the
     // awaited step is always the question this reply asks.
+    return this.projectWizardReply(reply);
+  }
+
+  private projectWizardReply(reply: SystemAgentChatReply): SystemAgentChatReply {
     const question = wizardStepChatQuestion(this.wizardBridge?.step ?? null);
     return {
       ...reply,
@@ -1134,15 +1199,37 @@ export class SystemAgentChatEngine {
   private async startChannelSetupWizard(channel: string): Promise<string> {
     this.clearPendingProposals();
     this.lastSensitiveChannel = undefined;
+    if (this.opts.surface === "gateway" && this.opts.allowHostedChannelSetup === false) {
+      return [
+        "Channel setup in chat requires an identity that can survive reconnects.",
+        "Pair this device or sign in to the Gateway, then try again.",
+      ].join("\n");
+    }
     const beforePersistentApply = async (runtime: RuntimeEnv) => {
       await this.requirePersistentApplyInference(runtime);
     };
     const runWizard =
       this.opts.runChannelSetupWizard ??
-      ((ch: string, prompter: WizardPrompterLike, guard: (runtime: RuntimeEnv) => Promise<void>) =>
-        defaultChannelSetupWizardRunner(ch, guard)(prompter));
-    const session = new WizardSession((prompter) =>
-      runWizard(channel, prompter, beforePersistentApply),
+      ((
+        ch: string,
+        prompter: WizardPrompterLike,
+        guard: (runtime: RuntimeEnv) => Promise<void>,
+        signal: AbortSignal,
+      ) => defaultChannelSetupWizardRunner(ch, guard, signal)(prompter));
+    const session = new WizardSession(
+      (prompter, signal, wizardSession) =>
+        runWizard(
+          channel,
+          prompter,
+          async (runtime) => {
+            await beforePersistentApply(runtime);
+            if (this.opts.surface === "gateway" && !wizardSession.lockCancellation()) {
+              throw new Error("Channel setup was cancelled before its persistent change started.");
+            }
+          },
+          signal,
+        ),
+      this.opts.surface === "gateway" ? { timeoutMs: HOSTED_CHANNEL_SETUP_TIMEOUT_MS } : undefined,
     );
     this.wizardBridge = {
       session,
@@ -1197,6 +1284,7 @@ export class SystemAgentChatEngine {
     if (result.done) {
       this.wizardBridge = null;
       const label = bridge.label;
+      let terminalText: string;
       if (result.status === "done") {
         try {
           const appendAuditEntry =
@@ -1212,18 +1300,25 @@ export class SystemAgentChatEngine {
           log.warn(`channel setup completed without audit entry: ${formatErrorMessage(error)}`);
         }
         const verify = await this.verifyConfigAfterWrite();
-        return [
+        terminalText = [
           `Done — ${label} is configured.`,
           "Say `restart gateway` to apply channel changes, or `channels` to review.",
           verify ?? "",
         ]
           .filter(Boolean)
           .join("\n");
+      } else if (result.status === "cancelled") {
+        terminalText = "Channel setup cancelled. Nothing was changed beyond completed steps.";
+      } else {
+        terminalText = `Channel setup stopped: ${result.error ?? "unknown error"}`;
       }
-      if (result.status === "cancelled") {
-        return "Channel setup cancelled. Nothing was changed beyond completed steps.";
+      if (bridge.session.isCancellationLocked()) {
+        this.retainedTerminalWizardReply = {
+          reply: { text: terminalText, action: "none" },
+          expiresAt: Date.now() + TERMINAL_WIZARD_REPLY_RETENTION_MS,
+        };
       }
-      return `Channel setup stopped: ${result.error ?? "unknown error"}`;
+      return terminalText;
     }
     bridge.step = result.step ?? null;
     if (bridge.step) {
@@ -1265,8 +1360,14 @@ export class SystemAgentChatEngine {
     if (!bridge) {
       return "";
     }
+    if (bridge.session.getStatus() !== "running") {
+      bridge.step = null;
+      return await this.pumpWizardBridge();
+    }
     if (/^(cancel|abort|stop|quit|exit)$/i.test(text.trim())) {
-      bridge.session.cancel();
+      if (!bridge.session.cancel()) {
+        return "Channel setup is already applying and can no longer be cancelled.";
+      }
       return await this.pumpWizardBridge();
     }
     const step = bridge.step;

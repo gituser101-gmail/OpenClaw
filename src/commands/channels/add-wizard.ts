@@ -49,21 +49,32 @@ export async function resolveInitialWizardChannel(
   )?.id;
 }
 
-type ChannelsAddWizardFlowParams = {
+export type HostedChannelSetupLifecycleOptions = {
+  onConfigured?: (accounts: Array<{ channel: ChannelChoice; accountId: string }>) => void;
+  onResolvedChannel?: (channel: ChannelChoice, aliases?: readonly string[]) => void;
+  /** Revalidate/lock cancellation immediately before durable effects. */
+  beforePersistentEffect?: () => Promise<void>;
+  /** Cancels reversible setup work when the remote wizard stops. */
+  abortSignal?: AbortSignal;
+};
+
+export type RunChannelsSetupWizardOptions = HostedChannelSetupLifecycleOptions & {
+  /** Raw channel id or alias supplied by the remote client. */
+  channel?: string;
+};
+
+type ChannelsAddWizardFlowParams = HostedChannelSetupLifecycleOptions & {
   cfg: OpenClawConfig;
   baseHash?: string;
   runtime: RuntimeEnv;
   prompter: WizardPrompter;
   initialChannel?: ChannelChoice;
-  beforePersistentEffect?: () => Promise<void>;
   /**
    * The controlling client completes device linking itself after config is
    * written (e.g. the Control UI renders the WhatsApp QR via web.login.*), so
    * setup surfaces must skip terminal-interactive login flows.
    */
   deferDeviceLinkToClient?: boolean;
-  /** Reports the channel accounts actually configured, after config commit. */
-  onConfigured?: (accounts: Array<{ channel: string; accountId: string }>) => void;
 };
 
 /** Run the interactive channel-setup flow and persist the resulting config. */
@@ -75,6 +86,12 @@ export async function runChannelsAddWizardFlow(params: ChannelsAddWizardFlowPara
   ]);
   const postWriteHooks = onboardChannels.createChannelOnboardingPostWriteHookCollector();
   let selection: ChannelChoice[] = [];
+  const pendingChannelEffects = new Map<string, readonly string[] | undefined>();
+  const rememberPendingChannelEffect = (channel: string, aliases?: readonly string[]) => {
+    if (aliases?.length || !pendingChannelEffects.has(channel)) {
+      pendingChannelEffects.set(channel, aliases);
+    }
+  };
   const accountIds: Partial<Record<ChannelChoice, string>> = {};
   const resolvedPlugins = new Map<ChannelChoice, ChannelSetupPlugin>();
   await prompter.intro("Channel setup");
@@ -87,7 +104,19 @@ export async function runChannelsAddWizardFlow(params: ChannelsAddWizardFlowPara
     ...(params.beforePersistentEffect
       ? { beforePersistentEffect: params.beforePersistentEffect }
       : {}),
+    ...(params.abortSignal ? { abortSignal: params.abortSignal } : {}),
     ...(params.deferDeviceLinkToClient ? { deferDeviceLinkToClient: true } : {}),
+    ...(params.onResolvedChannel
+      ? {
+          onChannelSelected: (channel: ChannelChoice, aliases?: readonly string[]) =>
+            params.onResolvedChannel?.(channel, aliases),
+        }
+      : {}),
+    onPendingChannelEffects: (channels) => {
+      for (const { channel, aliases } of channels) {
+        rememberPendingChannelEffect(channel, aliases);
+      }
+    },
     onPostWriteHook: (hook) => {
       postWriteHooks.collect(hook);
     },
@@ -96,6 +125,12 @@ export async function runChannelsAddWizardFlow(params: ChannelsAddWizardFlowPara
     skipStatusNote: true,
     onSelection: (value) => {
       selection = value;
+      for (const channel of value) {
+        const aliases =
+          resolvedPlugins.get(channel)?.meta.aliases ??
+          getLoadedChannelPlugin(channel)?.meta.aliases;
+        rememberPendingChannelEffect(channel, aliases);
+      }
     },
     onAccountId: (channel, accountId) => {
       accountIds[channel] = accountId;
@@ -106,6 +141,11 @@ export async function runChannelsAddWizardFlow(params: ChannelsAddWizardFlowPara
   });
   const commitWizardConfig = async (config: OpenClawConfig) => {
     await params.beforePersistentEffect?.();
+    // The lock and identity update stay adjacent so failed guards cannot make
+    // reversible browse-all choices look like committed channel work.
+    for (const [channel, aliases] of pendingChannelEffects) {
+      params.onResolvedChannel?.(channel, aliases);
+    }
     const committed = await commitConfigWithPendingPluginInstalls({
       nextConfig: config,
       ...(baseHash !== undefined ? { baseHash } : {}),
@@ -255,12 +295,7 @@ export async function runChannelsAddWizardFlow(params: ChannelsAddWizardFlowPara
  * must never call runtime.exit — failures throw and surface as wizard errors.
  */
 export async function runChannelsSetupWizard(
-  opts: {
-    channel?: string;
-    onConfigured?: (accounts: Array<{ channel: string; accountId: string }>) => void;
-    /** Revalidate/lock cancellation immediately before durable effects. */
-    beforePersistentEffect?: () => Promise<void>;
-  },
+  opts: RunChannelsSetupWizardOptions,
   runtime: RuntimeEnv,
   prompter: WizardPrompter,
 ): Promise<void> {
@@ -282,6 +317,8 @@ export async function runChannelsSetupWizard(
     ...(initialChannel ? { initialChannel } : {}),
     deferDeviceLinkToClient: true,
     ...(opts.onConfigured ? { onConfigured: opts.onConfigured } : {}),
+    ...(opts.onResolvedChannel ? { onResolvedChannel: opts.onResolvedChannel } : {}),
     ...(opts.beforePersistentEffect ? { beforePersistentEffect: opts.beforePersistentEffect } : {}),
+    ...(opts.abortSignal ? { abortSignal: opts.abortSignal } : {}),
   });
 }

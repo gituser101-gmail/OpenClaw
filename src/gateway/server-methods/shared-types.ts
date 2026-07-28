@@ -20,6 +20,7 @@ import type {
 import type { SystemAgentApprovalRequestPayload } from "../../infra/system-agent-approvals.js";
 import type { createSubsystemLogger } from "../../logging/subsystem.js";
 import type { RuntimePluginToolGrant } from "../../plugins/runtime/tool-grant.js";
+import type { SystemAgentChatReply } from "../../system-agent/chat-contract.js";
 import type { SystemAgentOperation } from "../../system-agent/operation-types.js";
 import type { WizardSession } from "../../wizard/session.js";
 import type { AgentRuntimeIdentity } from "../agent-runtime-identity-token.js";
@@ -66,6 +67,9 @@ export type GatewayClient = {
   /** Client id verified against the server-approved device pairing record. */
   pairedClientId?: string;
   authenticatedUserId?: string;
+  /** Shared-auth identity survives reconnects until the Gateway credential rotates. */
+  usesSharedGatewayAuth?: boolean;
+  sharedGatewaySessionGeneration?: string;
   authenticatedUserProfile?: {
     profileId: string;
     displayName: string | null;
@@ -124,12 +128,7 @@ type SystemAgentHistoryTurn = {
 
 type GatewaySystemAgentSession = {
   engine: {
-    handle: (message: string) => Promise<{
-      text: string;
-      action: "none" | "exit" | "open-tui" | "open-setup";
-      sensitive?: boolean;
-      question?: SystemAgentChatQuestion;
-    }>;
+    handle: (message: string) => Promise<SystemAgentChatReply>;
     seedHistory: (turns: readonly SystemAgentHistoryTurn[]) => void;
     historyLength: () => number;
     historySince: (index: number) => SystemAgentHistoryTurn[];
@@ -138,7 +137,10 @@ type GatewaySystemAgentSession = {
       decision: "allow-once" | "allow-always" | "deny" | null,
       proposalHash: string,
     ) => Promise<unknown>;
-    dispose: () => Promise<void>;
+    /** False while an irreversible hosted wizard still owns unfinished work. */
+    dispose: () => Promise<boolean>;
+    hasLockedHostedWizard: () => boolean;
+    resumeLockedHostedWizard: () => Promise<SystemAgentChatReply | null>;
   };
   welcome: string;
   welcomeQuestion?: SystemAgentChatQuestion;

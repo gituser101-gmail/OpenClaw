@@ -41,6 +41,11 @@ type WizardNextResult = {
   accounts?: Array<{ channel: string; accountId: string }>;
 };
 
+function normalizeChannelIdentity(value: string | undefined): string | undefined {
+  const normalized = value?.trim().toLowerCase();
+  return normalized || undefined;
+}
+
 function normalizeTextAnswer(value: unknown): string | undefined {
   if (value === null || value === undefined) {
     return "";
@@ -230,7 +235,9 @@ class WizardSessionPrompter implements WizardPrompter {
 
 export class WizardSession {
   private readonly abortController = new AbortController();
-  private readonly expiryTimer: ReturnType<typeof setTimeout> | undefined;
+  private readonly timeoutMs: number | undefined;
+  private readonly now: () => number;
+  private expiryTimer: ReturnType<typeof setTimeout> | undefined;
   private currentStep: WizardStep | null = null;
   private progressSteps: WizardStep[] = [];
   private deliveredProgressStepIds = new Set<string>();
@@ -238,6 +245,11 @@ export class WizardSession {
   private pendingTerminalResolution = false;
   private cancellationLocked = false;
   private pendingExternalUrl: string | undefined;
+  private ownerKey: string | undefined;
+  private readonly resumeKey: string | undefined;
+  private readonly requestedChannel: string | undefined;
+  private readonly resolvedChannels = new Set<string>();
+  private readonly resolvedChannelAliases = new Set<string>();
   private answerDeferred = new Map<
     string,
     {
@@ -247,6 +259,7 @@ export class WizardSession {
     }
   >();
   private status: WizardSessionStatus = "running";
+  private terminalAt: number | undefined;
   private error: string | undefined;
   private configuredAccounts: Array<{ channel: string; accountId: string }> | undefined;
 
@@ -256,17 +269,26 @@ export class WizardSession {
       signal: AbortSignal,
       session: WizardSession,
     ) => Promise<void>,
-    options?: { timeoutMs?: number },
+    options?: {
+      timeoutMs?: number;
+      ownerKey?: string;
+      resumeKey?: string;
+      requestedChannel?: string;
+      now?: () => number;
+    },
   ) {
     const prompter = new WizardSessionPrompter(this);
-    if (options?.timeoutMs !== undefined) {
-      this.expiryTimer = setTimeout(() => this.cancel(), options.timeoutMs);
-      this.expiryTimer.unref?.();
-    }
+    this.timeoutMs = options?.timeoutMs;
+    this.now = options?.now ?? Date.now;
+    this.ownerKey = options?.ownerKey;
+    this.resumeKey = options?.resumeKey;
+    this.requestedChannel = normalizeChannelIdentity(options?.requestedChannel);
+    this.refreshExpiryTimer();
     void this.run(prompter);
   }
 
   async next(): Promise<WizardNextResult> {
+    this.refreshExpiryTimer();
     const progressStep = this.progressSteps.shift();
     if (progressStep) {
       this.rememberDeliveredProgressStep(progressStep.id);
@@ -310,6 +332,22 @@ export class WizardSession {
     this.configuredAccounts = accounts.map((entry) => ({ ...entry }));
   }
 
+  /** Record the canonical channel selected by the setup registry. */
+  setResolvedChannel(channel: string, aliases: readonly string[] = []): void {
+    const resolvedChannel = normalizeChannelIdentity(channel);
+    if (resolvedChannel) {
+      // Browse-all can configure several channels before disconnecting. Keep
+      // every identity so recovery through the client's first selection works.
+      this.resolvedChannels.add(resolvedChannel);
+    }
+    for (const alias of aliases) {
+      const normalizedAlias = normalizeChannelIdentity(alias);
+      if (normalizedAlias) {
+        this.resolvedChannelAliases.add(normalizedAlias);
+      }
+    }
+  }
+
   async answer(stepId: string, value: unknown): Promise<string | undefined> {
     const pending = this.answerDeferred.get(stepId);
     if (!pending) {
@@ -321,6 +359,7 @@ export class WizardSession {
       }
       throw new Error("wizard: no pending step");
     }
+    this.refreshExpiryTimer();
     const normalizedValue = pending.text ? normalizeTextAnswer(value) : value;
     if (pending.text && normalizedValue === undefined) {
       return "wizard: text answer must be a scalar value";
@@ -340,6 +379,7 @@ export class WizardSession {
       return false;
     }
     this.status = "cancelled";
+    this.terminalAt = this.now();
     this.error = "cancelled";
     this.abortController.abort(new WizardCancelledError());
     this.currentStep = null;
@@ -356,12 +396,81 @@ export class WizardSession {
   }
 
   /** The underlying mutation crossed its durable commit point and must finish. */
-  lockCancellation() {
+  lockCancellation(): boolean {
+    if (this.status !== "running") {
+      return false;
+    }
     this.cancellationLocked = true;
+    this.clearExpiryTimer();
+    return true;
+  }
+
+  /** Whether this locked session belongs to the owner's resumable flow. */
+  matchesResumeKey(resumeKey: string): boolean {
+    return this.cancellationLocked && this.hasResumeKey(resumeKey);
+  }
+
+  /** Whether this session belongs to the owner's flow, before or after its durable lock. */
+  hasResumeKey(resumeKey: string): boolean {
+    return this.resumeKey === resumeKey;
+  }
+
+  /**
+   * Locked work remains replayable for the same flow. A terminal result needs
+   * an explicit channel identity; browse-all without one is fresh intent.
+   */
+  canResume(
+    resumeKey: string,
+    requestedChannel?: string,
+    options?: { allowAliasMatch?: boolean },
+  ): boolean {
+    if (!this.matchesResumeKey(resumeKey)) {
+      return false;
+    }
+    const normalizedRequestedChannel = normalizeChannelIdentity(requestedChannel);
+    if (!normalizedRequestedChannel) {
+      // With no channel identity to match, a terminal browse-all request is
+      // fresh intent. Running locked work remains recoverable after reconnect.
+      return this.status === "running";
+    }
+    if (this.resolvedChannels.has(normalizedRequestedChannel)) {
+      return true;
+    }
+    if (
+      options?.allowAliasMatch !== false &&
+      this.resolvedChannelAliases.has(normalizedRequestedChannel)
+    ) {
+      return true;
+    }
+    // Before the durable boundary publishes the canonical identity, targeted
+    // running work may still recover by its request. Terminal results may not:
+    // Back can abandon that target and commit a different channel.
+    return this.status === "running" && normalizedRequestedChannel === this.requestedChannel;
+  }
+
+  /** Transfer authenticated ownership after shared Gateway credentials rotate. */
+  adoptOwner(ownerKey: string | undefined): void {
+    if (this.cancellationLocked && ownerKey) {
+      this.ownerKey = ownerKey;
+    }
+  }
+
+  /** Unowned legacy sessions remain bearer-token based; hosted sessions bind to their owner. */
+  isAccessibleBy(ownerKey: string | undefined): boolean {
+    return this.ownerKey === undefined || this.ownerKey === ownerKey;
+  }
+
+  isCancellationLocked(): boolean {
+    return this.cancellationLocked;
   }
 
   get signal(): AbortSignal {
     return this.abortController.signal;
+  }
+
+  /** Timestamp of the actual terminal transition, used for bounded result retention. */
+  getTerminalAt(): number | undefined {
+    return this.terminalAt;
   }
 
   pushStep(step: WizardStep) {
@@ -419,6 +528,7 @@ export class WizardSession {
       await this.runner(prompter, this.signal, this);
       if (this.status === "running") {
         this.status = "done";
+        this.terminalAt = this.now();
       }
     } catch (err) {
       if (this.status !== "running") {
@@ -431,10 +541,9 @@ export class WizardSession {
         this.status = "error";
         this.error = String(err);
       }
+      this.terminalAt = this.now();
     } finally {
-      if (this.expiryTimer) {
-        clearTimeout(this.expiryTimer);
-      }
+      this.clearExpiryTimer();
       this.resolveStep(null);
     }
   }
@@ -446,6 +555,7 @@ export class WizardSession {
     if (this.status !== "running") {
       throw new Error("wizard: session not running");
     }
+    this.refreshExpiryTimer();
     this.pushStep(step);
     const deferred = createDeferred<unknown>();
     this.answerDeferred.set(step.id, { deferred, text: step.type === "text", validate });
@@ -472,5 +582,22 @@ export class WizardSession {
 
   getError(): string | undefined {
     return this.error;
+  }
+
+  private refreshExpiryTimer(): void {
+    if (this.timeoutMs === undefined || this.status !== "running" || this.cancellationLocked) {
+      return;
+    }
+    this.clearExpiryTimer();
+    this.expiryTimer = setTimeout(() => this.cancel(), this.timeoutMs);
+    this.expiryTimer.unref?.();
+  }
+
+  private clearExpiryTimer(): void {
+    if (!this.expiryTimer) {
+      return;
+    }
+    clearTimeout(this.expiryTimer);
+    this.expiryTimer = undefined;
   }
 }

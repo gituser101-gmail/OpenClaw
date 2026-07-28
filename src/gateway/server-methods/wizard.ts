@@ -16,8 +16,34 @@ import { defaultRuntime, type RuntimeEnv } from "../../runtime.js";
 import type { WizardPrompter } from "../../wizard/prompts.js";
 import { WizardSession } from "../../wizard/session.js";
 import { formatForLog } from "../ws-log.js";
-import type { GatewayRequestContext, GatewayRequestHandlers, RespondFn } from "./types.js";
+import { resolveGatewayHostedSessionOwner } from "./hosted-session-owner.js";
+import type {
+  GatewayClient,
+  GatewayRequestContext,
+  GatewayRequestHandlers,
+  RespondFn,
+} from "./types.js";
 import { assertValidParams } from "./validation.js";
+
+const CHANNEL_WIZARD_TIMEOUT_MS = 25 * 60 * 1000;
+
+function resolveChannelWizardResumeKey(ownerKey: string | undefined): string | undefined {
+  return ownerKey ? JSON.stringify(["gateway-channel-setup", ownerKey]) : undefined;
+}
+
+async function resolveChannelRecoveryIdentity(
+  channel: string | undefined,
+  context: GatewayRequestContext,
+): Promise<{ channel: string | undefined; allowAliasMatch: boolean }> {
+  if (!channel) {
+    return { channel, allowAliasMatch: true };
+  }
+  const { resolveInitialWizardChannel } = await import("../../commands/channels/add-wizard.js");
+  const resolvedChannel = await resolveInitialWizardChannel(channel, context.getRuntimeConfig());
+  return resolvedChannel
+    ? { channel: resolvedChannel, allowAliasMatch: false }
+    : { channel, allowAliasMatch: true };
+}
 
 export type SetupWizardRunner = (
   opts: OnboardOptions,
@@ -25,15 +51,8 @@ export type SetupWizardRunner = (
   prompter: WizardPrompter,
 ) => Promise<void>;
 
-export type ChannelSetupWizardRunner = (
-  opts: {
-    channel?: string;
-    onConfigured?: (accounts: Array<{ channel: string; accountId: string }>) => void;
-    beforePersistentEffect?: () => Promise<void>;
-  },
-  runtime: RuntimeEnv,
-  prompter: WizardPrompter,
-) => Promise<void>;
+export type ChannelSetupWizardRunner =
+  typeof import("../../commands/channels/add-wizard.js").runChannelsSetupWizard;
 
 export const runDefaultSetupWizard: SetupWizardRunner = async (...args) => {
   const { runSetupWizard } = await import("../../wizard/setup.js");
@@ -52,9 +71,28 @@ function readWizardStatus(session: WizardSession) {
   };
 }
 
+function finishTerminalWizardResponse(params: {
+  context: GatewayRequestContext;
+  sessionId: string;
+  session: WizardSession;
+  collectLockedTerminal: boolean;
+}): void {
+  if (params.session.getStatus() === "running") {
+    return;
+  }
+  if (params.session.isCancellationLocked() && !params.collectLockedTerminal) {
+    // An open transport does not prove a caller accepted a late response.
+    // Retain the first result until a later owner-bound request collects it.
+    params.context.findRunningWizard();
+    return;
+  }
+  params.context.purgeWizardSession(params.sessionId);
+}
+
 /** Resolves a live wizard session or sends the public not-found error. */
 function findWizardSessionOrRespond(params: {
   context: GatewayRequestContext;
+  client: GatewayClient | null;
   respond: RespondFn;
   sessionId: string;
 }): WizardSession | null {
@@ -69,36 +107,145 @@ function findWizardSessionOrRespond(params: {
     );
     return null;
   }
+  const owner = resolveGatewayHostedSessionOwner(params.client);
+  const ownerKey = owner.kind === "stable" ? owner.key : undefined;
+  if (!session.isAccessibleBy(ownerKey)) {
+    if (owner.kind !== "stable") {
+      params.respond(
+        false,
+        undefined,
+        errorShape(ErrorCodes.INVALID_REQUEST, "wizard belongs to another caller"),
+      );
+      return null;
+    }
+    const continuityResumeKey = resolveChannelWizardResumeKey(owner.continuityKey);
+    if (!continuityResumeKey || !session.matchesResumeKey(continuityResumeKey)) {
+      params.respond(
+        false,
+        undefined,
+        errorShape(ErrorCodes.INVALID_REQUEST, "wizard belongs to another caller"),
+      );
+      return null;
+    }
+    // Shared Gateway auth rotates its exact generation while preserving the
+    // continuity principal. Adopt only cancellation-locked channel work.
+    session.adoptOwner(owner.key);
+  }
   return session;
 }
 
 /** Gateway handlers for the interactive setup wizard session lifecycle. */
 export const wizardHandlers: GatewayRequestHandlers = {
-  "wizard.start": async ({ params, respond, context }) => {
+  "wizard.start": async ({ params, respond, context, client }) => {
     if (!assertValidParams(params, validateWizardStartParams, "wizard.start", respond)) {
       return;
     }
-    const running = context.findRunningWizard();
+    const flow = params.flow ?? "setup";
+    const channel = readStringValue(params.channel);
+    const owner = flow === "channels" ? resolveGatewayHostedSessionOwner(client) : undefined;
+    if (owner && owner.kind !== "stable") {
+      respond(
+        false,
+        undefined,
+        errorShape(
+          ErrorCodes.INVALID_REQUEST,
+          "Channel setup requires an identity that can survive reconnects.",
+        ),
+      );
+      return;
+    }
+    const ownerKey = owner?.key;
+    const resumeKey =
+      flow === "channels" ? resolveChannelWizardResumeKey(owner?.continuityKey) : undefined;
+    // Canonical ids win over another plugin's alias during recovery, matching
+    // the setup resolver used when the new wizard actually starts.
+    const recoveryIdentity =
+      flow === "channels"
+        ? await resolveChannelRecoveryIdentity(channel, context)
+        : { channel, allowAliasMatch: true };
+    // The tracker owns terminal retention timestamps. Sweep before direct
+    // owner matching so an expired result cannot be replayed indefinitely.
+    let running = context.findRunningWizard();
+    let terminalSessionToPurge: string | undefined;
+    if (resumeKey) {
+      const ownerSession = [...context.wizardSessions.entries()].find(([, session]) =>
+        session.hasResumeKey(resumeKey),
+      );
+      if (
+        ownerSession &&
+        ownerSession[1].canResume(resumeKey, recoveryIdentity.channel, {
+          allowAliasMatch: recoveryIdentity.allowAliasMatch,
+        })
+      ) {
+        const [resumableId, resumableSession] = ownerSession;
+        resumableSession.adoptOwner(ownerKey);
+        const result = await resumableSession.next();
+        respond(true, { sessionId: resumableId, ...result }, undefined);
+        if (result.done) {
+          finishTerminalWizardResponse({
+            context,
+            sessionId: resumableId,
+            session: resumableSession,
+            collectLockedTerminal: true,
+          });
+        }
+        return;
+      }
+      if (ownerSession) {
+        const [staleId, staleSession] = ownerSession;
+        if (!staleSession.isCancellationLocked()) {
+          // Credential rotation can strand reversible work under the previous
+          // exact owner. Abort it before the continuity owner starts fresh.
+          staleSession.cancel();
+          context.purgeWizardSession(staleId);
+          if (running === staleId) {
+            running = null;
+          }
+        } else if (staleSession.getStatus() !== "running") {
+          // A different requested channel is fresh intent, but keep the retained
+          // result until admission proves the replacement can actually start.
+          terminalSessionToPurge = staleId;
+        }
+      }
+    }
     if (running) {
       respond(false, undefined, errorShape(ErrorCodes.UNAVAILABLE, "wizard already running"));
       return;
     }
+    if (terminalSessionToPurge) {
+      context.purgeWizardSession(terminalSessionToPurge);
+    }
     const sessionId = randomUUID();
-    const flow = params.flow ?? "setup";
     const session =
       flow === "channels"
-        ? new WizardSession((prompter, _signal, wizardSession) =>
-            context.channelWizardRunner(
-              {
-                channel: readStringValue(params.channel),
-                onConfigured: (accounts) => wizardSession.setConfiguredAccounts(accounts),
-                // Durable effects (plugin installs, config commit) must finish
-                // even if the client cancels mid-write.
-                beforePersistentEffect: async () => wizardSession.lockCancellation(),
-              },
-              defaultRuntime,
-              prompter,
-            ),
+        ? new WizardSession(
+            (prompter, signal, wizardSession) =>
+              context.channelWizardRunner(
+                {
+                  channel,
+                  onConfigured: (accounts) => wizardSession.setConfiguredAccounts(accounts),
+                  onResolvedChannel: (resolvedChannel, aliases) =>
+                    wizardSession.setResolvedChannel(resolvedChannel, aliases),
+                  abortSignal: signal,
+                  // Durable effects (plugin installs, config commit) must finish
+                  // even if the client cancels mid-write.
+                  beforePersistentEffect: async () => {
+                    if (!wizardSession.lockCancellation()) {
+                      throw new Error(
+                        "Channel setup was cancelled before its persistent change started.",
+                      );
+                    }
+                  },
+                },
+                defaultRuntime,
+                prompter,
+              ),
+            {
+              timeoutMs: CHANNEL_WIZARD_TIMEOUT_MS,
+              ...(ownerKey ? { ownerKey } : {}),
+              ...(resumeKey ? { resumeKey } : {}),
+              ...(recoveryIdentity.channel ? { requestedChannel: recoveryIdentity.channel } : {}),
+            },
           )
         : new WizardSession((prompter) =>
             context.wizardRunner(
@@ -112,22 +259,26 @@ export const wizardHandlers: GatewayRequestHandlers = {
           );
     context.wizardSessions.set(sessionId, session);
     const result = await session.next();
-    if (result.done) {
-      // Completed sessions cannot accept later answers; purge immediately so
-      // clients get a clean not-found response for stale session ids.
-      context.purgeWizardSession(sessionId);
-    }
     respond(true, { sessionId, ...result }, undefined);
+    if (result.done) {
+      finishTerminalWizardResponse({
+        context,
+        sessionId,
+        session,
+        collectLockedTerminal: false,
+      });
+    }
   },
-  "wizard.next": async ({ params, respond, context }) => {
+  "wizard.next": async ({ params, respond, context, client }) => {
     if (!assertValidParams(params, validateWizardNextParams, "wizard.next", respond)) {
       return;
     }
     const sessionId = params.sessionId;
-    const session = findWizardSessionOrRespond({ context, respond, sessionId });
+    const session = findWizardSessionOrRespond({ context, client, respond, sessionId });
     if (!session) {
       return;
     }
+    const collectingTerminal = session.getStatus() !== "running";
     const answer = params.answer as { stepId?: string; value?: unknown } | undefined;
     if (answer) {
       if (session.getStatus() !== "running") {
@@ -146,42 +297,49 @@ export const wizardHandlers: GatewayRequestHandlers = {
       }
     }
     const result = await session.next();
-    if (result.done) {
-      // The final step may be reached after an answer, so cleanup mirrors
-      // wizard.start's immediate-completion path.
-      context.purgeWizardSession(sessionId);
-    }
     respond(true, result, undefined);
+    if (result.done) {
+      finishTerminalWizardResponse({
+        context,
+        sessionId,
+        session,
+        collectLockedTerminal: collectingTerminal,
+      });
+    }
   },
-  "wizard.cancel": ({ params, respond, context }) => {
+  "wizard.cancel": ({ params, respond, context, client }) => {
     if (!assertValidParams(params, validateWizardCancelParams, "wizard.cancel", respond)) {
       return;
     }
     const sessionId = params.sessionId;
-    const session = findWizardSessionOrRespond({ context, respond, sessionId });
+    const session = findWizardSessionOrRespond({ context, client, respond, sessionId });
     if (!session) {
       return;
     }
     const cancelled = session.cancel();
     const status = readWizardStatus(session);
-    if (cancelled || status.status !== "running") {
-      context.wizardSessions.delete(sessionId);
-    }
     respond(true, status, undefined);
+    if (cancelled || status.status !== "running") {
+      finishTerminalWizardResponse({
+        context,
+        sessionId,
+        session,
+        collectLockedTerminal: true,
+      });
+    }
   },
-  "wizard.status": ({ params, respond, context }) => {
+  "wizard.status": ({ params, respond, context, client }) => {
     if (!assertValidParams(params, validateWizardStatusParams, "wizard.status", respond)) {
       return;
     }
     const sessionId = params.sessionId;
-    const session = findWizardSessionOrRespond({ context, respond, sessionId });
+    const session = findWizardSessionOrRespond({ context, client, respond, sessionId });
     if (!session) {
       return;
     }
     const status = readWizardStatus(session);
-    if (status.status !== "running") {
-      context.wizardSessions.delete(sessionId);
-    }
     respond(true, status, undefined);
+    // Status polling is observational. Only a full terminal result or an
+    // explicit cancel may discard retained channels/accounts recovery data.
   },
 };

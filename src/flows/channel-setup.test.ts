@@ -399,27 +399,43 @@ describe("setupChannels workspace shadow exclusion", () => {
         configured: false,
         statusLines: [],
       })),
-      configure: vi.fn(async ({ cfg }: { cfg: Record<string, unknown> }) => ({
-        cfg: {
-          ...cfg,
-          channels: {
-            "custom-chat": { token: "secret" },
-          },
+      configure: vi.fn(
+        async ({
+          cfg,
+          options,
+        }: {
+          cfg: Record<string, unknown>;
+          options?: { beforePersistentEffect?: () => Promise<void> };
+        }) => {
+          await options?.beforePersistentEffect?.();
+          return {
+            cfg: {
+              ...cfg,
+              channels: {
+                "custom-chat": { token: "secret" },
+              },
+            },
+          };
         },
-      })),
+      ),
     };
-    const activePlugin = makeSetupPlugin({
-      id: "custom-chat",
-      label: "Custom Chat",
-      setupWizard,
-    });
+    const activePlugin = {
+      ...makeSetupPlugin({
+        id: "custom-chat",
+        label: "Custom Chat",
+        setupWizard,
+      }),
+      meta: makeMeta("custom-chat", "Custom Chat", { aliases: ["custom-chat-alias"] }),
+    };
     listActiveChannelSetupPlugins.mockReturnValue([activePlugin]);
     resolveChannelSetupEntries.mockReturnValue(
       makeChannelSetupEntries({
         entries: [
           {
             id: "custom-chat",
-            meta: makeMeta("custom-chat", "Custom Chat"),
+            meta: makeMeta("custom-chat", "Custom Chat", {
+              aliases: ["custom-chat-alias"],
+            }),
           },
         ],
         installedCatalogEntries: [],
@@ -429,6 +445,8 @@ describe("setupChannels workspace shadow exclusion", () => {
       }),
     );
     const select = vi.fn().mockResolvedValueOnce("custom-chat").mockResolvedValueOnce("__done__");
+    const abortController = new AbortController();
+    const onChannelSelected = vi.fn();
 
     const next = await setupChannels(
       {} as never,
@@ -442,17 +460,25 @@ describe("setupChannels workspace shadow exclusion", () => {
         deferStatusUntilSelection: true,
         skipConfirm: true,
         skipDmPolicyPrompt: true,
+        abortSignal: abortController.signal,
+        onChannelSelected,
       },
     );
 
+    expect(onChannelSelected).toHaveBeenCalledWith("custom-chat", ["custom-chat-alias"]);
     expect(loadChannelSetupPluginRegistrySnapshotForChannel).not.toHaveBeenCalled();
-    expect(callArg<{ cfg?: unknown }>(setupWizard.configure).cfg).toEqual({
+    const configureInput = callArg<{
+      cfg?: unknown;
+      options?: { abortSignal?: AbortSignal };
+    }>(setupWizard.configure);
+    expect(configureInput.cfg).toEqual({
       plugins: {
         entries: {
           "custom-chat": { enabled: true },
         },
       },
     });
+    expect(configureInput.options?.abortSignal).toBe(abortController.signal);
     expect(next).toEqual({
       plugins: {
         entries: {
@@ -742,6 +768,7 @@ describe("setupChannels workspace shadow exclusion", () => {
     const confirm = vi.fn(async () => {
       throw new WizardNavigationError("back");
     });
+    const onChannelSelected = vi.fn();
     const cfg = { channels: { telegram: { botToken: "keep" } } } as OpenClawConfig;
 
     const result = await setupChannels(
@@ -756,6 +783,7 @@ describe("setupChannels workspace shadow exclusion", () => {
         deferStatusUntilSelection: true,
         skipConfirm: true,
         skipDmPolicyPrompt: true,
+        onChannelSelected,
       },
     );
 
@@ -766,6 +794,7 @@ describe("setupChannels workspace shadow exclusion", () => {
       }),
     );
     expect(loadChannelSetupPluginRegistrySnapshotForChannel).not.toHaveBeenCalled();
+    expect(onChannelSelected).not.toHaveBeenCalled();
     expect(result).toEqual(cfg);
   });
 

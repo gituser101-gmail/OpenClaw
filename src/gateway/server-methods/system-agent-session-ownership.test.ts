@@ -1,14 +1,22 @@
 // System-agent session tests cover caller ownership and response projection.
 
 import { expectDefined } from "@openclaw/normalization-core";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, type Mocked, vi } from "vitest";
 import { resetCommandQueueStateForTest } from "../../process/command-queue.test-support.js";
+import type { SystemAgentChatEngine } from "../../system-agent/chat-engine.js";
+import { SystemAgentInferenceUnavailableError } from "../../system-agent/inference-error.js";
+import type { SystemAgentOverview } from "../../system-agent/overview.js";
 import { systemAgentHandlers, type SystemAgentChatSession } from "./system-agent.js";
 import type { GatewayClient, GatewayRequestContext, RespondFn } from "./types.js";
 
 const setupInferenceMocks = vi.hoisted(() => ({ verifySetupInference: vi.fn() }));
 const delegatedInferenceMocks = vi.hoisted(() => ({
   verifySystemAgentInferenceWithFallback: vi.fn(),
+}));
+const transcriptMocks = vi.hoisted(() => ({
+  appendTranscriptReset: vi.fn(),
+  appendTranscriptTurn: vi.fn(),
+  readTranscriptTail: vi.fn(() => []),
 }));
 
 vi.mock("../../system-agent/setup-inference.js", () => ({
@@ -18,11 +26,7 @@ vi.mock("../../system-agent/inference-fallback.js", () => ({
   verifySystemAgentInferenceWithFallback:
     delegatedInferenceMocks.verifySystemAgentInferenceWithFallback,
 }));
-vi.mock("../../system-agent/transcript-store.js", () => ({
-  appendTranscriptReset: vi.fn(),
-  appendTranscriptTurn: vi.fn(),
-  readTranscriptTail: vi.fn(() => []),
-}));
+vi.mock("../../system-agent/transcript-store.js", () => transcriptMocks);
 // Ownership tests exercise fresh-session creation; keep the caretaker greeting
 // deterministic so identity behavior is the only variable under test.
 vi.mock("../../system-agent/greeting.js", () => ({
@@ -37,16 +41,35 @@ vi.mock("../../system-agent/greeting.js", () => ({
   resolveSystemAgentGreeting: vi.fn(async () => ({ text: "welcome text", source: "template" })),
 }));
 
-type FakeEngine = {
-  handle: ReturnType<typeof vi.fn>;
-  seedHistory: ReturnType<typeof vi.fn>;
-  historyLength: ReturnType<typeof vi.fn>;
-  historySince: ReturnType<typeof vi.fn>;
-  getPendingOperatorProposal: ReturnType<typeof vi.fn>;
-  resolveOperatorApproval: ReturnType<typeof vi.fn>;
-  dispose: ReturnType<typeof vi.fn>;
-  loadOverview: ReturnType<typeof vi.fn>;
-  noteAssistantMessage: ReturnType<typeof vi.fn>;
+type FakeEngine = Mocked<
+  Pick<
+    SystemAgentChatEngine,
+    | "handle"
+    | "seedHistory"
+    | "historyLength"
+    | "historySince"
+    | "getPendingOperatorProposal"
+    | "resolveOperatorApproval"
+    | "dispose"
+    | "hasLockedHostedWizard"
+    | "resumeLockedHostedWizard"
+    | "loadOverview"
+    | "noteAssistantMessage"
+  >
+>;
+
+const testOverview: SystemAgentOverview = {
+  config: { path: "openclaw.json", exists: true, valid: true, issues: [], hash: "test" },
+  agents: [],
+  defaultAgentId: "main",
+  tools: {
+    codex: { command: "codex", found: false },
+    claude: { command: "claude", found: false },
+    gemini: { command: "gemini", found: false },
+    apiKeys: { openai: false, anthropic: false },
+  },
+  gateway: { url: "ws://127.0.0.1", source: "test", reachable: true },
+  references: { docsUrl: "https://docs.openclaw.ai", sourceUrl: "https://github.com/openclaw" },
 };
 
 function makeEngine(): FakeEngine {
@@ -57,18 +80,25 @@ function makeEngine(): FakeEngine {
     historySince: vi.fn(() => []),
     getPendingOperatorProposal: vi.fn(() => null),
     resolveOperatorApproval: vi.fn(async () => null),
-    dispose: vi.fn(async () => undefined),
-    loadOverview: vi.fn(async () => ({})),
+    dispose: vi.fn(async () => true),
+    hasLockedHostedWizard: vi.fn(() => false),
+    resumeLockedHostedWizard: vi.fn(async () => null),
+    loadOverview: vi.fn(async () => testOverview),
     noteAssistantMessage: vi.fn(),
   };
 }
 
 const createdEngines = vi.hoisted(() => [] as FakeEngine[]);
+const createdEngineOptions = vi.hoisted(() => [] as Array<{ allowHostedChannelSetup?: boolean }>);
 
 vi.mock("../../system-agent/chat-engine.js", () => ({
-  SystemAgentChatEngine: function FakeSystemAgentChatEngine(this: FakeEngine) {
+  SystemAgentChatEngine: function FakeSystemAgentChatEngine(
+    this: FakeEngine,
+    options: { allowHostedChannelSetup?: boolean },
+  ) {
     const engine = makeEngine();
     createdEngines.push(engine);
+    createdEngineOptions.push(options);
     Object.assign(this, engine);
   },
 }));
@@ -82,6 +112,7 @@ function makeClient(params: {
   connId: string;
   deviceId?: string;
   authenticatedUserId?: string;
+  sharedAuthGeneration?: string;
 }): GatewayClient {
   return {
     connId: params.connId,
@@ -90,13 +121,25 @@ function makeClient(params: {
       ...(params.deviceId ? { device: { id: params.deviceId } } : {}),
     },
     ...(params.authenticatedUserId ? { authenticatedUserId: params.authenticatedUserId } : {}),
+    ...(params.sharedAuthGeneration
+      ? {
+          usesSharedGatewayAuth: true,
+          sharedGatewaySessionGeneration: params.sharedAuthGeneration,
+        }
+      : {}),
   } as GatewayClient;
 }
 
 const defaultClient = makeClient({ connId: "conn-test", deviceId: "device-test" });
 
-function makeContext(sessions: Map<string, SystemAgentChatSession>): GatewayRequestContext {
-  return { systemAgentSessions: sessions } as unknown as GatewayRequestContext;
+function makeContext(
+  sessions: Map<string, SystemAgentChatSession>,
+  systemAgentApprovalManager?: { expire: ReturnType<typeof vi.fn> },
+): GatewayRequestContext {
+  return {
+    systemAgentSessions: sessions,
+    ...(systemAgentApprovalManager ? { systemAgentApprovalManager } : {}),
+  } as unknown as GatewayRequestContext;
 }
 
 function seededSession(params?: {
@@ -108,7 +151,7 @@ function seededSession(params?: {
     welcome: "welcome text",
     lastUsedAt: 1,
     ownerKey: params?.ownerKey ?? "device:device-test",
-  } as unknown as SystemAgentChatSession;
+  };
 }
 
 async function callChat(
@@ -132,6 +175,7 @@ async function callChat(
 
 beforeEach(() => {
   createdEngines.length = 0;
+  createdEngineOptions.length = 0;
   setupInferenceMocks.verifySetupInference.mockResolvedValue({ ok: true, binding: {} });
   delegatedInferenceMocks.verifySystemAgentInferenceWithFallback.mockResolvedValue({
     ok: true,
@@ -145,6 +189,220 @@ afterEach(() => {
 });
 
 describe("openclaw.chat session ownership", () => {
+  it("adopts one locked wizard only for its exact owner after the session id changes", async () => {
+    const retained = makeEngine();
+    retained.hasLockedHostedWizard.mockReturnValue(true);
+    retained.resumeLockedHostedWizard.mockResolvedValue({
+      text: "Retry validation?",
+      action: "none",
+      wizardInputPending: true,
+    });
+    const sessions = new Map<string, SystemAgentChatSession>([
+      ["old-session", seededSession({ engine: retained })],
+    ]);
+
+    const call = await callChat(makeContext(sessions), { sessionId: "new-session" });
+
+    expect(call).toMatchObject({
+      ok: true,
+      payload: {
+        sessionId: "new-session",
+        reply: "Retry validation?",
+        wizardInputPending: true,
+      },
+    });
+    expect(sessions.has("old-session")).toBe(true);
+    expect(sessions.get("new-session")?.engine).toBe(retained);
+    expect(retained.resumeLockedHostedWizard).toHaveBeenCalledOnce();
+    expect(createdEngines).toHaveLength(0);
+
+    const retry = await callChat(makeContext(sessions), { sessionId: "new-session" });
+
+    expect(retry).toMatchObject({
+      ok: true,
+      payload: {
+        sessionId: "new-session",
+        reply: "Retry validation?",
+        wizardInputPending: true,
+      },
+    });
+    expect(retained.resumeLockedHostedWizard).toHaveBeenCalledTimes(2);
+    expect(createdEngines).toHaveLength(0);
+
+    const original = await callChat(makeContext(sessions), {
+      sessionId: "old-session",
+      message: "yes",
+    });
+
+    expect(original.ok).toBe(true);
+    expect(retained.handle).toHaveBeenCalledWith("yes");
+  });
+
+  it("bounds reconnect aliases while preserving the newest session ids", async () => {
+    const retained = makeEngine();
+    retained.hasLockedHostedWizard.mockReturnValue(true);
+    retained.resumeLockedHostedWizard.mockResolvedValue({
+      text: "Retry validation?",
+      action: "none",
+      wizardInputPending: true,
+    });
+    const sessions = new Map<string, SystemAgentChatSession>([
+      ["original", seededSession({ engine: retained })],
+    ]);
+
+    for (let index = 1; index <= 5; index += 1) {
+      const call = await callChat(makeContext(sessions), { sessionId: `reconnect-${index}` });
+      expect(call.ok).toBe(true);
+    }
+
+    expect([...sessions.keys()]).toEqual([
+      "reconnect-2",
+      "reconnect-3",
+      "reconnect-4",
+      "reconnect-5",
+    ]);
+    expect(new Set(sessions.values())).toEqual(new Set([sessions.get("reconnect-5")]));
+    expect(retained.resumeLockedHostedWizard).toHaveBeenCalledTimes(5);
+  });
+
+  it("persists a terminal wizard reply generated during recovery only once", async () => {
+    const retained = makeEngine();
+    const history = [
+      { role: "user" as const, text: "connect matrix" },
+      { role: "assistant" as const, text: "Applying channel setup." },
+    ];
+    retained.hasLockedHostedWizard.mockReturnValue(true);
+    retained.historyLength.mockImplementation(() => history.length);
+    retained.historySince.mockImplementation((index: number) => history.slice(index));
+    retained.resumeLockedHostedWizard.mockImplementation(async () => {
+      if (history.length === 2) {
+        history.push({ role: "assistant", text: "Done — matrix is configured." });
+      }
+      return { text: "Done — matrix is configured.", action: "none" };
+    });
+    const sessions = new Map<string, SystemAgentChatSession>([
+      ["old-session", seededSession({ engine: retained })],
+    ]);
+
+    const first = await callChat(makeContext(sessions), { sessionId: "new-session" });
+    const retry = await callChat(makeContext(sessions), { sessionId: "new-session" });
+
+    expect(first.payload).toMatchObject({ reply: "Done — matrix is configured." });
+    expect(retry.payload).toMatchObject({ reply: "Done — matrix is configured." });
+    expect(transcriptMocks.appendTranscriptTurn).toHaveBeenCalledOnce();
+    expect(transcriptMocks.appendTranscriptTurn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        role: "assistant",
+        text: "Done — matrix is configured.",
+      }),
+    );
+  });
+
+  it("requires a welcome handshake before aliasing a locked wizard", async () => {
+    const retained = makeEngine();
+    retained.hasLockedHostedWizard.mockReturnValue(true);
+    const sessions = new Map<string, SystemAgentChatSession>([
+      ["old-session", seededSession({ engine: retained })],
+    ]);
+
+    const call = await callChat(makeContext(sessions), {
+      sessionId: "unproven-session",
+      message: "yes",
+    });
+
+    expect(call).toMatchObject({ ok: false, error: { code: "INVALID_REQUEST" } });
+    expect(sessions.has("old-session")).toBe(true);
+    expect(sessions.has("unproven-session")).toBe(false);
+    expect(retained.handle).not.toHaveBeenCalled();
+    expect(createdEngines).toHaveLength(0);
+  });
+
+  it("blocks a bound sibling turn and adopts the owner's locked wizard on welcome", async () => {
+    const retained = makeEngine();
+    retained.hasLockedHostedWizard.mockReturnValue(true);
+    retained.resumeLockedHostedWizard.mockResolvedValue({
+      text: "Retry validation?",
+      action: "none",
+      wizardInputPending: true,
+    });
+    const sibling = makeEngine();
+    const sessions = new Map<string, SystemAgentChatSession>([
+      ["locked-session", seededSession({ engine: retained })],
+      ["sibling-session", seededSession({ engine: sibling })],
+    ]);
+    const context = makeContext(sessions);
+
+    const blocked = await callChat(context, {
+      sessionId: "sibling-session",
+      message: "connect telegram",
+    });
+
+    expect(blocked).toMatchObject({ ok: false, error: { code: "INVALID_REQUEST" } });
+    expect(sibling.handle).not.toHaveBeenCalled();
+    expect(sibling.dispose).not.toHaveBeenCalled();
+
+    const recovered = await callChat(context, { sessionId: "sibling-session" });
+
+    expect(recovered).toMatchObject({
+      ok: true,
+      payload: {
+        sessionId: "sibling-session",
+        reply: "Retry validation?",
+        wizardInputPending: true,
+      },
+    });
+    expect(sibling.dispose).toHaveBeenCalledOnce();
+    expect(sessions.get("sibling-session")?.engine).toBe(retained);
+    expect(retained.resumeLockedHostedWizard).toHaveBeenCalledOnce();
+  });
+
+  it("does not adopt a locked wizard owned by another caller", async () => {
+    const retained = makeEngine();
+    retained.hasLockedHostedWizard.mockReturnValue(true);
+    const sessions = new Map<string, SystemAgentChatSession>([
+      [
+        "owner-session",
+        seededSession({
+          engine: retained,
+          ownerKey: "user:owner@example.com",
+        }),
+      ],
+    ]);
+
+    const call = await callChat(
+      makeContext(sessions),
+      { sessionId: "attacker-session" },
+      makeClient({
+        connId: "attacker-connection",
+        authenticatedUserId: "attacker@example.com",
+      }),
+    );
+
+    expect(call.ok).toBe(true);
+    expect(sessions.get("owner-session")?.engine).toBe(retained);
+    expect(sessions.get("attacker-session")?.engine).not.toBe(retained);
+    expect(retained.resumeLockedHostedWizard).not.toHaveBeenCalled();
+  });
+
+  it("refuses ambiguous adoption when one owner has multiple locked wizards", async () => {
+    const first = makeEngine();
+    const second = makeEngine();
+    first.hasLockedHostedWizard.mockReturnValue(true);
+    second.hasLockedHostedWizard.mockReturnValue(true);
+    const sessions = new Map<string, SystemAgentChatSession>([
+      ["first", seededSession({ engine: first })],
+      ["second", seededSession({ engine: second })],
+    ]);
+
+    const call = await callChat(makeContext(sessions), { sessionId: "replacement" });
+
+    expect(call).toMatchObject({ ok: false, error: { code: "INVALID_REQUEST" } });
+    expect(sessions.has("first")).toBe(true);
+    expect(sessions.has("second")).toBe(true);
+    expect(sessions.has("replacement")).toBe(false);
+    expect(createdEngines).toHaveLength(0);
+  });
+
   it("binds a new non-delegated session and rejects another principal", async () => {
     const sessions = new Map<string, SystemAgentChatSession>();
     const context = makeContext(sessions);
@@ -246,10 +504,41 @@ describe("openclaw.chat session ownership", () => {
     expect(handle).toHaveBeenCalledWith("continue");
   });
 
+  it("lets shared-auth sessions resume after credential rotation", async () => {
+    const sessions = new Map<string, SystemAgentChatSession>();
+    const context = makeContext(sessions);
+    await callChat(
+      context,
+      { sessionId: "shared-auth-reconnect" },
+      makeClient({ connId: "conn-old", sharedAuthGeneration: "generation-old" }),
+    );
+    const handle = expectDefined(createdEngines[0], "created system-agent engine").handle;
+
+    const resumed = await callChat(
+      context,
+      { sessionId: "shared-auth-reconnect", message: "continue" },
+      makeClient({ connId: "conn-new", sharedAuthGeneration: "generation-new" }),
+    );
+
+    expect(resumed.ok).toBe(true);
+    expect(handle).toHaveBeenCalledWith("continue");
+  });
+
   it("rejects non-delegated chat without a server-authenticated identity", async () => {
     const call = await callChat(makeContext(new Map()), { sessionId: "anonymous" }, null);
 
     expect(call).toMatchObject({ ok: false, error: { code: "INVALID_REQUEST" } });
+  });
+
+  it("keeps device-less auth-none chats scoped to their connection", async () => {
+    const sessions = new Map<string, SystemAgentChatSession>();
+    const client = makeClient({ connId: "auth-none-connection" });
+
+    const call = await callChat(makeContext(sessions), { sessionId: "auth-none" }, client);
+
+    expect(call.ok).toBe(true);
+    expect(sessions.get("auth-none")?.ownerKey).toBe("connection:auth-none-connection");
+    expect(createdEngineOptions[0]?.allowHostedChannelSetup).toBe(false);
   });
 
   it("keeps explicit delegation authoritative across connection identities", async () => {
@@ -261,6 +550,7 @@ describe("openclaw.chat session ownership", () => {
       { sessionId: "delegated", delegation },
       makeClient({ connId: "conn-owner", deviceId: "device-owner" }),
     );
+    expect(createdEngineOptions[0]?.allowHostedChannelSetup).toBe(true);
     const handle = expectDefined(createdEngines[0], "created delegated engine").handle;
 
     const resumed = await callChat(
@@ -295,6 +585,189 @@ describe("openclaw.chat session ownership", () => {
 });
 
 describe("openclaw.chat session responses", () => {
+  it("refuses reset while a hosted wizard owns locked work", async () => {
+    const engine = makeEngine();
+    engine.dispose.mockResolvedValue(false);
+    engine.hasLockedHostedWizard.mockReturnValue(true);
+    const sessions = new Map<string, SystemAgentChatSession>([
+      ["locked", seededSession({ engine })],
+    ]);
+
+    const call = await callChat(makeContext(sessions), { sessionId: "locked", reset: true });
+
+    expect(call).toMatchObject({
+      ok: false,
+      error: { code: "INVALID_REQUEST" },
+    });
+    expect(sessions.get("locked")?.engine).toBe(engine);
+    expect(engine.dispose).not.toHaveBeenCalled();
+  });
+
+  it("revokes every reconnect alias before reset cleanup yields", async () => {
+    let releaseCleanup!: () => void;
+    const cleanupGate = new Promise<void>((resolve) => {
+      releaseCleanup = resolve;
+    });
+    const engine = makeEngine();
+    engine.dispose.mockReturnValue(cleanupGate.then(() => true));
+    const session = seededSession({ engine });
+    const sessions = new Map<string, SystemAgentChatSession>([
+      ["original", session],
+      ["reconnected", session],
+    ]);
+
+    const call = callChat(makeContext(sessions), { sessionId: "reconnected", reset: true });
+    await vi.waitFor(() => expect(engine.dispose).toHaveBeenCalledOnce());
+
+    expect(sessions.has("original")).toBe(false);
+    expect(sessions.has("reconnected")).toBe(false);
+    releaseCleanup();
+    expect((await call).ok).toBe(true);
+    expect(sessions.get("reconnected")?.engine).not.toBe(engine);
+  });
+
+  it("counts reconnect aliases as one session for capacity", async () => {
+    const sessions = new Map<string, SystemAgentChatSession>();
+    const aliased = seededSession();
+    sessions.set("original", aliased);
+    sessions.set("reconnect-1", aliased);
+    sessions.set("reconnect-2", aliased);
+    for (let index = 1; index <= 6; index += 1) {
+      sessions.set(`existing-${index}`, seededSession());
+    }
+
+    const call = await callChat(makeContext(sessions), { sessionId: "replacement" });
+
+    expect(call.ok).toBe(true);
+    expect(sessions.has("original")).toBe(true);
+    expect(sessions.has("reconnect-1")).toBe(true);
+    expect(sessions.has("reconnect-2")).toBe(true);
+    expect(aliased.engine.dispose).not.toHaveBeenCalled();
+    expect(new Set(sessions.values()).size).toBe(8);
+  });
+
+  it("evicts the oldest disposable session and keeps locked work owned", async () => {
+    const sessions = new Map<string, SystemAgentChatSession>();
+    const locked = makeEngine();
+    locked.dispose.mockResolvedValue(false);
+    locked.hasLockedHostedWizard.mockReturnValue(true);
+    sessions.set(
+      "locked-oldest",
+      seededSession({ engine: locked, ownerKey: "device:other-device" }),
+    );
+    for (let index = 1; index < 8; index += 1) {
+      const engine = makeEngine();
+      sessions.set(`candidate-${index}`, seededSession({ engine, ownerKey: "device:device-test" }));
+      const session = expectDefined(sessions.get(`candidate-${index}`), "eviction candidate");
+      session.lastUsedAt = index;
+    }
+
+    const call = await callChat(makeContext(sessions), { sessionId: "replacement" });
+
+    expect(call.ok).toBe(true);
+    expect(sessions.has("locked-oldest")).toBe(true);
+    expect(sessions.has("candidate-1")).toBe(false);
+    expect(sessions.has("replacement")).toBe(true);
+    expect(sessions.size).toBe(8);
+    expect(locked.dispose).not.toHaveBeenCalled();
+  });
+
+  it("rejects a new session when every eviction candidate owns locked work", async () => {
+    const sessions = new Map<string, SystemAgentChatSession>();
+    for (let index = 0; index < 8; index += 1) {
+      const engine = makeEngine();
+      engine.dispose.mockResolvedValue(false);
+      engine.hasLockedHostedWizard.mockReturnValue(true);
+      sessions.set(
+        `locked-${index}`,
+        seededSession({ engine, ownerKey: `device:locked-device-${index}` }),
+      );
+    }
+    transcriptMocks.appendTranscriptTurn.mockClear();
+    const replacementHistory = [{ role: "assistant" as const, text: "welcome text" }];
+
+    const callPromise = callChat(makeContext(sessions), { sessionId: "replacement" });
+    await vi.waitFor(() => expect(createdEngines).toHaveLength(1));
+    expectDefined(createdEngines[0], "replacement engine").historySince.mockReturnValue(
+      replacementHistory,
+    );
+    const call = await callPromise;
+
+    expect(call).toMatchObject({ ok: false, error: { code: "UNAVAILABLE" } });
+    expect(sessions.size).toBe(8);
+    expect(sessions.has("replacement")).toBe(false);
+    expect(expectDefined(createdEngines[0], "replacement engine").dispose).toHaveBeenCalledOnce();
+    expect(transcriptMocks.appendTranscriptTurn).not.toHaveBeenCalled();
+  });
+
+  it("revokes an evicted session before asynchronous cleanup yields", async () => {
+    let releaseCleanup!: () => void;
+    const cleanupGate = new Promise<void>((resolve) => {
+      releaseCleanup = resolve;
+    });
+    const sessions = new Map<string, SystemAgentChatSession>();
+    const candidateEngine = makeEngine();
+    const candidate = seededSession({ engine: candidateEngine });
+    candidate.pendingApproval = { id: "approval-1", proposalHash: "hash-1" };
+    candidateEngine.dispose.mockReturnValue(cleanupGate.then(() => true));
+    sessions.set("candidate", candidate);
+    sessions.set("candidate-reconnected", candidate);
+    for (let index = 1; index < 8; index += 1) {
+      const session = seededSession();
+      session.lastUsedAt = index;
+      sessions.set(`existing-${index}`, session);
+    }
+    const expire = vi.fn();
+
+    const call = callChat(makeContext(sessions, { expire }), { sessionId: "replacement" });
+    await vi.waitFor(() => expect(candidate.engine.dispose).toHaveBeenCalledOnce());
+
+    expect(sessions.has("candidate")).toBe(false);
+    expect(sessions.has("candidate-reconnected")).toBe(false);
+    expect(expire).toHaveBeenCalledWith("approval-1", "session-evicted");
+    releaseCleanup();
+    expect((await call).ok).toBe(true);
+    expect(sessions.size).toBe(8);
+  });
+
+  it("retains locked work when inference failure cleanup refuses disposal", async () => {
+    const engine = makeEngine();
+    engine.handle.mockRejectedValue(new SystemAgentInferenceUnavailableError("conversation"));
+    engine.dispose.mockResolvedValue(false);
+    const sessions = new Map<string, SystemAgentChatSession>([
+      ["locked", seededSession({ engine })],
+    ]);
+
+    const call = await callChat(makeContext(sessions), {
+      sessionId: "locked",
+      message: "continue",
+    });
+
+    expect(call).toMatchObject({ ok: false, error: { code: "UNAVAILABLE" } });
+    expect(sessions.get("locked")?.engine).toBe(engine);
+    expect(engine.dispose).toHaveBeenCalledOnce();
+  });
+
+  it("removes every reconnect alias after inference failure cleanup", async () => {
+    const engine = makeEngine();
+    engine.handle.mockRejectedValue(new SystemAgentInferenceUnavailableError("conversation"));
+    const session = seededSession({ engine });
+    const sessions = new Map<string, SystemAgentChatSession>([
+      ["original", session],
+      ["reconnected", session],
+    ]);
+
+    const call = await callChat(makeContext(sessions), {
+      sessionId: "reconnected",
+      message: "continue",
+    });
+
+    expect(call).toMatchObject({ ok: false, error: { code: "UNAVAILABLE" } });
+    expect(engine.dispose).toHaveBeenCalledOnce();
+    expect(sessions.has("original")).toBe(false);
+    expect(sessions.has("reconnected")).toBe(false);
+  });
+
   it("returns the stored welcome when no message is sent", async () => {
     const sessions = new Map<string, SystemAgentChatSession>([["s1", seededSession()]]);
     const call = await callChat(makeContext(sessions), { sessionId: "s1" });

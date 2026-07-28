@@ -23,6 +23,8 @@ import {
 import { baseConfigSnapshot, createTestRuntime } from "./test-runtime-config-helpers.js";
 
 let channelsAddCommand: typeof import("./channels/add.js").channelsAddCommand;
+let runChannelsSetupWizard: typeof import("./channels/add-wizard.js").runChannelsSetupWizard;
+type SetupChannels = typeof import("./onboard-channels.js").setupChannels;
 
 const catalogMocks = vi.hoisted(() => ({
   getChannelPluginCatalogEntry: vi.fn(),
@@ -53,11 +55,13 @@ const channelWizardMocks = vi.hoisted(() => {
     confirm: vi.fn(async () => false),
     note: vi.fn(async () => undefined),
     select: vi.fn(),
+    multiselect: vi.fn(),
     text: vi.fn(),
+    progress: vi.fn(() => ({ update: vi.fn(), stop: vi.fn() })),
   };
   return {
     prompter,
-    setupChannels: vi.fn(async (...args: unknown[]) => args[0] as OpenClawConfig),
+    setupChannels: vi.fn<SetupChannels>(async (cfg) => cfg),
   };
 });
 
@@ -428,6 +432,7 @@ async function runSignalAddCommand(
 describe("channelsAddCommand", () => {
   beforeAll(async () => {
     ({ channelsAddCommand } = await import("./channels/add.js"));
+    ({ runChannelsSetupWizard } = await import("./channels/add-wizard.js"));
   });
 
   beforeEach(async () => {
@@ -482,9 +487,7 @@ describe("channelsAddCommand", () => {
     channelWizardMocks.prompter.select.mockClear();
     channelWizardMocks.prompter.text.mockClear();
     channelWizardMocks.setupChannels.mockClear();
-    channelWizardMocks.setupChannels.mockImplementation(
-      async (...args: unknown[]) => args[0] as OpenClawConfig,
-    );
+    channelWizardMocks.setupChannels.mockImplementation(async (cfg) => cfg);
     setMinimalChannelsAddRegistryForTests();
   });
 
@@ -507,6 +510,109 @@ describe("channelsAddCommand", () => {
     expect(setupOptions().promptAccountIds).toBe(true);
     expect(configMocks.writeConfigFile).not.toHaveBeenCalled();
     expect(channelWizardMocks.prompter.outro).toHaveBeenCalledWith("No channel changes made.");
+  });
+
+  it("forwards the hosted cancellation signal through the default Gateway runner", async () => {
+    const abortController = new AbortController();
+    const config: OpenClawConfig = { channels: {} };
+    configMocks.readConfigFileSnapshot.mockResolvedValue({
+      ...baseConfigSnapshot,
+      sourceConfig: config,
+      config,
+    });
+
+    await runChannelsSetupWizard(
+      { abortSignal: abortController.signal },
+      runtime,
+      channelWizardMocks.prompter,
+    );
+
+    expect(setupOptions().abortSignal).toBe(abortController.signal);
+  });
+
+  it("binds browse-all channel aliases immediately before config commit", async () => {
+    const config: OpenClawConfig = { channels: {} };
+    const configured: OpenClawConfig = {
+      channels: {
+        twitch: { enabled: true },
+      },
+    };
+    const events: string[] = [];
+    const onResolvedChannel = vi.fn((_channel: string, _aliases?: readonly string[]) => {
+      events.push("identity");
+    });
+    const beforePersistentEffect = vi.fn(async () => {
+      events.push("guard");
+    });
+    pluginInstallRecordCommitMocks.commitConfigWithPendingPluginInstalls.mockImplementationOnce(
+      async (params: { nextConfig: unknown }) => {
+        events.push("commit");
+        await configMocks.writeConfigFile(params.nextConfig);
+        return {
+          config: params.nextConfig,
+          installRecords: {},
+          movedInstallRecords: false,
+        };
+      },
+    );
+    configMocks.readConfigFileSnapshot.mockResolvedValue({
+      ...baseConfigSnapshot,
+      sourceConfig: config,
+      config,
+    });
+    channelWizardMocks.setupChannels.mockImplementationOnce(
+      async (_cfg, _runtime, _prompter, options) => {
+        options?.onPendingChannelEffects?.([{ channel: "twitch", aliases: ["twitch-chat"] }]);
+        options?.onSelection?.(["twitch"]);
+        return configured;
+      },
+    );
+
+    await runChannelsSetupWizard(
+      { onResolvedChannel, beforePersistentEffect },
+      runtime,
+      channelWizardMocks.prompter,
+    );
+
+    expect(onResolvedChannel).toHaveBeenCalledOnce();
+    expect(onResolvedChannel).toHaveBeenCalledWith("twitch", ["twitch-chat"]);
+    expect(events).toEqual(["guard", "identity", "commit"]);
+    expect(configMocks.writeConfigFile).toHaveBeenCalledWith(configured);
+  });
+
+  it("does not bind a targeted channel abandoned before another channel commits", async () => {
+    const config: OpenClawConfig = { channels: {} };
+    const configured: OpenClawConfig = {
+      channels: {
+        discord: { enabled: true },
+      },
+    };
+    const onResolvedChannel = vi.fn();
+    configMocks.readConfigFileSnapshot.mockResolvedValue({
+      ...baseConfigSnapshot,
+      sourceConfig: config,
+      config,
+    });
+    channelWizardMocks.setupChannels.mockImplementationOnce(
+      async (_cfg, _runtime, _prompter, options) => {
+        options?.onPendingChannelEffects?.([{ channel: "discord" }]);
+        options?.onSelection?.(["discord"]);
+        return configured;
+      },
+    );
+
+    await runChannelsSetupWizard(
+      {
+        channel: "lifecycle-chat",
+        onResolvedChannel,
+        beforePersistentEffect: async () => undefined,
+      },
+      runtime,
+      channelWizardMocks.prompter,
+    );
+
+    expect(onResolvedChannel).toHaveBeenCalledOnce();
+    expect(onResolvedChannel).toHaveBeenCalledWith("discord", undefined);
   });
 
   it("persists an accepted plugin install after setup returns to an empty selection", async () => {

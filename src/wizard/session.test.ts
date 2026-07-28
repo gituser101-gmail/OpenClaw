@@ -194,6 +194,102 @@ describe("WizardSession", () => {
     expect((await session.next()).status).toBe("done");
   });
 
+  test("refuses the durable lock when cancellation already won", () => {
+    const session = new WizardSession(async () => {});
+
+    expect(session.cancel()).toBe(true);
+    expect(session.lockCancellation()).toBe(false);
+    expect(session.getStatus()).toBe("cancelled");
+    expect(session.signal.aborted).toBe(true);
+  });
+
+  test("keeps the durable lock through an uncollected terminal result", async () => {
+    const session = new WizardSession(
+      async (_prompter, _signal, wizardSession) => {
+        expect(wizardSession.lockCancellation()).toBe(true);
+      },
+      { resumeKey: "owner:channel-setup" },
+    );
+
+    expect((await session.next()).status).toBe("done");
+    expect(session.isCancellationLocked()).toBe(true);
+    expect(session.canResume("owner:channel-setup")).toBe(false);
+    expect(session.cancel()).toBe(false);
+  });
+
+  test("resumes channel-less reconnects while locked work is still running", async () => {
+    let finish!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    const session = new WizardSession(
+      async (_prompter, _signal, wizardSession) => {
+        expect(wizardSession.lockCancellation()).toBe(true);
+        await gate;
+      },
+      { resumeKey: "owner:channel-setup" },
+    );
+
+    await vi.waitFor(() => expect(session.isCancellationLocked()).toBe(true));
+    expect(session.canResume("owner:channel-setup")).toBe(true);
+
+    finish();
+    expect((await session.next()).status).toBe("done");
+    expect(session.canResume("owner:channel-setup")).toBe(false);
+  });
+
+  test("matches terminal recovery against the requested and canonical channel", async () => {
+    const session = new WizardSession(
+      async (_prompter, _signal, wizardSession) => {
+        wizardSession.setResolvedChannel("twitch", ["twitch-chat"]);
+        expect(wizardSession.lockCancellation()).toBe(true);
+      },
+      {
+        resumeKey: "owner:channel-setup",
+        requestedChannel: "twitch",
+      },
+    );
+
+    expect((await session.next()).status).toBe("done");
+    expect(session.canResume("owner:channel-setup", "twitch-chat")).toBe(true);
+    expect(session.canResume("owner:channel-setup", "twitch")).toBe(true);
+    expect(session.canResume("owner:channel-setup", "discord")).toBe(false);
+  });
+
+  test("does not match a terminal result to an abandoned requested channel", async () => {
+    const session = new WizardSession(
+      async (_prompter, _signal, wizardSession) => {
+        expect(wizardSession.lockCancellation()).toBe(true);
+        wizardSession.setResolvedChannel("discord");
+      },
+      {
+        resumeKey: "owner:channel-setup",
+        requestedChannel: "matrix",
+      },
+    );
+
+    expect((await session.next()).status).toBe("done");
+    expect(session.canResume("owner:channel-setup", "matrix")).toBe(false);
+    expect(session.canResume("owner:channel-setup", "discord")).toBe(true);
+  });
+
+  test("retains every canonical channel and alias selected by browse-all", async () => {
+    const session = new WizardSession(
+      async (_prompter, _signal, wizardSession) => {
+        wizardSession.setResolvedChannel("matrix", ["matrix-chat"]);
+        wizardSession.setResolvedChannel("twitch", ["twitch-chat"]);
+        expect(wizardSession.lockCancellation()).toBe(true);
+      },
+      { resumeKey: "owner:channel-setup" },
+    );
+
+    expect((await session.next()).status).toBe("done");
+    expect(session.canResume("owner:channel-setup", "matrix")).toBe(true);
+    expect(session.canResume("owner:channel-setup", "matrix-chat")).toBe(true);
+    expect(session.canResume("owner:channel-setup", "twitch")).toBe(true);
+    expect(session.canResume("owner:channel-setup", "twitch-chat")).toBe(true);
+  });
+
   test("expires an abandoned interactive session", async () => {
     vi.useFakeTimers();
     try {
@@ -213,6 +309,66 @@ describe("WizardSession", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  test("refreshes reversible session expiry when the owner polls", async () => {
+    vi.useFakeTimers();
+    try {
+      const session = new WizardSession(
+        async (prompter) => {
+          await prompter.text({ message: "Name" });
+        },
+        { timeoutMs: 1_000 },
+      );
+
+      const pending = await session.next();
+      await vi.advanceTimersByTimeAsync(900);
+      expect((await session.next()).step?.id).toBe(pending.step?.id);
+
+      await vi.advanceTimersByTimeAsync(999);
+      expect(session.getStatus()).toBe("running");
+
+      await vi.advanceTimersByTimeAsync(1);
+      expect((await session.next()).status).toBe("cancelled");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("does not expire a cancellation-locked session", async () => {
+    vi.useFakeTimers();
+    try {
+      const session = new WizardSession(
+        async (prompter, _signal, wizardSession) => {
+          expect(wizardSession.lockCancellation()).toBe(true);
+          await prompter.confirm({ message: "Retry recovery?" });
+        },
+        { timeoutMs: 1_000 },
+      );
+
+      expect((await session.next()).step?.type).toBe("confirm");
+      await vi.advanceTimersByTimeAsync(10_000);
+
+      expect(session.getStatus()).toBe("running");
+      expect(session.signal.aborted).toBe(false);
+      expect(session.cancel()).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("allows locked resumption only with the exact host-owned key", () => {
+    const session = new WizardSession(
+      async (prompter) => {
+        await prompter.text({ message: "Token" });
+      },
+      { resumeKey: "owner:connection-1:channel-a" },
+    );
+
+    expect(session.lockCancellation()).toBe(true);
+    expect(session.canResume("owner:connection-1:channel-a")).toBe(true);
+    expect(session.canResume("owner:connection-2:channel-a")).toBe(false);
+    expect(session.canResume("owner:connection-1:channel-b")).toBe(false);
   });
 
   test("a runner finishing after cancellation cannot overwrite cancelled state", async () => {

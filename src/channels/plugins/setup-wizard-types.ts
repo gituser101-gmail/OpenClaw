@@ -305,6 +305,14 @@ export type SetupChannelsOptions = {
   allowSignalInstall?: boolean;
   /** Revalidate host authority immediately before an installer or other durable effect. */
   beforePersistentEffect?: () => Promise<void>;
+  /** Cancels reversible setup work when the controlling hosted session stops. */
+  abortSignal?: AbortSignal;
+  /** Reports channel identity immediately before setup crosses a durable-effect boundary. */
+  onChannelSelected?: (channel: ChannelId, aliases?: readonly string[]) => void;
+  /** Reports channel identities whose in-memory changes are ready for the caller to commit. */
+  onPendingChannelEffects?: (
+    channels: ReadonlyArray<{ channel: ChannelId; aliases?: readonly string[] }>,
+  ) => void;
   onSelection?: (selection: ChannelId[]) => void;
   onPostWriteHook?: (hook: ChannelOnboardingPostWriteHook) => void;
   accountIds?: Partial<Record<ChannelId, string>>;

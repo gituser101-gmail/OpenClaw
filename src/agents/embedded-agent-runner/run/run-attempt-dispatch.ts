@@ -207,6 +207,10 @@ export async function dispatchEmbeddedRunAttempt(input: {
     hasRepliedRef: params.hasRepliedRef,
     sessionFile: runtime.sessionFile,
     sessionTarget: runtime.sessionTarget,
+    // Caller-owned in-memory transcript for ephemeral helper runs. Without this
+    // forward, prepare falls back to opening the canonical SQLite target, which
+    // has no row for incognito probe keys and fails the first header persist.
+    sessionManager: params.sessionManager,
     trajectoryRecorder: runtime.trajectoryRecorder,
     workspaceDir: runtime.workspaceDir,
     cwd: params.cwd,

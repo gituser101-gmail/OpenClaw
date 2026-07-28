@@ -35,59 +35,73 @@ type GuardedSessionManager = SessionManager & {
   clearPendingToolResults?: () => void;
   /** Persist the next user message when an earlier canonical entry was removed. */
   clearNextUserMessagePersistenceSuppression?: () => void;
+  /** Rebind per-attempt guard state when the same manager serves another attempt. */
+  rebindSessionGuardState?: (opts: GuardSessionManagerOptions | undefined) => void;
+};
+
+type GuardSessionManagerOptions = {
+  agentId?: string;
+  sessionKey?: string;
+  config?: OpenClawConfig;
+  contextWindowTokens?: number;
+  inputProvenance?: InputProvenance;
+  allowSyntheticToolResults?: boolean;
+  missingToolResultText?: string;
+  allowedToolNames?: Iterable<string>;
+  trigger?: EmbeddedRunTrigger;
+  preparedUserTurnMessage?: PersistedUserTurnMessage;
+  suppressNextUserMessagePersistence?: boolean;
+  suppressTranscriptOnlyAssistantPersistence?: boolean;
+  suppressAssistantErrorPersistence?: boolean;
+  /** Finalization keeps core redaction but must not run plugin write hooks. */
+  skipBeforeMessageWriteHooks?: boolean;
+  onUserMessagePersisted?: (
+    message: Extract<AgentMessage, { role: "user" }>,
+    runtimeMessage: Extract<AgentMessage, { role: "user" }> | undefined,
+  ) => void | Promise<void>;
+  onUserMessagePersistenceSuppressed?: (
+    message: Extract<AgentMessage, { role: "user" }>,
+    runtimeMessage: Extract<AgentMessage, { role: "user" }> | undefined,
+  ) => void | Promise<void>;
+  onUserMessagePreparingForPersistence?: (
+    message: Extract<AgentMessage, { role: "user" }>,
+    recorder: UserTurnTranscriptRecorder | undefined,
+    preparedMessage: PersistedUserTurnMessage | undefined,
+  ) => void;
+  onUserMessageBlocked?: (message: Extract<AgentMessage, { role: "user" }>) => void;
+  onMessagePersisted?: (message: AgentMessage) => void | Promise<void>;
+  withCompactionPersistence?: (
+    append: () => string,
+    validateAppend: (entryId: string, appendedText: string) => boolean,
+  ) => string;
+  onAssistantErrorMessagePersisted?: (
+    message: Extract<AgentMessage, { role: "assistant" }>,
+  ) => void | Promise<void>;
 };
 
 /**
  * Apply the tool-result guard to a SessionManager exactly once and expose
  * a flush method on the instance for easy teardown handling.
+ *
+ * Re-guarding an already-guarded manager rebinds the per-attempt guard state
+ * (prepared user-turn message, persistence suppression, attempt callbacks,
+ * synthetic tool-result policy, and tool-result size caps derived from the
+ * attempt's context window) to the new options instead of silently keeping
+ * the previous attempt's state. This matters for caller-owned managers that
+ * are reused across run attempts (e.g. auth/model fallback retries);
+ * persisted runs open a fresh manager per attempt and never take this path.
  */
 export function guardSessionManager(
   sessionManager: SessionManager,
-  opts?: {
-    agentId?: string;
-    sessionKey?: string;
-    config?: OpenClawConfig;
-    contextWindowTokens?: number;
-    inputProvenance?: InputProvenance;
-    allowSyntheticToolResults?: boolean;
-    missingToolResultText?: string;
-    allowedToolNames?: Iterable<string>;
-    trigger?: EmbeddedRunTrigger;
-    preparedUserTurnMessage?: PersistedUserTurnMessage;
-    suppressNextUserMessagePersistence?: boolean;
-    suppressTranscriptOnlyAssistantPersistence?: boolean;
-    suppressAssistantErrorPersistence?: boolean;
-    /** Finalization keeps core redaction but must not run plugin write hooks. */
-    skipBeforeMessageWriteHooks?: boolean;
-    onUserMessagePersisted?: (
-      message: Extract<AgentMessage, { role: "user" }>,
-      runtimeMessage: Extract<AgentMessage, { role: "user" }> | undefined,
-    ) => void | Promise<void>;
-    onUserMessagePersistenceSuppressed?: (
-      message: Extract<AgentMessage, { role: "user" }>,
-      runtimeMessage: Extract<AgentMessage, { role: "user" }> | undefined,
-    ) => void | Promise<void>;
-    onUserMessagePreparingForPersistence?: (
-      message: Extract<AgentMessage, { role: "user" }>,
-      recorder: UserTurnTranscriptRecorder | undefined,
-      preparedMessage: PersistedUserTurnMessage | undefined,
-    ) => void;
-    onUserMessageBlocked?: (message: Extract<AgentMessage, { role: "user" }>) => void;
-    onMessagePersisted?: (message: AgentMessage) => void | Promise<void>;
-    withCompactionPersistence?: (
-      append: () => string,
-      validateAppend: (entryId: string, appendedText: string) => boolean,
-    ) => string;
-    onAssistantErrorMessagePersisted?: (
-      message: Extract<AgentMessage, { role: "assistant" }>,
-    ) => void | Promise<void>;
-  },
+  opts?: GuardSessionManagerOptions,
 ): GuardedSessionManager {
   if (typeof (sessionManager as GuardedSessionManager).flushPendingToolResults === "function") {
+    (sessionManager as GuardedSessionManager).rebindSessionGuardState?.(opts);
     return sessionManager as GuardedSessionManager;
   }
 
   const hookRunner = getGlobalHookRunner();
+  let activeOpts = opts;
   let pendingPreparedUserTurnMessage = opts?.preparedUserTurnMessage;
   let queuedUserTurnTranscriptRecorder: UserTurnTranscriptRecorder | undefined;
   const runtimeUserMessageByPersistedMessage = new WeakMap<
@@ -98,10 +112,10 @@ export function guardSessionManager(
     const runtimeUserMessage = runtimeUserMessageByPersistedMessage.get(event.message);
     let message = event.message;
     let changed = false;
-    if (!opts?.skipBeforeMessageWriteHooks && hookRunner?.hasHooks("before_message_write")) {
+    if (!activeOpts?.skipBeforeMessageWriteHooks && hookRunner?.hasHooks("before_message_write")) {
       const result = hookRunner.runBeforeMessageWrite(event, {
-        agentId: opts?.agentId,
-        sessionKey: opts?.sessionKey,
+        agentId: activeOpts?.agentId,
+        sessionKey: activeOpts?.sessionKey,
       });
       if (result?.block) {
         runtimeUserMessageByPersistedMessage.delete(event.message);
@@ -117,13 +131,13 @@ export function guardSessionManager(
         changed = true;
       }
     }
-    const redacted = redactTranscriptMessage(message, opts?.config);
+    const redacted = redactTranscriptMessage(message, activeOpts?.config);
     if (redacted !== message) {
       message = redacted;
       changed = true;
     }
     const projectedMessage = projectAgentHarnessTranscriptMessageForDisplay({
-      hidden: opts?.trigger === "memory",
+      hidden: activeOpts?.trigger === "memory",
       message,
     });
     if (projectedMessage !== message) {
@@ -157,8 +171,8 @@ export function guardSessionManager(
             isSynthetic: meta.isSynthetic,
           },
           {
-            agentId: opts?.agentId,
-            sessionKey: opts?.sessionKey,
+            agentId: activeOpts?.agentId,
+            sessionKey: activeOpts?.sessionKey,
             toolName: meta.toolName,
             toolCallId: meta.toolCallId,
           },
@@ -167,16 +181,25 @@ export function guardSessionManager(
       }
     : undefined;
 
-  const guard = installSessionToolResultGuard(sessionManager, {
-    sessionKey: opts?.sessionKey,
-    agentId: opts?.agentId,
+  const guardOptionsToInnerOptions = (
+    source: GuardSessionManagerOptions | undefined,
+  ): NonNullable<Parameters<typeof installSessionToolResultGuard>[1]> => ({
+    sessionKey: source?.sessionKey,
+    agentId: source?.agentId,
     transformMessageForPersistence: (message) => {
       queuedUserTurnTranscriptRecorder = undefined;
-      const withProvenance = applyInputProvenanceToUserMessage(message, opts?.inputProvenance);
+      const withProvenance = applyInputProvenanceToUserMessage(
+        message,
+        activeOpts?.inputProvenance,
+      );
       const runtimeContext = takeRuntimeUserTurnTranscriptContext(message);
       const prepared = runtimeContext?.message ?? pendingPreparedUserTurnMessage;
       if (message.role === "user") {
-        opts?.onUserMessagePreparingForPersistence?.(message, runtimeContext?.recorder, prepared);
+        activeOpts?.onUserMessagePreparingForPersistence?.(
+          message,
+          runtimeContext?.recorder,
+          prepared,
+        );
       }
       const merged = mergePreparedUserTurnMessageForRuntime({
         runtimeMessage: withProvenance,
@@ -197,40 +220,59 @@ export function guardSessionManager(
       return merged;
     },
     transformToolResultForPersistence: transform,
-    allowSyntheticToolResults: opts?.allowSyntheticToolResults,
-    missingToolResultText: opts?.missingToolResultText,
-    allowedToolNames: opts?.allowedToolNames,
+    allowSyntheticToolResults: source?.allowSyntheticToolResults,
+    missingToolResultText: source?.missingToolResultText,
+    allowedToolNames: source?.allowedToolNames,
     beforeMessageWriteHook: beforeMessageWrite,
-    redactLoggingConfig: opts?.config?.logging,
+    redactLoggingConfig: source?.config?.logging,
     maxToolResultChars:
-      typeof opts?.contextWindowTokens === "number"
+      typeof source?.contextWindowTokens === "number"
         ? resolveLiveToolResultMaxChars({
-            contextWindowTokens: opts.contextWindowTokens,
+            contextWindowTokens: source.contextWindowTokens,
           })
         : undefined,
-    suppressNextUserMessagePersistence: opts?.suppressNextUserMessagePersistence,
-    suppressTranscriptOnlyAssistantPersistence: opts?.suppressTranscriptOnlyAssistantPersistence,
-    suppressAssistantErrorPersistence: opts?.suppressAssistantErrorPersistence,
-    onMessagePersisted: opts?.onMessagePersisted,
-    withCompactionPersistence: opts?.withCompactionPersistence,
+    suppressNextUserMessagePersistence: source?.suppressNextUserMessagePersistence,
+    suppressTranscriptOnlyAssistantPersistence: source?.suppressTranscriptOnlyAssistantPersistence,
+    suppressAssistantErrorPersistence: source?.suppressAssistantErrorPersistence,
+    onMessagePersisted: source?.onMessagePersisted,
+    withCompactionPersistence: source?.withCompactionPersistence,
     onUserMessagePersisted: async (message) => {
       const runtimeMessage = runtimeUserMessageByPersistedMessage.get(message);
       runtimeUserMessageByPersistedMessage.delete(message);
       const recorder = takeRuntimeUserTurnTranscriptRecorder(message);
       recorder?.markRuntimePersisted(message);
-      await opts?.onUserMessagePersisted?.(message, runtimeMessage);
+      await activeOpts?.onUserMessagePersisted?.(message, runtimeMessage);
     },
     onUserMessagePersistenceSuppressed: async (message) => {
       const runtimeMessage = runtimeUserMessageByPersistedMessage.get(message);
       runtimeUserMessageByPersistedMessage.delete(message);
-      await opts?.onUserMessagePersistenceSuppressed?.(message, runtimeMessage);
+      await activeOpts?.onUserMessagePersistenceSuppressed?.(message, runtimeMessage);
     },
-    onUserMessageBlocked: opts?.onUserMessageBlocked,
-    onAssistantErrorMessagePersisted: opts?.onAssistantErrorMessagePersisted,
+    onUserMessageBlocked: source?.onUserMessageBlocked,
+    onAssistantErrorMessagePersisted: source?.onAssistantErrorMessagePersisted,
   });
+
+  // The inner guard reads callbacks and attempt-scoped options (synthetic
+  // tool-result policy, redaction config, tool-result size caps) from this
+  // object at call time, so rebinding can swap them in place.
+  const innerGuardOptions = guardOptionsToInnerOptions(opts);
+  const guard = installSessionToolResultGuard(sessionManager, innerGuardOptions);
+  const rebindSessionGuardState = (nextOpts: GuardSessionManagerOptions | undefined) => {
+    activeOpts = nextOpts;
+    pendingPreparedUserTurnMessage = nextOpts?.preparedUserTurnMessage;
+    queuedUserTurnTranscriptRecorder = undefined;
+    // Swap the inner guard's options in place so call-time reads (callbacks,
+    // synthetic tool-result policy, redaction config, size caps derived from
+    // the attempt's context window) pick up the new attempt's values.
+    Object.assign(innerGuardOptions, guardOptionsToInnerOptions(nextOpts));
+    guard.setNextUserMessagePersistenceSuppression(
+      nextOpts?.suppressNextUserMessagePersistence === true,
+    );
+  };
   (sessionManager as GuardedSessionManager).flushPendingToolResults = guard.flushPendingToolResults;
   (sessionManager as GuardedSessionManager).clearPendingToolResults = guard.clearPendingToolResults;
   (sessionManager as GuardedSessionManager).clearNextUserMessagePersistenceSuppression =
     guard.clearNextUserMessagePersistenceSuppression;
+  (sessionManager as GuardedSessionManager).rebindSessionGuardState = rebindSessionGuardState;
   return sessionManager as GuardedSessionManager;
 }

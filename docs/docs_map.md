@@ -5013,7 +5013,7 @@ Do not edit it by hand; run `pnpm docs:map:gen`.
   - H3: Provider-only (Deepgram)
   - H3: Provider-only (Mistral Voxtral)
   - H3: Provider-only (SenseAudio)
-  - H3: Provider-only (NVIDIA Parakeet with word boosting)
+  - H3: Provider-only (NVIDIA Parakeet CTC with word boosting)
   - H3: Echo transcript to chat (opt-in)
   - H2: Notes and limits
   - H3: Resident local STT

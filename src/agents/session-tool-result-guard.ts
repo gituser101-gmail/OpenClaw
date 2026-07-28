@@ -654,6 +654,7 @@ export function installSessionToolResultGuard(
   flushPendingToolResults: () => void;
   clearPendingToolResults: () => void;
   clearNextUserMessagePersistenceSuppression: () => void;
+  setNextUserMessagePersistenceSuppression: (value: boolean) => void;
   getPendingIds: () => string[];
 } {
   const originalAppend = getRawSessionAppendMessage(sessionManager);
@@ -952,6 +953,9 @@ export function installSessionToolResultGuard(
     clearPendingToolResults,
     clearNextUserMessagePersistenceSuppression: () => {
       suppressNextUserMessagePersistence = false;
+    },
+    setNextUserMessagePersistenceSuppression: (value: boolean) => {
+      suppressNextUserMessagePersistence = value;
     },
     getPendingIds: pendingState.getPendingIds,
   };

@@ -82,13 +82,14 @@ export function repairJson(json: string): string {
       }
 
       // When a valid JSON control escape (\\n, \\r, \\t, etc.) follows a pure
-      // Windows path prefix, treat it as a malformed path component rather than
-      // an intentional escape. The pure-drive-prefix check already excludes
-      // mixed content like "import sys\\nprint(1)", so no continuation guard
-      // is needed — any \\n after a drive-letter path is a path component.
+      // Windows path prefix AND the character after the escape does not look
+      // like a content boundary (whitespace, quote, delimiter), treat it as a
+      // malformed path component. Content boundaries indicate the \\n is an
+      // intentional newline (e.g. C:\\\\path\\nnext line), not a path separator.
       if (
         JSON_CONTROL_ESCAPES.has(nextChar) &&
-        looksLikeWindowsPathPrefix(stringValuePrefix)
+        looksLikeWindowsPathPrefix(stringValuePrefix) &&
+        !looksLikeContentBoundary(json.charAt(index + 2))
       ) {
         repaired += "\\\\";
         stringValuePrefix += "\\";
@@ -120,13 +121,22 @@ export function parseJsonWithRepair(json: string): unknown {
 
 /**
  * Returns true when the entire accumulated prefix is a pure Windows drive-letter
- * path (starts with X:\\ or X:/), so that subsequent \\n / \\r / \\t escapes
- * can be treated as potential path separators rather than intentional escapes.
- * Mixed content like "import sys\\nC:\\\\path" won't match because the prefix
- * before the \\n is "import sys", not a drive-letter path.
+ * path (starts with X:\\ or X:/). Mixed content like "import sys\\n" won't match
+ * because the prefix before the \\n is "import sys", not a drive-letter path.
  */
 function looksLikeWindowsPathPrefix(prefix: string): boolean {
   return /^[A-Za-z]:[\\/]/.test(prefix);
+}
+
+/**
+ * Returns true when the character after a control escape looks like the start
+ * of new content (whitespace, JSON string terminator, bracket, brace, paren).
+ * When true, the \\n is treated as an intentional newline rather than a
+ * malformed Windows path component.
+ */
+function looksLikeContentBoundary(after: string): boolean {
+  // End of string, whitespace, or common delimiters = intentional newline
+  return after === "" || /^[\s"'{}()[\],;]/.test(after);
 }
 
 function asStreamingJsonRecord(value: unknown): Record<string, unknown> {

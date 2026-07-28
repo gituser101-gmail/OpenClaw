@@ -79,11 +79,10 @@ export async function sendMessageIrc(
     accountId: account.accountId,
   });
   const prepared = stripMarkdown(convertMarkdownTables(text.trim(), tableMode));
-  const payload = opts.replyTo ? `${prepared}\n\n[reply:${opts.replyTo}]` : prepared;
-
-  if (!payload.trim()) {
+  if (!prepared.trim()) {
     throw new Error("Message must be non-empty for IRC sends");
   }
+  const payload = opts.replyTo ? `${prepared}\n\n[reply:${opts.replyTo}]` : prepared;
 
   const client = opts.client;
   if (client?.isReady()) {

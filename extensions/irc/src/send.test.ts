@@ -300,6 +300,33 @@ describe("sendMessageIrc cfg threading", () => {
     });
   });
 
+  it("rejects stripped-empty replies before adding reply metadata", async () => {
+    const providedCfg = {
+      channels: {
+        irc: {
+          host: "irc.example.com",
+          nick: "openclaw",
+        },
+      },
+    } as unknown as CoreConfig;
+    const client = {
+      isReady: vi.fn(() => true),
+      sendPrivmsg: vi.fn(),
+    } as unknown as IrcClient;
+    hoisted.stripMarkdown.mockReturnValue("");
+
+    await expect(
+      sendMessageIrc("#room", "#", {
+        cfg: providedCfg,
+        client,
+        replyTo: "irc-parent-1",
+      }),
+    ).rejects.toThrow("Message must be non-empty for IRC sends");
+
+    expect(client.sendPrivmsg).not.toHaveBeenCalled();
+    expect(hoisted.record).not.toHaveBeenCalled();
+  });
+
   it("declares message adapter durable text, media, and reply with receipt proofs", async () => {
     const providedCfg = {
       channels: {

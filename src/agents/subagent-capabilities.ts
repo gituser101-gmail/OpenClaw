@@ -14,7 +14,6 @@ import {
 import { DEFAULT_SUBAGENT_MAX_SPAWN_DEPTH } from "../config/agent-limits.js";
 import { resolveStorePath } from "../config/sessions.js";
 import type { RuntimeToolPolicy } from "../config/sessions/runtime-tool-policy.types.js";
-import { listSessionEntriesReadOnly } from "../config/sessions/session-accessor.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import {
   isAcpSessionKey,
@@ -25,12 +24,12 @@ import {
   normalizeInheritedToolAllowlist,
   normalizeInheritedToolDenylist,
 } from "./inherited-tool-deny.js";
+import { normalizeRuntimeToolPolicy } from "./runtime-tool-policy.js";
 import {
   findSubagentSessionEntryById,
   getSubagentDepthFromSessionStore,
   readSubagentSessionStore,
 } from "./subagent-depth.js";
-import { normalizeRuntimeToolPolicy } from "./runtime-tool-policy.js";
 
 /** Resolved role for a main session, orchestrating subagent, or leaf subagent. */
 export type SubagentSessionRole = "main" | "orchestrator" | "leaf";

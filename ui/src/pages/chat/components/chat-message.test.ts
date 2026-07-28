@@ -3964,8 +3964,10 @@ describe("grouped chat rendering", () => {
     await vi.waitFor(() => expect(resolveEvictedRefetch).toBeTypeOf("function"));
 
     newestCurrentImage!.click();
-    expect(acceptedImageOpen).toHaveBeenCalledWith(
-      expect.objectContaining({ title: "Generated image 3" }),
+    await vi.waitFor(() =>
+      expect(acceptedImageOpen).toHaveBeenCalledWith(
+        expect.objectContaining({ title: "Generated image 3" }),
+      ),
     );
 
     resolveEvictedRefetch?.(response);

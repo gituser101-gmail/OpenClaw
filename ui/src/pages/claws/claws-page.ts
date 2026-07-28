@@ -14,6 +14,8 @@ import {
   type ApplicationContext,
   type ApplicationGatewaySnapshot,
 } from "../../app/context.ts";
+import { renderPluginsHubTabs, type PluginsHubTab } from "../../components/plugins-hub-tabs.ts";
+import { renderSettingsWorkspace } from "../../components/settings-workspace.ts";
 import { t } from "../../i18n/index.ts";
 import { isGatewayMethodAdvertised } from "../../lib/gateway-methods.ts";
 import { OpenClawLightDomElement } from "../../lit/openclaw-element.ts";
@@ -138,6 +140,21 @@ class ClawsPage extends OpenClawLightDomElement {
     }
   }
 
+  private selectHubTab(tab: PluginsHubTab) {
+    if (tab === "claws") {
+      return;
+    }
+    if (tab === "skills") {
+      this.context.navigate("skills");
+      return;
+    }
+    if (tab === "workshop") {
+      this.context.navigate("skill-workshop");
+      return;
+    }
+    this.context.navigate("plugins", tab === "discover" ? { search: "?tab=discover" } : undefined);
+  }
+
   override render() {
     return html`
       <section class="content-header content-header--page">
@@ -156,18 +173,34 @@ class ClawsPage extends OpenClawLightDomElement {
           </button>
         </div>
       </section>
-      ${renderClaws({
-        connected: this.connected,
-        available: this.available,
-        loading: this.loading,
-        error: this.error,
-        status: this.status,
-        doctor: this.doctor,
-        selectedAgentId: this.selectedAgentId,
-        onSelect: (agentId) => {
-          this.selectedAgentId = agentId;
-        },
-      })}
+      ${renderSettingsWorkspace(html`
+        <div class="plugins-hub-tabs-row">
+          ${renderPluginsHubTabs({
+            active: "claws",
+            showClaws: true,
+            onSelect: (tab) => this.selectHubTab(tab),
+          })}
+        </div>
+        <wa-tab-panel
+          id="plugins-hub-panel"
+          name="claws"
+          active
+          aria-labelledby="plugins-tab-claws"
+        >
+          ${renderClaws({
+            connected: this.connected,
+            available: this.available,
+            loading: this.loading,
+            error: this.error,
+            status: this.status,
+            doctor: this.doctor,
+            selectedAgentId: this.selectedAgentId,
+            onSelect: (agentId) => {
+              this.selectedAgentId = agentId;
+            },
+          })}
+        </wa-tab-panel>
+      `)}
     `;
   }
 }

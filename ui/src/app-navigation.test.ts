@@ -29,6 +29,7 @@ const ALL_ROUTES: RouteId[] = Array.from(
     ...SIDEBAR_NAV_ROUTES,
     "skills",
     "skill-workshop",
+    "claws",
     // Hub tabs and settings subpages route without their own nav entry.
     "worktrees",
     "memory-import",
@@ -383,9 +384,11 @@ describe("SIDEBAR_NAV_ROUTES", () => {
   it("collapses the plugins hub to a single sidebar entry", () => {
     expect(SIDEBAR_NAV_ROUTES).not.toContain("skills");
     expect(SIDEBAR_NAV_ROUTES).not.toContain("skill-workshop");
+    expect(SIDEBAR_NAV_ROUTES).not.toContain("claws");
     expect(isPluginsHubRoute("plugins")).toBe(true);
     expect(isPluginsHubRoute("skills")).toBe(true);
     expect(isPluginsHubRoute("skill-workshop")).toBe(true);
+    expect(isPluginsHubRoute("claws")).toBe(true);
     expect(isPluginsHubRoute("sessions")).toBe(false);
   });
 

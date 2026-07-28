@@ -54,6 +54,19 @@ describe("renderPluginsHubTabs", () => {
     expect(container.querySelector("#plugins-tab-installed span")).toBeNull();
   });
 
+  it("shows Claws only when the Gateway capability is available", async () => {
+    const hidden = await mount({ active: "installed", onSelect: () => undefined });
+    expect(hidden.querySelector("#plugins-tab-claws")).toBeNull();
+    hidden.remove();
+
+    const visible = await mount({
+      active: "claws",
+      showClaws: true,
+      onSelect: () => undefined,
+    });
+    expect(visible.querySelector("#plugins-tab-claws")?.getAttribute("aria-selected")).toBe("true");
+  });
+
   it("selects tabs on click", async () => {
     const onSelect = vi.fn();
     const container = await mount({ active: "installed", onSelect });

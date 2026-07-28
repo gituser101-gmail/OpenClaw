@@ -22,7 +22,6 @@ export const SIDEBAR_NAV_ROUTES = [
   "tasks",
   "sessions",
   "activity",
-  "claws",
   "plugins",
   "apps",
 ] as const satisfies readonly NavigationRouteId[];
@@ -33,6 +32,7 @@ const PLUGINS_HUB_ROUTES: ReadonlySet<NavigationRouteId> = new Set([
   "plugins",
   "skills",
   "skill-workshop",
+  "claws",
 ]);
 
 export function isPluginsHubRoute(routeId: NavigationRouteId): boolean {

@@ -84,6 +84,7 @@ function createSnapshot(
       type: "hello-ok",
       protocol: 1,
       auth: { role: "operator", scopes: ["operator.read", "operator.admin"] },
+      features: { methods: ["claws.status", "claws.doctor"] },
     },
     assistantAgentId: "main",
     sessionKey: "main",
@@ -412,7 +413,7 @@ describe("PluginsPage", () => {
     ).toBe(true);
   });
 
-  it("routes the skills and workshop hub tabs through navigation", async () => {
+  it("routes the skills, workshop, and Claws hub tabs through navigation", async () => {
     const { client } = createClient(async () => createResult());
     const harness = createGateway(client);
     const context = createContext(
@@ -432,6 +433,8 @@ describe("PluginsPage", () => {
     expect(context.navigate).toHaveBeenCalledWith("skills");
     page.querySelector<HTMLButtonElement>("#plugins-tab-workshop")?.click();
     expect(context.navigate).toHaveBeenCalledWith("skill-workshop");
+    page.querySelector<HTMLButtonElement>("#plugins-tab-claws")?.click();
+    expect(context.navigate).toHaveBeenCalledWith("claws");
     expect(page.activeTab).toBe("installed");
 
     // Catalog tabs switch locally for instant feedback and keep the URL in

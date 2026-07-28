@@ -126,7 +126,10 @@ request time (bad auth, network failure), `memory_search` reports memory as
 unavailable instead of silently degrading to FTS-only results. This keeps a
 broken configured provider visible. Set `provider: "none"` for deliberate
 FTS-only recall, or fix the provider/auth configuration to restore semantic
-ranking.
+ranking. A query that exhausts its bounded semantic-search budget is different:
+the same call tries a compatible configured fallback provider within the
+remaining deadline, then returns FTS-only results if no semantic path finishes
+in time.
 
 ## Improving search quality
 
@@ -186,7 +189,9 @@ and `sources` alone do not export transcripts into QMD. See
 **No results?** Run `openclaw memory status` to check the index. If empty, run
 `openclaw memory index --force`.
 
-**Only keyword matches?** Your embedding provider may not be configured. Check
+**Only keyword matches?** Your embedding provider may not be configured, or its
+query exceeded the built-in search budget and the same call fell back to
+model-independent FTS. Check the result's `mode`/`debug.fallback` fields and run
 `openclaw memory status --deep`.
 
 **Local embeddings time out?** `ollama`, `lmstudio`, and `local` use longer

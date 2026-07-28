@@ -28,6 +28,7 @@ import {
   closeMemoryIndexManagersForAgent,
   MemoryIndexManager as RuntimeMemoryIndexManager,
 } from "./manager.js";
+import { runMemorySearchWithDeadline } from "./search-deadline.js";
 
 // This suite performs real sqlite/media indexing and can exceed the global
 // timeout when it shares a packed CI extension shard.
@@ -52,6 +53,8 @@ let providerCreationFailure: string | null = null;
 let providerNullResult: string | null = null;
 let providerCloseGate: Promise<void> | null = null;
 let providerInitGate: Promise<void> | null = null;
+let providerQueryGate: Promise<void> | null = null;
+let providerQueryGateId: string | null = null;
 let providerCalls: Array<{ provider?: string; model?: string; outputDimensionality?: number }> = [];
 let forceNoProvider = false;
 const originalMemoryIndexStateDir = process.env.OPENCLAW_STATE_DIR;
@@ -132,6 +135,11 @@ vi.mock("./embeddings.js", () => {
       provider?: string;
       model?: string;
       outputDimensionality?: number;
+      config?: {
+        models?: {
+          providers?: Record<string, { api?: string }>;
+        };
+      };
     }) => {
       providerCalls.push({
         provider: options.provider,
@@ -156,15 +164,19 @@ vi.mock("./embeddings.js", () => {
           providerUnavailableReason: "No API key found for provider",
         };
       }
+      const configuredAdapterId = options.provider
+        ? options.config?.models?.providers?.[options.provider]?.api
+        : undefined;
       const providerId =
-        options.provider === "gemini" ||
+        configuredAdapterId ??
+        (options.provider === "gemini" ||
         options.provider === "fallback-provider" ||
         options.provider === "batch-test" ||
         options.provider === "batch-wide-test" ||
         options.provider === identityAliasFixture.provider ||
         options.provider === "ollama"
           ? options.provider
-          : "mock";
+          : "mock");
       const requestedModel = options.model ?? "mock-embed";
       const model =
         providerId === identityAliasFixture.provider &&
@@ -185,7 +197,12 @@ vi.mock("./embeddings.js", () => {
               throw providerCloseFailure;
             }
           },
-          embedQuery: async (text: string) => embedText(text),
+          embedQuery: async (text: string) => {
+            if (providerId === providerQueryGateId) {
+              await providerQueryGate;
+            }
+            return embedText(text);
+          },
           embedBatch: async (texts: string[]) => {
             embedBatchCalls += 1;
             return texts.map(embedText);
@@ -334,6 +351,8 @@ describe("memory index", () => {
     providerNullResult = null;
     providerCloseGate = null;
     providerInitGate = null;
+    providerQueryGate = null;
+    providerQueryGateId = null;
     providerCalls = [];
     forceNoProvider = false;
 
@@ -384,7 +403,7 @@ describe("memory index", () => {
     sessionMemory?: boolean;
     rememberAcrossConversations?: boolean;
     provider?: string;
-    fallback?: "none" | "gemini" | "fallback-provider";
+    fallback?: "none" | "gemini" | "fallback-provider" | "compatible-fallback" | "local";
     providerAliases?: NonNullable<NonNullable<TestCfg["models"]>["providers"]>;
     batchEnabled?: boolean;
     model?: string;
@@ -420,7 +439,9 @@ describe("memory index", () => {
                 batch: { enabled: true },
               }
             : undefined,
-          query: { minScore: params.minScore ?? 0 },
+          query: {
+            minScore: params.minScore ?? 0,
+          },
           cache: params.cacheEnabled ? { enabled: true } : undefined,
           extraPaths: params.extraPaths,
           multimodal: params.multimodal,
@@ -438,6 +459,34 @@ describe("memory index", () => {
       },
       models: params.providerAliases ? { providers: params.providerAliases } : undefined,
     };
+  }
+
+  type TestQueryProvider = {
+    id: string;
+    model: string;
+    embedQuery: (text: string, options?: { signal?: AbortSignal }) => Promise<number[]>;
+    embedBatch: (texts: string[]) => Promise<number[][]>;
+    close: () => Promise<void>;
+  };
+
+  function stallQueryEmbedding(manager: MemoryIndexManager): TestQueryProvider {
+    const provider = (
+      manager as unknown as {
+        provider: TestQueryProvider;
+      }
+    ).provider;
+    provider.embedQuery = async (_text, options) =>
+      await new Promise<number[]>((_, reject) => {
+        options?.signal?.addEventListener(
+          "abort",
+          () => {
+            const reason = options.signal?.reason;
+            reject(reason instanceof Error ? reason : new Error("query embedding aborted"));
+          },
+          { once: true },
+        );
+      });
+    return provider;
   }
 
   async function seedMemoryIndexSessionTranscript(params: {
@@ -2074,6 +2123,207 @@ describe("memory index", () => {
         hybrid: { enabled: true, vectorWeight: 0, textWeight: 1 },
       }),
     );
+  });
+
+  it("reserves same-call FTS time after keyword work, then keeps the warm primary", async () => {
+    const cfg = createCfg({
+      provider: "ollama",
+      fallback: "none",
+      hybrid: { enabled: true, vectorWeight: 0.5, textWeight: 0.5 },
+    });
+    const manager = await getPersistentManager(cfg);
+    await manager.sync({ reason: "test" });
+
+    const provider = stallQueryEmbedding(manager);
+
+    const keywordOwner = manager as unknown as {
+      searchKeywordWithFallback: (...args: unknown[]) => Promise<unknown>;
+    };
+    const searchKeywordWithFallback = keywordOwner.searchKeywordWithFallback.bind(manager);
+    let consumedKeywordTime = false;
+    keywordOwner.searchKeywordWithFallback = async (...args) => {
+      const results = await searchKeywordWithFallback(...args);
+      if (!consumedKeywordTime) {
+        consumedKeywordTime = true;
+        await new Promise<void>((resolve) => {
+          setTimeout(resolve, 100);
+        });
+      }
+      return results;
+    };
+
+    const coldDebug: Array<{
+      effectiveMode?: string;
+      fallback?: string;
+    }> = [];
+    const providerCreationsBeforeSearch = providerCalls.length;
+    const startedAt = Date.now();
+    const coldSearch = runMemorySearchWithDeadline({
+      timeoutMs: 2_200,
+      run: async (signal) =>
+        await manager.search("alpha", {
+          signal,
+          onDebug: (debug) => coldDebug.push(debug),
+        }),
+    });
+    const coldResults = await coldSearch;
+    const elapsedMs = Date.now() - startedAt;
+
+    expect(elapsedMs).toBeLessThan(2_200);
+    expect(coldResults.some((result) => result.path.endsWith("memory/2026-01-12.md"))).toBe(true);
+    expect(coldDebug.at(-1)).toMatchObject({
+      effectiveMode: "fts-only",
+    });
+    const timeoutMatch = /^primary-timeout:(\d+)ms;fallback-unavailable$/u.exec(
+      coldDebug.at(-1)?.fallback ?? "",
+    );
+    expect(Number(timeoutMatch?.[1])).toBeGreaterThan(0);
+    expect(Number(timeoutMatch?.[1])).toBeLessThan(200);
+    expect(providerCalls).toHaveLength(providerCreationsBeforeSearch);
+    expect(manager.status().fallback).toBeUndefined();
+
+    provider.embedQuery = async () => [1, 0, 0, 0];
+    const warmDebug: Array<{
+      effectiveMode?: string;
+      fallback?: string;
+    }> = [];
+    const warmResults = await manager.search("alpha", {
+      onDebug: (debug) => warmDebug.push(debug),
+    });
+
+    expect(warmResults.some((result) => result.path.endsWith("memory/2026-01-12.md"))).toBe(true);
+    expect(warmDebug.at(-1)).toMatchObject({
+      configuredMode: "hybrid",
+      effectiveMode: "hybrid",
+    });
+    expect(warmDebug.at(-1)?.fallback).toBeUndefined();
+    expect(manager.status().provider).toBe("ollama");
+  });
+
+  it("uses a compatible configured fallback inside the remaining deadline", async () => {
+    const cfg = createCfg({
+      provider: "ollama",
+      fallback: "compatible-fallback",
+      providerAliases: {
+        "compatible-fallback": {
+          api: "ollama",
+          baseUrl: "http://127.0.0.1:11434",
+          models: [],
+        },
+      },
+      hybrid: { enabled: true, vectorWeight: 0.5, textWeight: 0.5 },
+    });
+    const manager = await getPersistentManager(cfg);
+    await manager.sync({ reason: "test" });
+
+    stallQueryEmbedding(manager);
+
+    const debug: Array<{ effectiveMode?: string; fallback?: string }> = [];
+    const providerCreationsBeforeSearch = providerCalls.length;
+    const startedAt = Date.now();
+    const results = await runMemorySearchWithDeadline({
+      timeoutMs: 2_200,
+      run: async (signal) =>
+        await manager.search("alpha", {
+          signal,
+          onDebug: (entry) => debug.push(entry),
+        }),
+    });
+
+    expect(Date.now() - startedAt).toBeLessThan(2_200);
+    expect(results.some((result) => result.path.endsWith("memory/2026-01-12.md"))).toBe(true);
+    expect(debug.at(-1)).toMatchObject({
+      effectiveMode: "hybrid",
+    });
+    expect(debug.at(-1)?.fallback).toBeUndefined();
+    expect(providerCalls.slice(providerCreationsBeforeSearch).map((call) => call.provider)).toEqual(
+      ["compatible-fallback"],
+    );
+    expect(manager.status()).toMatchObject({
+      provider: "ollama",
+      fallback: { from: "ollama" },
+    });
+  });
+
+  it("returns FTS when the configured fallback exhausts its bounded budget", async () => {
+    const cfg = createCfg({
+      provider: "ollama",
+      fallback: "compatible-fallback",
+      providerAliases: {
+        "compatible-fallback": {
+          api: "ollama",
+          baseUrl: "http://127.0.0.1:11434",
+          models: [],
+        },
+      },
+      hybrid: { enabled: true, vectorWeight: 0.5, textWeight: 0.5 },
+    });
+    const manager = await getPersistentManager(cfg);
+    await manager.sync({ reason: "test" });
+
+    stallQueryEmbedding(manager);
+
+    let releaseFallbackQuery: () => void = () => {};
+    providerQueryGateId = "ollama";
+    providerQueryGate = new Promise<void>((resolve) => {
+      releaseFallbackQuery = resolve;
+    });
+    const debug: Array<{ effectiveMode?: string; fallback?: string }> = [];
+    const providerCreationsBeforeSearch = providerCalls.length;
+    const startedAt = Date.now();
+    try {
+      const results = await runMemorySearchWithDeadline({
+        timeoutMs: 2_200,
+        run: async (signal) =>
+          await manager.search("alpha", {
+            signal,
+            onDebug: (entry) => debug.push(entry),
+          }),
+      });
+
+      expect(Date.now() - startedAt).toBeLessThan(2_200);
+      expect(results.some((result) => result.path.endsWith("memory/2026-01-12.md"))).toBe(true);
+      expect(debug.at(-1)).toMatchObject({
+        effectiveMode: "fts-only",
+      });
+      expect(debug.at(-1)?.fallback).toMatch(/^primary-timeout:\d+ms;fallback-timeout:\d+ms$/u);
+      expect(
+        providerCalls.slice(providerCreationsBeforeSearch).map((call) => call.provider),
+      ).toEqual(["compatible-fallback"]);
+    } finally {
+      releaseFallbackQuery();
+      providerQueryGate = null;
+      providerQueryGateId = null;
+    }
+  });
+
+  it("honors caller abort instead of returning primary-timeout FTS fallback", async () => {
+    const cfg = createCfg({
+      provider: "ollama",
+      fallback: "local",
+      hybrid: { enabled: true, vectorWeight: 0.5, textWeight: 0.5 },
+    });
+    const manager = await getPersistentManager(cfg);
+    await manager.sync({ reason: "test" });
+
+    stallQueryEmbedding(manager);
+
+    const debug: Array<{ effectiveMode?: string; fallback?: string }> = [];
+    const controller = new AbortController();
+    const callerAbort = new Error("caller stopped waiting");
+    const pending = manager.search("alpha", {
+      signal: controller.signal,
+      onDebug: (entry) => debug.push(entry),
+    });
+    setTimeout(() => controller.abort(callerAbort), 20);
+
+    await expect(pending).rejects.toBe(callerAbort);
+    expect(debug.some((entry) => entry.effectiveMode === "fts-only")).toBe(false);
+    expect(debug.some((entry) => entry.fallback?.startsWith("primary-timeout") === true)).toBe(
+      false,
+    );
+    expect(manager.status().provider).toBe("ollama");
+    expect(manager.status().fallback).toBeUndefined();
   });
 
   it("retries transient query embedding transport failures during search", async () => {

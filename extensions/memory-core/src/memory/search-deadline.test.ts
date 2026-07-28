@@ -1,5 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { runMemorySearchWithDeadline, type MemorySearchDeadlineAction } from "./search-deadline.js";
+import {
+  resolveMemorySearchRemainingMs,
+  runMemorySearchWithDeadline,
+  type MemorySearchDeadlineAction,
+} from "./search-deadline.js";
 
 describe("runMemorySearchWithDeadline", () => {
   afterEach(() => {
@@ -38,8 +42,27 @@ describe("runMemorySearchWithDeadline", () => {
 
     await resultAssertion;
     expect(taskSignal?.aborted).toBe(true);
-    expect(taskSignal?.reason).toEqual(new Error("memory_search timed out after 15s"));
+    expect(taskSignal?.reason).toMatchObject({
+      message: "memory_search timed out after 15s",
+      code: "MEMORY_SEARCH_TIMEOUT",
+      timeoutMs: 15_000,
+    });
     expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("does not start work after the available deadline budget is exhausted", async () => {
+    const run = vi.fn(async () => "late");
+
+    await expect(
+      runMemorySearchWithDeadline({
+        timeoutMs: 0,
+        run,
+      }),
+    ).rejects.toMatchObject({
+      code: "MEMORY_SEARCH_TIMEOUT",
+      timeoutMs: 0,
+    });
+    expect(run).not.toHaveBeenCalled();
   });
 
   it("preserves caller cancellation and removes its listener", async () => {
@@ -64,6 +87,31 @@ describe("runMemorySearchWithDeadline", () => {
     expect(taskSignal?.reason).toBe(reason);
     expect(removeEventListener).toHaveBeenCalledOnce();
     expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("reports the actual remaining active deadline budget", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const parent = new AbortController();
+    let taskSignal: AbortSignal | undefined;
+    const result = runMemorySearchWithDeadline({
+      timeoutMs: 15_000,
+      parentSignal: parent.signal,
+      run: async (signal) => {
+        taskSignal = signal;
+        return await new Promise(() => {});
+      },
+    });
+    const resultAssertion = expect(result).rejects.toThrow("test cleanup");
+    await Promise.resolve();
+
+    expect(resolveMemorySearchRemainingMs(taskSignal)).toBe(15_000);
+    vi.setSystemTime(6_000);
+    expect(resolveMemorySearchRemainingMs(taskSignal)).toBe(9_000);
+
+    parent.abort(new Error("test cleanup"));
+    await resultAssertion;
+    expect(resolveMemorySearchRemainingMs(taskSignal)).toBeUndefined();
   });
 
   it.each(["pause", "handoff"] satisfies MemorySearchDeadlineAction[])(

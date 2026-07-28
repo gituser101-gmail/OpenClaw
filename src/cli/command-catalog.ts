@@ -131,6 +131,11 @@ export const cliCommandCatalog: readonly CliCommandCatalogEntry[] = [
     policy: { loadPlugins: "never" },
   },
   {
+    commandPath: ["agents", "set-default"],
+    exact: true,
+    policy: { loadPlugins: "never" },
+  },
+  {
     commandPath: ["agents", "set-identity"],
     exact: true,
     policy: { loadPlugins: "never" },

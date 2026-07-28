@@ -184,6 +184,7 @@ describe("command-path-policy", () => {
       ["agents", "bind"],
       ["agents", "bindings"],
       ["agents", "unbind"],
+      ["agents", "set-default"],
       ["agents", "set-identity"],
       ["agents", "delete"],
     ]) {

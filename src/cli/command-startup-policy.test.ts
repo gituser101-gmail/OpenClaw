@@ -161,6 +161,11 @@ describe("command-startup-policy", () => {
     ).toBe(false);
     expect(
       resolvePolicy({
+        commandPath: ["agents", "set-default"],
+      }).loadPlugins,
+    ).toBe(false);
+    expect(
+      resolvePolicy({
         commandPath: ["agents", "set-identity"],
       }).loadPlugins,
     ).toBe(false);

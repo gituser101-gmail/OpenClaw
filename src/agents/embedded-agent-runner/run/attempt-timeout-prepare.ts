@@ -133,9 +133,9 @@ export function prepareEmbeddedAttemptTimeout(input: {
    * Uses actual wall-clock elapsed time since last activity for the total
    * extension cap, making MAX_EXTENSION_TOTAL_MS a meaningful timeout ceiling
    * rather than a fixed multiple of the initial timeoutMs.
-   * The deadline is clamped to runStartMs + MAX_EXTENSION_TOTAL_MS to prevent
+   * The deadline is clamped to runStartMs + max(timeoutMs, MAX_EXTENSION_TOTAL_MS) to prevent
    * unbounded extension from a progress event near the cap boundary.
-   * Note: there is no extension-count cutoff — only the absolute 120s
+   * Note: there is no extension-count cutoff — only the absolute
    * run-start deadline bounds the sliding window, so a legitimate embedded
    * run with many progress events can keep extending until the cap. */
   const noteActivity = () => {
@@ -144,10 +144,12 @@ export function prepareEmbeddedAttemptTimeout(input: {
     lastActivityAtMs = now;
     totalExtendedMs += elapsedSinceLastActivity;
 
-    // Clamp new deadline to the absolute maximum from run start, preventing
-    // a progress event near the cap boundary from scheduling a full timeout
-    // beyond the ceiling.
-    const newDeadline = Math.min(now + attempt.timeoutMs, runStartMs + MAX_EXTENSION_TOTAL_MS);
+    // Effective max runtime: the absolute cap is at least the configured
+    // timeoutMs, so users with longer budgets (e.g. 180s) are not silently
+    // reduced by the hard-coded floor. For small timeouts the floor acts as
+    // a reasonable ceiling to prevent unbounded extension.
+    const effectiveMaxRunMs = Math.max(attempt.timeoutMs, MAX_EXTENSION_TOTAL_MS);
+    const newDeadline = Math.min(now + attempt.timeoutMs, runStartMs + effectiveMaxRunMs);
     const delayMs = Math.max(1, newDeadline - now);
     scheduleAbortTimer(delayMs, "initial");
   };

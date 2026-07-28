@@ -224,6 +224,28 @@ describe("prepareEmbeddedAttemptTimeout", () => {
     harness.timeout.clearTimers();
   });
 
+  it("noteActivity respects timeoutMs above MAX_EXTENSION_TOTAL_MS", async () => {
+    // Configure timeoutMs = 180s, above the 120s hard floor. The effective
+    // max run time should be max(180000, 120000) = 180000, NOT 120000.
+    const harness = createTimeoutHarness({ timeoutMs: 180_000 });
+    expect(harness.timeout.getRunAbortDeadlineAtMs()).toBe(180_000);
+
+    // After 100s of wall clock, noteActivity should extend to now + 180s = 280s,
+    // clamped by effectiveMaxRunMs = 180s from runStart => cap = 180s.
+    // 100s + 180s = 280s > 180s cap → clamped to 180s.
+    await vi.advanceTimersByTimeAsync(100_000);
+    harness.timeout.noteActivity();
+    expect(harness.timeout.getRunAbortDeadlineAtMs()).toBe(180_000);
+
+    // Verify the timer actually fires at 180s, not earlier at 120s.
+    await vi.advanceTimersByTimeAsync(79_999);
+    expect(harness.abortRun).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(2); /* crosses 180_000 */
+    expect(harness.abortRun).toHaveBeenCalledWith(true);
+
+    harness.timeout.clearTimers();
+  });
+
   it("cleans up both the timer and external abort listener", async () => {
     const harness = createTimeoutHarness();
 

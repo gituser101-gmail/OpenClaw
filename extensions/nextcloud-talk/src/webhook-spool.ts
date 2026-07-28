@@ -56,6 +56,19 @@ const NextcloudTalkWebhookPayloadSchema: z.ZodType<NextcloudTalkWebhookPayload> 
 });
 
 export type NextcloudTalkIngressLifecycle = Omit<ChannelIngressMonitorLifecycle, "admission">;
+export class NextcloudTalkRetryableWebhookError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "NextcloudTalkRetryableWebhookError";
+  }
+}
+
+function isNextcloudTalkRetryableWebhookError(
+  error: unknown,
+): error is NextcloudTalkRetryableWebhookError {
+  return error instanceof NextcloudTalkRetryableWebhookError;
+}
+
 type NextcloudTalkIngressDispatchResult =
   | { kind: "completed" }
   | { kind: "deferred" }
@@ -107,6 +120,9 @@ function parseClaimedMessage(
 }
 
 function resolveNonRetryableFailure(error: unknown) {
+  if (isNextcloudTalkRetryableWebhookError(error)) {
+    return null;
+  }
   if (error instanceof NextcloudTalkWebhookPayloadError) {
     return { reason: "invalid-event", message: error.message };
   }

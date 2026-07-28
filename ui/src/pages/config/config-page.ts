@@ -17,11 +17,13 @@ import {
 import { importCustomThemeFromUrl } from "../../app/custom-theme.ts";
 import { hasOperatorAdminAccess } from "../../app/operator-access.ts";
 import {
+  loadLocalUserIdentity,
   loadSettings,
   normalizeCatalogOpenTarget,
   normalizeTextScale,
   normalizeChatSendShortcut,
   patchSettings,
+  saveLocalUserIdentity,
   type UiSettings,
 } from "../../app/settings.ts";
 import { startThemeTransition } from "../../app/theme-transition.ts";
@@ -1095,6 +1097,11 @@ export class ConfigPage extends OpenClawLightDomElement {
           "ai-agents": { activeSection: "models", activeSubsection: null },
         };
         this.navigate("ai-agents");
+      },
+      userAvatar: loadLocalUserIdentity().avatar ?? null,
+      onUserAvatarChange: (avatar) => {
+        saveLocalUserIdentity({ avatar });
+        this.requestUpdate();
       },
       connected: runtimeConfig.state.connected,
       configLoading: runtimeConfig.state.configLoading,

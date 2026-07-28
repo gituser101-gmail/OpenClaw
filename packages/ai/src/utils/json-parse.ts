@@ -2,6 +2,7 @@
 import { parse as partialParse } from "partial-json";
 
 const VALID_JSON_ESCAPES = new Set(['"', "\\", "/", "b", "f", "n", "r", "t", "u"]);
+const JSON_CONTROL_ESCAPES = new Set(["b", "f", "n", "r", "t"]);
 
 function isControlCharacter(char: string): boolean {
   const codePoint = char.codePointAt(0);
@@ -29,10 +30,13 @@ function escapeControlCharacter(char: string): string {
  * Repairs malformed JSON string literals by:
  * - escaping raw control characters inside strings
  * - doubling backslashes before invalid escape characters
+ * - preserving malformed Windows paths (C:\\newfolder) when the
+ *   accumulated prefix is a pure drive-letter path
  */
 export function repairJson(json: string): string {
   let repaired = "";
   let inString = false;
+  let stringValuePrefix = "";
 
   for (let index = 0; index < json.length; index++) {
     const char = json.charAt(index);
@@ -41,6 +45,7 @@ export function repairJson(json: string): string {
       repaired += char;
       if (char === '"') {
         inString = true;
+        stringValuePrefix = "";
       }
       continue;
     }
@@ -48,6 +53,7 @@ export function repairJson(json: string): string {
     if (char === '"') {
       repaired += char;
       inString = false;
+      stringValuePrefix = "";
       continue;
     }
 
@@ -62,6 +68,7 @@ export function repairJson(json: string): string {
         const unicodeDigits = json.slice(index + 2, index + 6);
         if (/^[0-9a-fA-F]{4}$/.test(unicodeDigits)) {
           repaired += `\\u${unicodeDigits}`;
+          stringValuePrefix += `\\u${unicodeDigits}`;
           index += 5;
           continue;
         }
@@ -70,20 +77,41 @@ export function repairJson(json: string): string {
         // hit the valid-escape branch (VALID_JSON_ESCAPES contains "u") and
         // re-emit the broken \\u, leaving the JSON unparseable.
         repaired += "\\\\";
+        stringValuePrefix += "\\";
+        continue;
+      }
+
+      // When a valid JSON control escape (\\n, \\r, \\t, etc.) follows a pure
+      // Windows path prefix, it might be a malformed path component rather than
+      // an intentional escape. Only apply the path heuristic when:
+      //   1. The entire prefix is a pure drive-letter path (not mixed content), AND
+      //   2. The character after the escape continues a path segment (lowercase/digit).
+      // This prevents double-escaping \\n in code content (like Python scripts)
+      // while preserving \\n in paths like C:\\newfolder.
+      if (
+        JSON_CONTROL_ESCAPES.has(nextChar) &&
+        looksLikeWindowsPathPrefix(stringValuePrefix) &&
+        looksLikePathContinuation(json.charAt(index + 2))
+      ) {
+        repaired += "\\\\";
+        stringValuePrefix += "\\";
         continue;
       }
 
       if (VALID_JSON_ESCAPES.has(nextChar)) {
         repaired += `\\${nextChar}`;
+        stringValuePrefix += nextChar === "\\" ? "\\" : `\\${nextChar}`;
         index += 1;
         continue;
       }
 
       repaired += "\\\\";
+      stringValuePrefix += "\\";
       continue;
     }
 
     repaired += isControlCharacter(char) ? escapeControlCharacter(char) : char;
+    stringValuePrefix += char;
   }
 
   return repaired;
@@ -91,6 +119,27 @@ export function repairJson(json: string): string {
 
 export function parseJsonWithRepair(json: string): unknown {
   return JSON.parse(repairJson(json)) as unknown;
+}
+
+/**
+ * Returns true when the entire accumulated prefix is a pure Windows drive-letter
+ * path (starts with X:\\ or X:/), so that subsequent \\n / \\r / \\t escapes
+ * can be treated as potential path separators rather than intentional escapes.
+ */
+function looksLikeWindowsPathPrefix(prefix: string): boolean {
+  return /^[A-Za-z]:[\\/]/.test(prefix);
+}
+
+/**
+ * Returns true when the character after a control escape looks like it
+ * continues a path segment (lowercase letter, digit, dash, underscore, or dot).
+ * Code constructs like \\nprint( or \\nimport start with a lowercase letter
+ * too, but the pure-path prefix guard in looksLikeWindowsPathPrefix already
+ * rules those out — mixed content like "import sys\\nC:\\\\path" won't have a
+ * pure path prefix before the \\n.
+ */
+function looksLikePathContinuation(after: string): boolean {
+  return /^[a-z0-9._\-]$/.test(after);
 }
 
 function asStreamingJsonRecord(value: unknown): Record<string, unknown> {

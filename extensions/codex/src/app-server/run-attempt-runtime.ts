@@ -16,6 +16,7 @@ import { isCodexSandboxExecServerEnabled } from "./config.js";
 import {
   resolveCodexAppServerHookChannelId,
   shouldEnableCodexAppServerNativeToolSurface,
+  shouldEnableUserMcpServersForCodexAppServer,
 } from "./dynamic-tool-build.js";
 import { resolveCodexProviderWebSearchSupport } from "./provider-capabilities.js";
 import { prewarmCodexAttemptClient } from "./run-attempt-client-prewarm.js";
@@ -152,6 +153,18 @@ export async function prepareCodexAttemptRuntime(connection: CodexAttemptConnect
     sandbox,
     { agentId: sessionAgentId, runtimeSessionKey: sandboxSessionKey, sandboxExecServerEnabled },
   );
+  // Decoupled from the native surface: a scoped allowlist keeps native code mode
+  // fail-closed but must not silently drop every user MCP server (the projection
+  // then attaches only allowlist-referenced servers).
+  const userMcpServersEnabled = shouldEnableUserMcpServersForCodexAppServer(
+    runtimeParams,
+    sandbox,
+    {
+      agentId: sessionAgentId,
+      runtimeSessionKey: sandboxSessionKey,
+      sandboxExecServerEnabled,
+    },
+  );
   preDynamicStartupStages.mark("native-tool-surface");
   const nativeProviderWebSearchSupport =
     resolveCodexWebSearchPlan({
@@ -210,6 +223,7 @@ export async function prepareCodexAttemptRuntime(connection: CodexAttemptConnect
     bundleMcpThreadConfig,
     sandboxExecServerEnabled,
     nativeToolSurfaceEnabled,
+    userMcpServersEnabled,
     nativeProviderWebSearchSupport,
     hookChannelId,
   };

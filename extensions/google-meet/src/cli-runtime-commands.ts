@@ -12,7 +12,23 @@ import {
   writeStdoutJson,
   writeStdoutLine,
 } from "./cli-shared.js";
+import { resolveGoogleMeetProbeGatewayTimeoutMs } from "./config.js";
 import type { GoogleMeetRuntime } from "./runtime.js";
+
+// The Gateway handler and the tool schema both take timeoutMs as a positive
+// integer, so parse it that way here instead of letting a fractional value reach
+// the RPC and fail there. Mirrors Zoom's probe option parser. `test-listen`
+// still uses the looser parsePositiveNumber and is left as a follow-up.
+function parseProbeTimeoutOption(value: string | undefined): number | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  const parsed = parseStrictNonNegativeInteger(value);
+  if (parsed === undefined || parsed === 0) {
+    throw new Error("timeout-ms must be a positive integer");
+  }
+  return parsed;
+}
 
 export function registerGoogleMeetProbeCommands(context: GoogleMeetCliCommandContext): void {
   const params = context;
@@ -63,18 +79,22 @@ export function registerGoogleMeetProbeCommands(context: GoogleMeetCliCommandCon
       "Realtime speech to trigger",
       "Say exactly: Google Meet speech test complete.",
     )
+    .option("--timeout-ms <ms>", "How long to wait for the spoken audio to reach the meeting")
     .action(async (url: string | undefined, options: JoinOptions) => {
       const payload = {
         url: resolveMeetingInput(params.config, url),
         transport: options.transport,
         mode: options.mode,
         message: options.message,
+        timeoutMs: parseProbeTimeoutOption(options.timeoutMs),
       };
       const delegated = await callGoogleMeetGateway({
         callGateway,
         method: "googlemeet.testSpeech",
+        // The probe waits inside the Gateway, so the client deadline has to cover
+        // the requested wait; the plain operation budget would abort first.
+        timeoutMs: resolveGoogleMeetProbeGatewayTimeoutMs(params.config, payload.timeoutMs),
         payload,
-        timeoutMs: operationTimeoutMs,
       });
       if (delegated.ok) {
         writeStdoutJson(delegated.payload);

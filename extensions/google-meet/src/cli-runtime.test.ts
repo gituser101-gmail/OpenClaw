@@ -359,6 +359,64 @@ describe("google-meet CLI", () => {
     }
   });
 
+  it("extends the test-speech gateway deadline to cover an explicit --timeout-ms", async () => {
+    const callGatewayFromCli = vi.fn(async () => ({
+      createdSession: true,
+      speechOutputTimedOut: false,
+    }));
+    const ensureRuntime = vi.fn();
+
+    const stdout = captureStdout();
+    try {
+      await setupCli({
+        callGatewayFromCli,
+        ensureRuntime: ensureRuntime as unknown as () => Promise<GoogleMeetRuntime>,
+      }).parseAsync(
+        [
+          "googlemeet",
+          "test-speech",
+          "https://meet.google.com/abc-defg-hij",
+          "--timeout-ms",
+          "30000",
+        ],
+        { from: "user" },
+      );
+    } finally {
+      stdout.restore();
+    }
+
+    // 60s operation budget plus the requested 30s wait; the plain budget would
+    // abort the call before the probe could finish waiting.
+    expect(callGatewayFromCli).toHaveBeenCalledWith(
+      "googlemeet.testSpeech",
+      { json: true, timeout: "90000" },
+      expect.objectContaining({ timeoutMs: 30_000 }),
+      { progress: false },
+    );
+    expect(ensureRuntime).not.toHaveBeenCalled();
+  });
+
+  it.each(["0", "1.5"])(
+    "rejects a test-speech --timeout-ms of %s before the gateway call",
+    async (value) => {
+      const callGatewayFromCli = vi.fn(async () => ({}));
+
+      await expect(
+        setupCli({ callGatewayFromCli }).parseAsync(
+          [
+            "googlemeet",
+            "test-speech",
+            "https://meet.google.com/abc-defg-hij",
+            "--timeout-ms",
+            value,
+          ],
+          { from: "user" },
+        ),
+      ).rejects.toThrow("timeout-ms must be a positive integer");
+      expect(callGatewayFromCli).not.toHaveBeenCalled();
+    },
+  );
+
   it("runs a listen-first health probe", async () => {
     const testListen = vi.fn(async () => ({
       createdSession: true,

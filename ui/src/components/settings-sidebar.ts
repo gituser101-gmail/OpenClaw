@@ -6,7 +6,9 @@ import {
   navigationIconForRoute,
   scheduleRoutePreload,
   SETTINGS_NAVIGATION_GROUPS,
+  SETTINGS_SEARCHABLE_SUBPAGE_ROUTES,
   settingsNavigationLabelForRoute,
+  settingsNavigationOwnerRoute,
   settingsSearchTextMatches,
   subtitleForRoute,
   titleForRoute,
@@ -19,12 +21,14 @@ import { normalizeLowercaseStringOrEmpty } from "../lib/string-coerce.ts";
 import { icons } from "./icons.ts";
 import { redactLoginFailureError } from "./login-gate.ts";
 import { renderOfflineSidebarStatus } from "./session-row-badges.ts";
+import type { SettingsSaveIndicatorProps } from "./settings-save-indicator.ts";
+import "./settings-save-indicator.ts";
 import "./sidebar-update-card.ts";
 
 type SettingsSidebarProps = {
   basePath: string;
   activeRouteId: RouteId;
-  enabledRouteIds?: readonly RouteId[];
+  activePathname?: string;
   activeSearch?: string;
   activeHash?: string;
   offline: boolean;
@@ -36,12 +40,14 @@ type SettingsSidebarProps = {
   onUpdate: () => void;
   searchQuery: string;
   searchBlockMatches?: readonly SettingsSearchBlock[];
+  enabledRouteIds?: readonly RouteId[];
   onExit: () => void;
   onRetryConnect: () => void;
   onNavigate: (routeId: RouteId, options?: ApplicationNavigationOptions) => void;
   onPreload?: (routeId: RouteId) => Promise<void> | void;
   onSearchQueryChange: (query: string) => void;
   preloadTimers: Map<EventTarget, ReturnType<typeof globalThis.setTimeout>>;
+  saveIndicator: SettingsSaveIndicatorProps;
 };
 
 type SettingsNavigationGroupView = {
@@ -55,6 +61,9 @@ type SettingsNavigationItemView = {
 };
 
 function isRedundantRouteBlock(routeId: RouteId, block: SettingsSearchBlock): boolean {
+  if (block.pathname) {
+    return false;
+  }
   const blockLabel = normalizeLowercaseStringOrEmpty(block.label);
   return [settingsNavigationLabelForRoute(routeId), titleForRoute(routeId)].some(
     (label) => normalizeLowercaseStringOrEmpty(label) === blockLabel,
@@ -75,8 +84,15 @@ function filterSettingsNavigationGroups(
       items: group.routes.filter(routeEnabled).map((routeId) => ({ routeId, blocks: [] })),
     })).filter((group) => group.items.length > 0);
   }
-  const allRoutes = SETTINGS_NAVIGATION_GROUPS.flatMap((group) => group.routes).filter(routeEnabled);
-  const directRoutes = allRoutes.filter((routeId) =>
+  const sidebarRoutes = SETTINGS_NAVIGATION_GROUPS.flatMap((group) => group.routes);
+  const searchableRoutes = [
+    ...new Set([
+      ...sidebarRoutes,
+      ...SETTINGS_SEARCHABLE_SUBPAGE_ROUTES,
+      ...blockMatches.map((block) => block.routeId),
+    ]),
+  ].filter(routeEnabled);
+  const directRoutes = searchableRoutes.filter((routeId) =>
     [
       settingsNavigationLabelForRoute(routeId),
       titleForRoute(routeId),
@@ -100,7 +116,10 @@ function filterSettingsNavigationGroups(
   const blocksByRoute = new Map<RouteId, SettingsSearchBlock[]>();
   const seenBlocks = new Set<string>();
   for (const block of blockMatches) {
-    const blockKey = `${block.routeId}\u0000${block.search ?? ""}\u0000${block.hash}`;
+    if (!routeEnabled(block.routeId)) {
+      continue;
+    }
+    const blockKey = `${block.routeId}\u0000${block.pathname ?? ""}\u0000${block.search ?? ""}\u0000${block.hash}`;
     if (seenBlocks.has(blockKey)) {
       continue;
     }
@@ -124,7 +143,7 @@ function filterSettingsNavigationGroups(
           },
         ]
       : []),
-    ...allRoutes
+    ...searchableRoutes
       .filter((routeId) => !includedRoutes.has(routeId) && blocksByRoute.has(routeId))
       .map((routeId) => ({
         labelKey: null,
@@ -134,7 +153,8 @@ function filterSettingsNavigationGroups(
 }
 
 function renderItem(props: SettingsSidebarProps, routeId: RouteId, label?: string) {
-  const active = !props.searchQuery && props.activeRouteId === routeId;
+  const active =
+    !props.searchQuery && settingsNavigationOwnerRoute(props.activeRouteId) === routeId;
   return html`
     <a
       href=${pathForRoute(routeId, props.basePath)}
@@ -174,9 +194,11 @@ function renderItem(props: SettingsSidebarProps, routeId: RouteId, label?: strin
 }
 
 function renderBlockItem(props: SettingsSidebarProps, block: SettingsSearchBlock) {
-  const href = pathForRoute(block.routeId, props.basePath) + (block.search ?? "") + block.hash;
+  const pathname = block.pathname ?? pathForRoute(block.routeId, props.basePath);
+  const href = pathname + (block.search ?? "") + block.hash;
   const active =
     props.activeRouteId === block.routeId &&
+    (block.pathname === undefined || props.activePathname === block.pathname) &&
     props.activeHash === block.hash &&
     (block.search === undefined || props.activeSearch === block.search);
   return html`
@@ -197,6 +219,7 @@ function renderBlockItem(props: SettingsSidebarProps, block: SettingsSearchBlock
         }
         event.preventDefault();
         props.onNavigate(block.routeId, {
+          ...(block.pathname ? { pathname: block.pathname } : {}),
           ...(block.search ? { search: block.search } : {}),
           hash: block.hash,
         });
@@ -311,7 +334,9 @@ export function renderSettingsSidebar(props: SettingsSidebarProps) {
               title: props.lastError ? redactLoginFailureError(props.lastError) : reconnecting,
               onRetry: props.onRetryConnect,
             })
-          : nothing}
+          : html`<openclaw-settings-save-indicator
+              .props=${props.saveIndicator}
+            ></openclaw-settings-save-indicator>`}
         ${props.version
           ? html`<span class="settings-sidebar__footer-version">${props.version}</span>`
           : nothing}

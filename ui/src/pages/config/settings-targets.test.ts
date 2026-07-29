@@ -32,6 +32,12 @@ describe("settings search target manifest", () => {
       ["personal", "/settings/profile", "", "#settings-profile-identity"],
       ["modelBehavior", "/settings/model-providers", "", "#settings-model-behavior"],
       [
+        "appearanceLanguage",
+        "/settings/appearance",
+        "?section=__appearance__",
+        "#settings-language",
+      ],
+      [
         "appearanceTheme",
         "/settings/appearance",
         "?section=__appearance__",
@@ -102,13 +108,14 @@ describe("settings search target manifest", () => {
 
 describe("settings config section ownership", () => {
   const pages: ReadonlyArray<readonly [ConfigPageId, readonly string[]]> = [
-    ["communications", ["messages", "talk", "tts"]],
+    ["communications", ["messages", "tts"]],
     ["appearance", ["__appearance__", "ui", "wizard"]],
     ["notifications", ["__notifications__"]],
     ["security", ["security", "approvals"]],
     ["automation", ["commands", "hooks", "bindings", "cron", "plugins"]],
     ["mcp", ["mcp"]],
     ["memory", ["memory"]],
+    ["talk", ["talk"]],
     ["infrastructure", ["gateway", "browser", "nodeHost", "discovery", "acp"]],
     ["ai-agents", ["agents", "skills", "tools", "session"]],
   ];
@@ -134,8 +141,7 @@ describe("settings config section ownership", () => {
     expect(configPageForSection("models")).toBe("advanced");
   });
 
-  it("keeps General and Advanced free of curated include lists", () => {
-    expect(configSectionKeysForPage("config")).toBeUndefined();
+  it("keeps Advanced free of a curated include list", () => {
     expect(configSectionKeysForPage("advanced")).toBeUndefined();
   });
 });

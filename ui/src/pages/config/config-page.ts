@@ -1,9 +1,8 @@
 import "../../styles/config.css";
-import "../../styles/config-quick.css";
 import { consume } from "@lit/context";
 import { initialState, Task, TaskStatus } from "@lit/task";
 import { asNullableRecord as asConfigRecord } from "@openclaw/normalization-core/record-coerce";
-import { html, type PropertyValues } from "lit";
+import { html, nothing, type PropertyValues } from "lit";
 import { property, state } from "lit/decorators.js";
 import type { SystemInfoResult } from "../../../../packages/gateway-protocol/src/index.js";
 import type { GatewayBrowserClient } from "../../api/gateway.ts";
@@ -50,15 +49,14 @@ import {
 } from "./config-sections.ts";
 import { renderMcp } from "./mcp.ts";
 import { renderMemoryPage } from "./memory-page.ts";
-import { memoryTabForRoute, narrowMemorySchema } from "./memory-schema.ts";
-import { renderQuickSettings } from "./quick.ts";
+import { narrowMemorySchema } from "./memory-schema.ts";
 import { configTargetIdFromHash, type ConfigRouteData } from "./route-data.ts";
 import { renderSecurity, type SecurityOverview } from "./security.ts";
 import {
   buildSessionObserverTogglePatch,
   buildSessionObserverUtilityModelPatch,
 } from "./session-observer-settings.ts";
-import { SETTINGS_SEARCH_TARGETS } from "./settings-targets.ts";
+import { renderTalkPage } from "./talk-page.ts";
 import {
   createConfigViewState,
   renderConfig,
@@ -85,20 +83,11 @@ type ConfigPageSetting =
 // Sections relocated by the settings restructure, keyed by "<oldPage>:<section>".
 // Kept so pre-restructure bookmarks and generated links still land somewhere
 // sensible instead of silently opening the old page's default section.
-// Scroll targets relocated by the settings restructure, keyed by
-// "<oldPage>:<targetId>". Same rationale as MOVED_SECTION_ROUTES: generated
-// settings-search links predating the move must land on the new home.
-const MOVED_TARGET_ROUTES: Record<string, { routeId: RouteId; hash: string }> = {
-  "config:settings-general-model": {
-    routeId: SETTINGS_SEARCH_TARGETS.modelBehavior.routeId,
-    hash: SETTINGS_SEARCH_TARGETS.modelBehavior.hash,
-  },
-};
-
 const MOVED_SECTION_ROUTES: Record<string, { routeId: RouteId; keepSection: boolean }> = {
   "communications:__notifications__": { routeId: "notifications", keepSection: false },
   "communications:channels": { routeId: "channels", keepSection: false },
   "communications:broadcast": { routeId: "advanced", keepSection: true },
+  "communications:talk": { routeId: "talk", keepSection: true },
   "automation:approvals": { routeId: "security", keepSection: true },
   "ai-agents:memory": { routeId: "memory", keepSection: true },
   "ai-agents:models": { routeId: "model-providers", keepSection: false },
@@ -122,11 +111,12 @@ function defaultConfigSelection(pageId: ConfigPageId): ConfigSelection {
       return { activeSection: "mcp", activeSubsection: null };
     case "memory":
       return { activeSection: "memory", activeSubsection: null };
+    case "talk":
+      return { activeSection: "talk", activeSubsection: null };
     case "infrastructure":
       return { activeSection: "gateway", activeSubsection: null };
     case "ai-agents":
       return { activeSection: "agents", activeSubsection: null };
-    case "config":
     case "advanced":
       return { activeSection: null, activeSubsection: null };
   }
@@ -139,13 +129,9 @@ function normalizeConfigSelection(
   activeSubsection: string | null,
 ): ConfigSelection {
   const sections = configSectionKeysForPage(pageId) ?? null;
-  // General/Advanced render without an include list; sections that have a
-  // curated home elsewhere must not activate here.
-  if (
-    (pageId === "config" || pageId === "advanced") &&
-    activeSection &&
-    SCOPED_CONFIG_SECTION_KEYS.has(activeSection)
-  ) {
+  // Advanced renders without an include list; sections that have a curated
+  // home elsewhere must not activate here.
+  if (pageId === "advanced" && activeSection && SCOPED_CONFIG_SECTION_KEYS.has(activeSection)) {
     return { activeSection: null, activeSubsection: null };
   }
   if (sections && (!activeSection || !sections.includes(activeSection))) {
@@ -163,9 +149,7 @@ export function configSelectionFromSearch(pageId: ConfigPageId, search: string):
 }
 
 function configPageTitle(pageId: ConfigPageId): string {
-  // The takeover sidebar is titled "Settings"; the general page header reads
-  // like its sibling sections instead of repeating it.
-  return pageId === "config" ? t("nav.settingsGeneral") : titleForRoute(pageId);
+  return titleForRoute(pageId);
 }
 
 function extractQuickSettingsSecurity(config: unknown): SecurityOverview {
@@ -225,7 +209,7 @@ export class ConfigPage extends OpenClawLightDomElement {
   @consume({ context: applicationContext, subscribe: true })
   private context!: ApplicationContext;
 
-  @property({ attribute: "page-id" }) pageId: ConfigPageId = "config";
+  @property({ attribute: "page-id" }) pageId: ConfigPageId = "advanced";
   @property({ attribute: false }) routeData: ConfigRouteData | null = null;
 
   @state() private settings = loadSettings();
@@ -249,7 +233,6 @@ export class ConfigPage extends OpenClawLightDomElement {
   private cameraPermissionRefreshPending = false;
   private cameraSelectionRequest = 0;
   @state() private formModes: Record<ConfigPageId, ConfigFormMode> = {
-    config: "form",
     communications: "form",
     appearance: "form",
     notifications: "form",
@@ -257,12 +240,12 @@ export class ConfigPage extends OpenClawLightDomElement {
     automation: "form",
     mcp: "form",
     memory: "form",
+    talk: "form",
     infrastructure: "form",
     "ai-agents": "form",
     advanced: "form",
   };
   @state() private selections: Record<ConfigPageId, ConfigSelection> = {
-    config: defaultConfigSelection("config"),
     communications: defaultConfigSelection("communications"),
     appearance: defaultConfigSelection("appearance"),
     notifications: defaultConfigSelection("notifications"),
@@ -270,6 +253,7 @@ export class ConfigPage extends OpenClawLightDomElement {
     automation: defaultConfigSelection("automation"),
     mcp: defaultConfigSelection("mcp"),
     memory: defaultConfigSelection("memory"),
+    talk: defaultConfigSelection("talk"),
     infrastructure: defaultConfigSelection("infrastructure"),
     "ai-agents": defaultConfigSelection("ai-agents"),
     advanced: defaultConfigSelection("advanced"),
@@ -471,27 +455,9 @@ export class ConfigPage extends OpenClawLightDomElement {
         return;
       }
     }
-    const rawTargetId =
-      this.routeData?.targetBlockId ?? configTargetIdFromHash(globalThis.location?.hash ?? "");
-    if (rawTargetId) {
-      const movedTarget = MOVED_TARGET_ROUTES[`${this.pageId}:${rawTargetId}`];
-      if (movedTarget) {
-        this.context?.navigate(movedTarget.routeId, { search: "", hash: movedTarget.hash });
-        return;
-      }
-    }
     const selection = this.routeData
       ? normalizeConfigSelection(this.pageId, this.routeData.section, null)
       : configSelectionFromSearch(this.pageId, globalThis.location?.search ?? "");
-    // Pre-restructure deep links like /config?section=env opened the General
-    // page's Advanced mode; those sections now live on the Advanced page.
-    if (this.pageId === "config" && selection.activeSection) {
-      this.context?.navigate("advanced", {
-        search: `?section=${encodeURIComponent(selection.activeSection)}`,
-        hash: globalThis.location?.hash ?? "",
-      });
-      return;
-    }
     this.selections = { ...this.selections, [this.pageId]: selection };
     const targetBlockId =
       this.routeData?.targetBlockId ?? configTargetIdFromHash(globalThis.location?.hash ?? "");
@@ -670,10 +636,6 @@ export class ConfigPage extends OpenClawLightDomElement {
       });
     this.sessionObserverModelLoads.set(client, promise);
     return promise;
-  }
-
-  private navigate(routeId: RouteId) {
-    this.context.navigate(routeId);
   }
 
   private setFormMode(mode: ConfigFormMode) {
@@ -874,8 +836,6 @@ export class ConfigPage extends OpenClawLightDomElement {
       applying: configState.configApplying,
       updating: this.isUpdateBusy(),
       readOnly: !this.context.hostPolicy.isSettingEditable("*"),
-      autoSaveStatus: configState.configAutoSaveStatus,
-      needsApply: configState.configNeedsApply,
       connected: configState.connected,
       schema: configState.configSchema,
       schemaLoading: configState.configSchemaLoading,
@@ -898,7 +858,6 @@ export class ConfigPage extends OpenClawLightDomElement {
       onSectionChange: (section) => this.setActiveSection(section),
       onSubsectionChange: (section) => this.setActiveSubsection(section),
       onSave: () => void runtimeConfig.save(),
-      onApply: () => void runtimeConfig.apply(),
       onRawDiscard: () => void runtimeConfig.discardDraft(),
       onOpenFile: () => void runtimeConfig.openFile(),
       version:
@@ -907,6 +866,8 @@ export class ConfigPage extends OpenClawLightDomElement {
         "",
       theme: this.settings.theme,
       themeMode: this.settings.themeMode,
+      locale: isSupportedLocale(this.settings.locale) ? this.settings.locale : i18n.getLocale(),
+      onLocaleChange: (locale) => this.setLocale(locale),
       setTheme: (theme, transitionContext) => this.setTheme(theme, transitionContext),
       setThemeMode: (mode, transitionContext) => this.setThemeMode(mode, transitionContext),
       hasCustomTheme: Boolean(this.settings.customTheme),
@@ -1037,10 +998,7 @@ export class ConfigPage extends OpenClawLightDomElement {
         configObject,
         pluginsHref: pathForRoute("plugins", this.context.basePath),
         memoryImportHref: pathForRoute("memory-import", this.context.basePath),
-        tab: memoryTabForRoute(this.routeData ?? {}),
-        // Memory's engine and backend are product decisions, not power-user
-        // knobs: this page forces the advanced tier open so they never hide
-        // behind the global Advanced toggle.
+        routeData: this.routeData,
         buildEditor: (keys) =>
           renderConfig({
             ...props,
@@ -1049,8 +1007,21 @@ export class ConfigPage extends OpenClawLightDomElement {
             activeSubsection: null,
             showModeToggle: false,
             embeddedEditor: true,
-            forceShowAdvanced: true,
             navRootLabel: t("tabs.memory"),
+          }),
+      });
+    }
+    if (this.pageId === "talk") {
+      return renderTalkPage({
+        configObject,
+        buildEditor: () =>
+          renderConfig({
+            ...props,
+            activeSection: "talk",
+            activeSubsection: null,
+            showModeToggle: false,
+            embeddedEditor: true,
+            navRootLabel: t("tabs.talk"),
           }),
       });
     }
@@ -1077,49 +1048,22 @@ export class ConfigPage extends OpenClawLightDomElement {
     return renderConfig(props);
   }
 
-  private renderQuickConfig() {
-    const runtimeConfig = this.context.runtimeConfig;
-    return renderQuickSettings({
-      locale: isSupportedLocale(this.settings.locale) ? this.settings.locale : i18n.getLocale(),
-      onLocaleChange: (locale) => this.setLocale(locale),
-      onModelsClick: () => this.navigate("model-providers"),
-      connected: runtimeConfig.state.connected,
-      configLoading: runtimeConfig.state.configLoading,
-      configSaving: runtimeConfig.state.configSaving,
-      configApplying: runtimeConfig.state.configApplying,
-      configUpdating: this.isUpdateBusy(),
-      configNeedsApply: runtimeConfig.state.configNeedsApply,
-      configRawDraftPending:
-        runtimeConfig.state.configFormMode === "raw" && runtimeConfig.state.configFormDirty,
-      configAutoSaveStatus: runtimeConfig.state.configAutoSaveStatus,
-      readOnly: !this.context.hostPolicy.isSettingEditable("*"),
-      onApplyConfig: () => void runtimeConfig.apply(),
-      onRetrySaveConfig: () => void runtimeConfig.save(),
-      onDiscardConfig: () => void runtimeConfig.discardDraft(),
-    });
-  }
-
   override render() {
     const configState = this.context.runtimeConfig.state;
     const configObject =
       asConfigRecord(configState.configForm ?? configState.configSnapshot?.config) ?? {};
-    const body =
-      this.pageId === "config" ? this.renderQuickConfig() : this.renderAdvancedConfig(configObject);
+    const body = this.renderAdvancedConfig(configObject);
     return html`
-      <section class="content-header">
-        <div>
-          <div class="page-title">${configPageTitle(this.pageId)}</div>
-        </div>
-      </section>
-      ${renderSettingsWorkspace(
-        body,
-        this.pageId === "config"
-          ? {
-              id: "config-settings-panel",
-              ariaLabel: t("configPage.content"),
-            }
-          : {},
-      )}
+      ${this.pageId === "memory"
+        ? nothing
+        : html`
+            <section class="content-header">
+              <div>
+                <div class="page-title">${configPageTitle(this.pageId)}</div>
+              </div>
+            </section>
+          `}
+      ${renderSettingsWorkspace(body)}
     `;
   }
 }

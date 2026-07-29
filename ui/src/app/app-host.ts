@@ -132,6 +132,7 @@ import {
   setSettingsChangeListener,
 } from "./settings.ts";
 import { isStaleChunkImportError, scheduleStaleChunkReload } from "./stale-chunk-reload.ts";
+import { resolveControlUiRefreshRequiredBanner } from "./update-overlay-helpers.ts";
 
 type AppSidebarElement = HTMLElement & {
   dismissTransientMenus: () => boolean;
@@ -1014,9 +1015,6 @@ class OpenClawShell extends OpenClawLightDomElement {
     if (!context || !isRouteId(routeId)) {
       return;
     }
-    if (!context.hostPolicy.isRouteEnabled(routeId)) {
-      return;
-    }
     this.closeNavDrawer({ restoreFocus: true });
     context.navigate(
       routeId,
@@ -1273,7 +1271,7 @@ class OpenClawShell extends OpenClawLightDomElement {
     const settingsModifier = event.metaKey !== event.ctrlKey && !event.altKey;
     if (settingsModifier && event.shiftKey && event.code === "Comma") {
       event.preventDefault();
-      this.navigate("config");
+      this.navigate("appearance");
       return;
     }
     const commandKey = event.metaKey && !event.ctrlKey && !event.altKey;
@@ -1640,15 +1638,11 @@ class OpenClawShell extends OpenClawLightDomElement {
   }
 
   private enabledRouteIds(): readonly RouteId[] {
-    const context = this.context;
-    const configEnabledRoutes = isWorkboardEnabledInConfigSnapshot(
-      context?.runtimeConfig.state.configSnapshot,
-    )
+    const routeIds = isWorkboardEnabledInConfigSnapshot(this.context?.runtimeConfig.state.configSnapshot)
       ? APP_ROUTE_IDS
       : ROUTE_IDS_WITHOUT_WORKBOARD;
-    return context
-      ? configEnabledRoutes.filter((routeId) => context.hostPolicy.isRouteEnabled(routeId))
-      : configEnabledRoutes;
+    const hostPolicy = this.context?.hostPolicy;
+    return hostPolicy ? routeIds.filter((routeId) => hostPolicy.isRouteEnabled(routeId)) : routeIds;
   }
 
   /** Sidebar draft-row hint while the new-session page is open, keyed off its ?agent param. */
@@ -1808,6 +1802,7 @@ class OpenClawShell extends OpenClawLightDomElement {
       value: runtimeConfig.configForm ?? runtimeConfig.configSnapshot?.config ?? null,
       uiHints: runtimeConfig.configUiHints,
       identityAvailable: Boolean(gatewaySnapshot.selfUser),
+      basePath: context.basePath,
     });
     const onboarding = this.onboardingMode;
     const navDrawerOpen = this.navDrawerOpen && !onboarding;
@@ -1895,7 +1890,7 @@ class OpenClawShell extends OpenClawLightDomElement {
       ? renderSettingsSidebar({
           basePath: context.basePath,
           activeRouteId: activeRoute,
-          enabledRouteIds: this.enabledRouteIds(),
+          activePathname: this.routeState.location?.pathname ?? "",
           activeSearch: this.routeState.location?.search ?? "",
           activeHash: this.routeState.location?.hash ?? "",
           offline: gatewaySnapshot.offlineStable,
@@ -1908,6 +1903,7 @@ class OpenClawShell extends OpenClawLightDomElement {
           onUpdate: () => void context.overlays.runUpdate(),
           searchQuery: this.settingsSearchQuery,
           searchBlockMatches: settingsSearchBlocks,
+          enabledRouteIds: this.enabledRouteIds(),
           onExit: () => this.exitSettings(),
           onRetryConnect: () => context.gateway.connect(),
           onNavigate: (routeId, options) => this.navigate(routeId, options),
@@ -1916,6 +1912,21 @@ class OpenClawShell extends OpenClawLightDomElement {
             void this.handleSettingsSearchQueryChange(nextQuery);
           },
           preloadTimers: this.settingsPreloadTimers,
+          saveIndicator: {
+            status: runtimeConfig.configAutoSaveStatus,
+            lastError: runtimeConfig.lastError,
+            needsApply: runtimeConfig.configNeedsApply,
+            applying: runtimeConfig.configApplying,
+            applyDisabled:
+              runtimeConfig.configLoading ||
+              runtimeConfig.configSaving ||
+              (runtimeConfig.configFormDirty && runtimeConfig.configFormMode === "raw") ||
+              overlaySnapshot.updateRunning ||
+              overlaySnapshot.updateReconciliationPending,
+            onRetry: () => void context.runtimeConfig.save(),
+            onReload: () => void context.runtimeConfig.discardDraft(),
+            onApply: () => void context.runtimeConfig.apply(),
+          },
         })
       : this.navigationSidebar;
     // Optional tags stay mounted before definition. Lit replays their properties on upgrade,
@@ -2066,10 +2077,7 @@ class OpenClawShell extends OpenClawLightDomElement {
             : html`<openclaw-update-banner
                 .props=${{
                   statusBanner: overlaySnapshot.controlUiRefreshRequired
-                    ? {
-                        tone: "info",
-                        text: "Server updated — refresh for full capabilities",
-                      }
+                    ? resolveControlUiRefreshRequiredBanner()
                     : null,
                   action: overlaySnapshot.controlUiRefreshRequired
                     ? { label: t("common.refresh"), onClick: this.refreshControlUi }

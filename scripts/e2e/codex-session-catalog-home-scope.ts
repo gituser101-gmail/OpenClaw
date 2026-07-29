@@ -4,7 +4,7 @@
  * Required environment:
  * - OPENCLAW_CODEX_CATALOG_PROOF_HEAD: exact git HEAD to bind
  * - OPENCLAW_CODEX_CATALOG_PROOF_ROOT: new retained artifact directory
- * - OPENCLAW_CODEX_CATALOG_PROOF_AUTH_FILE: native Codex auth file (never read or copied)
+ * - OPENCLAW_CODEX_CATALOG_PROOF_AUTH_FILE: source for disposable isolated auth copies
  */
 import assert from "node:assert/strict";
 import { spawn, type ChildProcess } from "node:child_process";
@@ -38,6 +38,10 @@ const gatewayLog = path.join(runRoot, "gateway.log");
 const token = randomBytes(24).toString("hex");
 
 type JsonRecord = Record<string, unknown>;
+type NativeSeeder = {
+  client: CodexAppServerClient;
+  close: () => Promise<void>;
+};
 
 function isRecord(value: unknown): value is JsonRecord {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -76,13 +80,26 @@ async function runCommand(
   });
 }
 
-async function seedNativeThread(codexHome: string): Promise<string> {
+async function startNativeSeeder(codexHome: string): Promise<NativeSeeder> {
   await fs.mkdir(codexHome, { recursive: true });
   await fs.access(nativeAuthFile);
-  const authLink = path.join(codexHome, "auth.json");
-  await fs.symlink(nativeAuthFile, authLink);
+  const authFile = path.join(codexHome, "auth.json");
+  await fs.copyFile(nativeAuthFile, authFile, fsSync.constants.COPYFILE_EXCL);
   let client: CodexAppServerClient | undefined;
+  let closed = false;
+  const close = async (): Promise<void> => {
+    if (closed) {
+      return;
+    }
+    closed = true;
+    try {
+      await client?.closeAndWait({ exitTimeoutMs: 5_000, forceKillDelayMs: 1_000 });
+    } finally {
+      await fs.rm(authFile, { force: true });
+    }
+  };
   try {
+    await fs.chmod(authFile, 0o600);
     client = CodexAppServerClient.start({
       command: codexBin,
       args: ["app-server"],
@@ -96,86 +113,73 @@ async function seedNativeThread(codexHome: string): Promise<string> {
       },
     });
     await client.initialize();
-    const response = await client.request<CodexThreadStartResponse>(
-      "thread/start",
+    return { client, close };
+  } catch (error) {
+    await close();
+    throw error;
+  }
+}
+
+async function seedNativeThread(seeder: NativeSeeder, codexHome: string): Promise<string> {
+  const response = await seeder.client.request<CodexThreadStartResponse>(
+    "thread/start",
+    {
+      cwd: workspace,
+      approvalPolicy: "never",
+      ephemeral: false,
+      sandbox: "read-only",
+      threadSource: "user",
+    },
+    { timeoutMs: 30_000 },
+  );
+  assert(response.thread.id, "thread/start returned no thread id");
+  const turn = await seeder.client.request(
+    "turn/start",
+    {
+      threadId: response.thread.id,
+      input: [{ type: "text", text: "Reply exactly OK." }],
+      effort: "low",
+    },
+    { timeoutMs: 30_000 },
+  );
+  let materialized = false;
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    const listed = await seeder.client.request(
+      "thread/list",
       {
-        cwd: workspace,
-        approvalPolicy: "never",
-        ephemeral: false,
-        sandbox: "read-only",
-        threadSource: "user",
+        archived: false,
+        limit: 100,
+        modelProviders: [],
+        sortKey: "recency_at",
+        sortDirection: "desc",
+        sourceKinds: ["cli", "vscode"],
       },
       { timeoutMs: 30_000 },
     );
-    assert(response.thread.id, "thread/start returned no thread id");
-    const turn = await client.request(
-      "turn/start",
-      {
-        threadId: response.thread.id,
-        input: [{ type: "text", text: "Reply exactly OK." }],
-        effort: "low",
-      },
-      { timeoutMs: 30_000 },
-    );
-    let materialized = false;
-    for (let attempt = 0; attempt < 100; attempt += 1) {
-      const listed = await client.request(
-        "thread/list",
-        {
-          archived: false,
-          limit: 100,
-          modelProviders: [],
-          sortKey: "recency_at",
-          sortDirection: "desc",
-          sourceKinds: ["cli", "vscode"],
-        },
-        { timeoutMs: 30_000 },
-      );
-      materialized = listed.data.some((thread) => thread.id === response.thread.id);
-      if (materialized) {
-        break;
-      }
-      await delay(100);
+    materialized = listed.data.some((thread) => thread.id === response.thread.id);
+    if (materialized) {
+      break;
     }
-    assert(materialized, "native sentinel turn did not materialize");
-    try {
-      await client.request(
-        "turn/interrupt",
-        { threadId: response.thread.id, turnId: turn.turn.id },
-        { timeoutMs: 30_000 },
-      );
-    } catch (error) {
-      if (!(error instanceof Error) || !error.message.includes("no active turn to interrupt")) {
-        throw error;
-      }
-    }
-    await client.request(
-      "thread/name/set",
-      { threadId: response.thread.id, name: `home-scope-proof-${path.basename(codexHome)}` },
+    await delay(100);
+  }
+  assert(materialized, "native sentinel turn did not materialize");
+  try {
+    await seeder.client.request(
+      "turn/interrupt",
+      { threadId: response.thread.id, turnId: turn.turn.id },
       { timeoutMs: 30_000 },
     );
-    await client.request(
-      "thread/inject_items",
-      {
-        threadId: response.thread.id,
-        items: [
-          {
-            type: "message",
-            role: "user",
-            content: [{ type: "input_text", text: "isolated home-scope proof sentinel" }],
-          },
-        ],
-      },
-      { timeoutMs: 30_000 },
-    );
-    return response.thread.id;
-  } finally {
-    try {
-      await client?.closeAndWait({ exitTimeoutMs: 5_000, forceKillDelayMs: 1_000 });
-    } finally {
-      await fs.rm(authLink, { force: true });
+  } catch (error) {
+    if (!(error instanceof Error) || !error.message.includes("no active turn to interrupt")) {
+      throw error;
     }
   }
+  await seeder.client.request(
+    "thread/name/set",
+    { threadId: response.thread.id, name: `home-scope-proof-${path.basename(codexHome)}` },
+    { timeoutMs: 30_000 },
+  );
+  return response.thread.id;
 }
 
 async function reservePort(): Promise<number> {
@@ -346,53 +350,63 @@ await Promise.all([
 
 const head = (await runCommand("git", ["rev-parse", "HEAD"])).stdout.trim();
 assert.equal(head, expectedHead, "proof HEAD mismatch");
+const worktreeStatus = (
+  await runCommand("git", ["status", "--porcelain=v1", "--untracked-files=all"])
+).stdout.trim();
+assert.equal(worktreeStatus, "", "proof requires a clean exact-HEAD worktree and index");
 assert.equal((await runCommand(codexBin, ["--version"])).stdout.trim(), "codex-cli 0.146.0");
 
-const userThreadId = await seedNativeThread(userCodexHome);
-const agentThreadId = await seedNativeThread(agentCodexHome);
-assert.notEqual(userThreadId, agentThreadId);
-
-const port = await reservePort();
-await writeConfig(gatewayConfig(port, false));
-const gatewayEnv: NodeJS.ProcessEnv = {
-  ...process.env,
-  HOME: isolatedHome,
-  OPENCLAW_HOME: isolatedHome,
-  OPENCLAW_STATE_DIR: stateDir,
-  OPENCLAW_CONFIG_PATH: configPath,
-  OPENCLAW_GATEWAY_TOKEN: token,
-  OPENCLAW_QA_PARENT_PID: String(process.pid),
-  OPENCLAW_SKIP_CHANNELS: "1",
-  OPENCLAW_SKIP_PROVIDERS: "1",
-  OPENCLAW_SKIP_GMAIL_WATCHER: "1",
-  OPENCLAW_SKIP_CRON: "1",
-  OPENCLAW_SKIP_CANVAS_HOST: "1",
-};
-delete gatewayEnv.CODEX_HOME;
-
-const logFd = fsSync.openSync(gatewayLog, "a", 0o600);
-const gateway = spawn(
-  process.execPath,
-  [
-    "scripts/run-node.mjs",
-    "gateway",
-    "run",
-    "--port",
-    String(port),
-    "--bind",
-    "loopback",
-    "--allow-unconfigured",
-  ],
-  {
-    cwd: repoRoot,
-    env: gatewayEnv,
-    detached: false,
-    stdio: ["ignore", logFd, logFd],
-  },
-);
-fsSync.closeSync(logFd);
-
+let userSeeder: NativeSeeder | undefined;
+let agentSeeder: NativeSeeder | undefined;
+let gateway: ChildProcess | undefined;
 try {
+  userSeeder = await startNativeSeeder(userCodexHome);
+  agentSeeder = await startNativeSeeder(agentCodexHome);
+  const userThreadId = await seedNativeThread(userSeeder, userCodexHome);
+  const agentThreadId = await seedNativeThread(agentSeeder, agentCodexHome);
+  assert.notEqual(userThreadId, agentThreadId);
+  await agentSeeder.close();
+
+  const port = await reservePort();
+  await writeConfig(gatewayConfig(port, false));
+  const gatewayEnv: NodeJS.ProcessEnv = {
+    ...process.env,
+    HOME: isolatedHome,
+    OPENCLAW_HOME: isolatedHome,
+    OPENCLAW_STATE_DIR: stateDir,
+    OPENCLAW_CONFIG_PATH: configPath,
+    OPENCLAW_GATEWAY_TOKEN: token,
+    OPENCLAW_QA_PARENT_PID: String(process.pid),
+    OPENCLAW_SKIP_CHANNELS: "1",
+    OPENCLAW_SKIP_PROVIDERS: "1",
+    OPENCLAW_SKIP_GMAIL_WATCHER: "1",
+    OPENCLAW_SKIP_CRON: "1",
+    OPENCLAW_SKIP_CANVAS_HOST: "1",
+  };
+  delete gatewayEnv.CODEX_HOME;
+
+  const logFd = fsSync.openSync(gatewayLog, "a", 0o600);
+  gateway = spawn(
+    process.execPath,
+    [
+      "scripts/run-node.mjs",
+      "gateway",
+      "run",
+      "--port",
+      String(port),
+      "--bind",
+      "loopback",
+      "--allow-unconfigured",
+    ],
+    {
+      cwd: repoRoot,
+      env: gatewayEnv,
+      detached: false,
+      stdio: ["ignore", logFd, logFd],
+    },
+  );
+  fsSync.closeSync(logFd);
+
   await waitForGateway(gateway, port, gatewayEnv);
   const initialIds = catalogThreadIds(
     await gatewayCall(port, gatewayEnv, "sessions.catalog.list", {
@@ -403,6 +417,18 @@ try {
   assert(initialIds.has(userThreadId), "native user-home sentinel missing before reload");
   assert(!initialIds.has(agentThreadId), "agent-home sentinel leaked before reload");
 
+  const reloadedUserThreadId = await seedNativeThread(userSeeder, userCodexHome);
+  const cachedIds = catalogThreadIds(
+    await gatewayCall(port, gatewayEnv, "sessions.catalog.list", {
+      catalogId: "codex",
+      limitPerHost: 100,
+    }),
+  );
+  assert(
+    !cachedIds.has(reloadedUserThreadId),
+    "new user-home sentinel bypassed the pre-reload catalog cache",
+  );
+
   await writeConfig(gatewayConfig(port, true));
   await waitForReload(port, gatewayEnv);
   const reloadedIds = catalogThreadIds(
@@ -412,6 +438,7 @@ try {
     }),
   );
   assert(reloadedIds.has(userThreadId), "native user-home sentinel missing after reload");
+  assert(reloadedIds.has(reloadedUserThreadId), "new user-home sentinel missing after reload");
   assert(!reloadedIds.has(agentThreadId), "agent-home sentinel leaked after reload");
 
   const fingerprint = (value: string) =>
@@ -426,10 +453,13 @@ try {
         config_reload: "accepted",
         catalog_rpc: "sessions.catalog.list",
         user_sentinel_fingerprint: fingerprint(userThreadId),
+        reload_user_sentinel_fingerprint: fingerprint(reloadedUserThreadId),
         agent_sentinel_fingerprint: fingerprint(agentThreadId),
         initial_user_sentinel_visible: true,
         initial_agent_sentinel_visible: false,
+        pre_reload_cached_new_user_sentinel_visible: false,
         reloaded_user_sentinel_visible: true,
+        reloaded_new_user_sentinel_visible: true,
         reloaded_agent_sentinel_visible: false,
         verdict: "PASS",
       },
@@ -438,7 +468,10 @@ try {
     )}\n`,
   );
 } finally {
-  await stopGateway(gateway);
+  if (gateway) {
+    await stopGateway(gateway);
+  }
+  await Promise.allSettled([userSeeder?.close(), agentSeeder?.close()]);
   await fs.rm(configPath, { force: true });
   const log = await fs.readFile(gatewayLog, "utf8").catch(() => "");
   if (log.includes(token)) {

@@ -24,6 +24,7 @@ import {
  * Plans optional media-tool factory registration from config, policy, capabilities, and auth.
  */
 type OptionalMediaToolFactoryPlan = {
+  image: boolean;
   imageGenerate: boolean;
   videoGenerate: boolean;
   musicGenerate: boolean;
@@ -217,6 +218,8 @@ function hasConfiguredVisionModelAuthSignal(params: {
 /** Resolves which optional media tools should be created for the current tool factory call. */
 export function resolveOptionalMediaToolFactoryPlan(params: {
   config?: OpenClawConfig;
+  agentDir?: string;
+  modelHasVision?: boolean;
   workspaceDir?: string;
   authStore?: AuthProfileStore;
   toolAllowlist?: string[];
@@ -256,7 +259,13 @@ export function resolveOptionalMediaToolFactoryPlan(params: {
   if (params.config?.plugins?.enabled === false) {
     // Optional media tools are plugin/capability backed. Disabling plugins shuts them off even when
     // stale defaults or env availability would otherwise appear to make a tool available.
+    // Image understanding can still be available via modelHasVision or explicit config,
+    // which do not require plugin snapshots.
+    const imageWhenPluginsDisabled =
+      Boolean(params.agentDir?.trim()) &&
+      (params.modelHasVision === true || hasExplicitImageModelConfig(params.config));
     return {
+      image: imageWhenPluginsDisabled,
       imageGenerate: false,
       videoGenerate: false,
       musicGenerate: false,
@@ -272,7 +281,16 @@ export function resolveOptionalMediaToolFactoryPlan(params: {
   const preparedProviders = params.preparedModelRuntime?.mediaCapabilityProviders;
   const preparedFamilyAvailable = (providers: readonly unknown[] | undefined) =>
     providers === undefined || providers.length > 0;
+  const image = resolveImageToolFactoryAvailable({
+    config: params.config,
+    agentDir: params.agentDir,
+    workspaceDir: params.workspaceDir,
+    modelHasVision: params.modelHasVision,
+    authStore: params.authStore,
+    preparedModelRuntime: params.preparedModelRuntime,
+  });
   return {
+    image,
     imageGenerate:
       allowImageGenerate &&
       preparedFamilyAvailable(preparedProviders?.imageGenerationProviders) &&

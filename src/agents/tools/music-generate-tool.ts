@@ -54,7 +54,6 @@ import {
   buildMediaReferenceDetails,
   buildTaskRunDetails,
   createCapabilityProviderRuntimeDeps,
-  hasGenerationToolAvailability,
   normalizeMediaReferenceInputs,
   readBooleanToolParam,
   resolveCapabilityModelConfigForTool,
@@ -587,25 +586,12 @@ export function createMusicGenerateTool(options?: {
   fsPolicy?: ToolFsPolicy;
   scheduleBackgroundWork?: MediaGenerateBackgroundScheduler;
   onAsyncTaskStarted?: MediaGenerateAsyncStartCallback;
-}): AnyAgentTool | null {
+}): AnyAgentTool {
   const cfg: OpenClawConfig = options?.config ?? getRuntimeConfig();
   const preparedProviders = options?.preparedModelRuntime?.mediaCapabilityProviders
     ?.musicGenerationProviders
     ? [...options.preparedModelRuntime.mediaCapabilityProviders.musicGenerationProviders]
     : undefined;
-  if (
-    !hasGenerationToolAvailability({
-      cfg,
-      agentDir: options?.agentDir,
-      workspaceDir: options?.workspaceDir,
-      authStore: options?.authProfileStore,
-      modelConfig: cfg.agents?.defaults?.mediaModels?.music,
-      providerKey: "musicGenerationProviders",
-      providers: preparedProviders,
-    })
-  ) {
-    return null;
-  }
 
   const sandboxConfig = options?.sandbox
     ? {

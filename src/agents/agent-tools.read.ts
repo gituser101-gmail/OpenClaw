@@ -2,6 +2,7 @@
 // Adds workspace-root guards, adaptive read paging, image validation, memory
 // append-only writes, and parameter cleanup around the session file tools.
 
+import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { URL } from "node:url";
@@ -1099,9 +1100,70 @@ function resolveHostPath(filePath: string): string {
   return path.resolve(expandTildeToOsHome(filePath));
 }
 
+async function resolveHostWriteTarget(filePath: string): Promise<string> {
+  try {
+    return await fs.realpath(filePath);
+  } catch (error) {
+    if (!isNotFoundError(error)) {
+      throw error;
+    }
+  }
+
+  try {
+    const linkTarget = await fs.readlink(filePath);
+    return await resolveHostWriteTarget(path.resolve(path.dirname(filePath), linkTarget));
+  } catch (error) {
+    if (!isNotFoundError(error)) {
+      throw error;
+    }
+  }
+
+  return await canonicalPathFromExistingAncestor(filePath);
+}
+
+const HOST_WRITE_RESERVATION_SKIP_CODES = new Set(["EACCES", "EPERM", "EROFS"]);
+
+function isHostWriteReservationSkipError(error: unknown): boolean {
+  const code = (error as NodeJS.ErrnoException | undefined)?.code;
+  return typeof code === "string" && HOST_WRITE_RESERVATION_SKIP_CODES.has(code);
+}
+
+async function reserveHostWriteContent(targetDir: string, content: string) {
+  const reservationPath = path.join(
+    targetDir,
+    `.openclaw-host-write.${process.pid}.${randomUUID()}.tmp`,
+  );
+  const handle = await fs.open(reservationPath, "wx", 0o600).catch((error: unknown) => {
+    if (isHostWriteReservationSkipError(error)) {
+      return undefined;
+    }
+    throw error;
+  });
+  if (!handle) {
+    return;
+  }
+  try {
+    await fs.rm(reservationPath, { force: true });
+    await handle.writeFile(content, "utf-8");
+  } finally {
+    await handle.close().catch(() => undefined);
+    await fs.rm(reservationPath, { force: true }).catch(() => undefined);
+  }
+}
+
 async function writeHostFile(absolutePath: string, content: string) {
   const resolved = resolveHostPath(absolutePath);
   await fs.mkdir(path.dirname(resolved), { recursive: true });
+  const targetPath = await resolveHostWriteTarget(resolved);
+  const target = await fs.stat(targetPath).catch((error: unknown) => {
+    if (isNotFoundError(error)) {
+      return undefined;
+    }
+    throw error;
+  });
+  if (!target || target.isFile()) {
+    await reserveHostWriteContent(path.dirname(targetPath), content);
+  }
   await fs.writeFile(resolved, content, "utf-8");
 }
 

@@ -41,6 +41,8 @@ const clickClackIngressIdentity = {
 export type ClickClackInboundAccess = {
   shouldDispatch: boolean;
   commandAuthorized: boolean;
+  /** Whether the resolved group policy required a direct mention. */
+  requireMention?: boolean;
   mentionFacts: {
     canDetectMention: boolean;
     wasMentioned: boolean;
@@ -137,6 +139,7 @@ export async function resolveClickClackInboundAccess(params: {
     commandAuthorized: resolved.commandAccess.requested
       ? resolved.commandAccess.authorized
       : resolved.senderAccess.allowed,
+    requireMention: effectiveGroupPolicy.requireMention,
     mentionFacts: mentionFacts as {
       canDetectMention: boolean;
       wasMentioned: boolean;

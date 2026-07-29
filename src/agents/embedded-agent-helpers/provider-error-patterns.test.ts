@@ -251,6 +251,18 @@ describe("classifyFailoverReason with provider patterns", () => {
     ).toBe("billing");
   });
 
+  it("xAI 429 with billing text remains rate_limit NOT billing (#115853)", () => {
+    // Leading 429 must win over the provider-specific billing patterns so
+    // the existing rate-limit cooldown behaviour is preserved. The generic
+    // billing branch already excludes leading 429; the provider-specific
+    // branch is placed after the rate-limit classifiers for the same reason.
+    expect(
+      classifyFailoverReason("429 You have run out of credits. Please purchase more to continue.", {
+        provider: "xai",
+      }),
+    ).toBe("rate_limit");
+  });
+
   it("does NOT classify non-xAI run out of credits as billing (#115853)", () => {
     expect(
       classifyFailoverReason("You have run out of credits. Please purchase more to continue.", {

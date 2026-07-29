@@ -937,12 +937,6 @@ function classifyFailoverClassificationFromMessage(
   ) {
     return toReasonClassification("billing");
   }
-  // Provider-specific billing patterns must classify before generic 403
-  // auth catch so fallback routes to an available provider for credit /
-  // subscription exhaustion (#115853).
-  if (classifyProviderSpecificError({ errorMessage: raw, provider }) === "billing") {
-    return toReasonClassification("billing");
-  }
   const leadingStatus = extractLeadingHttpStatus(raw.trim());
   if (leadingStatus?.code !== 429 && isBillingErrorMessage(raw)) {
     return toReasonClassification("billing");
@@ -980,6 +974,14 @@ function classifyFailoverClassificationFromMessage(
   }
   if (isGenericProviderInternalError(raw)) {
     return toReasonClassification("timeout");
+  }
+  // Provider-specific billing patterns must classify before generic 403
+  // auth catch so fallback routes to an available provider for credit /
+  // subscription exhaustion. Placed after rate-limit checks (including the
+  // leading-429 guard) so a matching xAI 429 still records rate_limit
+  // rather than billing (#115853).
+  if (classifyProviderSpecificError({ errorMessage: raw, provider }) === "billing") {
+    return toReasonClassification("billing");
   }
   // Auth classifiers run before the broad isJsonApiInternalServerError check so that
   // provider errors like {"type":"api_error","message":"invalid api key"} are

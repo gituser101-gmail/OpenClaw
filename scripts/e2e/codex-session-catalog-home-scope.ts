@@ -93,7 +93,10 @@ async function startNativeSeeder(codexHome: string): Promise<NativeSeeder> {
     }
     closed = true;
     try {
-      await client?.closeAndWait({ exitTimeoutMs: 5_000, forceKillDelayMs: 1_000 });
+      if (client) {
+        const exited = await client.closeAndWait({ exitTimeoutMs: 5_000, forceKillDelayMs: 1_000 });
+        assert(exited, "native seeder app-server did not exit");
+      }
     } finally {
       await fs.rm(authFile, { force: true });
     }
@@ -323,22 +326,54 @@ async function waitForReload(port: number, gatewayEnv: NodeJS.ProcessEnv): Promi
   throw new Error("Gateway config reload timed out");
 }
 
+async function waitForChildExit(child: ChildProcess): Promise<void> {
+  if (child.exitCode !== null || child.signalCode !== null) {
+    return;
+  }
+  await new Promise<void>((resolve, reject) => {
+    const onExit = () => {
+      child.off("error", onError);
+      resolve();
+    };
+    const onError = (error: Error) => {
+      child.off("exit", onExit);
+      reject(error);
+    };
+    child.once("exit", onExit);
+    child.once("error", onError);
+  });
+}
+
 async function stopGateway(gateway: ChildProcess): Promise<void> {
-  if (gateway.exitCode !== null) {
+  if (gateway.exitCode !== null || gateway.signalCode !== null) {
     return;
   }
   gateway.kill("SIGTERM");
-  await Promise.race([
-    new Promise<void>((resolve) => {
-      gateway.once("exit", () => resolve());
-    }),
-    new Promise<void>((resolve) => {
-      setTimeout(() => {
-        gateway.kill("SIGKILL");
-        resolve();
-      }, 5_000);
-    }),
-  ]);
+  const exitedGracefully = await new Promise<boolean>((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      gateway.off("exit", onExit);
+      gateway.off("error", onError);
+      resolve(false);
+    }, 10_000);
+    const onExit = () => {
+      clearTimeout(timeout);
+      gateway.off("error", onError);
+      resolve(true);
+    };
+    const onError = (error: Error) => {
+      clearTimeout(timeout);
+      gateway.off("exit", onExit);
+      reject(error);
+    };
+    gateway.once("exit", onExit);
+    gateway.once("error", onError);
+  });
+  if (exitedGracefully) {
+    return;
+  }
+  gateway.kill("SIGKILL");
+  await waitForChildExit(gateway);
+  throw new Error("Gateway required SIGKILL during cleanup");
 }
 
 await fs.mkdir(runRoot, { recursive: false });

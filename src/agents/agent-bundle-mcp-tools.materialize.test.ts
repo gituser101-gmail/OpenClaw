@@ -310,6 +310,43 @@ describe("createBundleMcpToolRuntime", () => {
     });
   });
 
+  it("keeps image blocks when MCP tools return structuredContent", async () => {
+    // structuredContent can only replace the spec's mirrored text copy; images
+    // have no JSON representation and must reach the model (silent-blindness bug
+    // class if dropped).
+    const runtime = await materializeBundleMcpToolsForRun({
+      runtime: makeToolRuntime({
+        result: {
+          content: [
+            { type: "text", text: "screenshot of https://example.com" },
+            { type: "image", data: "aGVsbG8=", mimeType: "image/png" },
+          ],
+          structuredContent: { url: "https://example.com", title: "Example" },
+          isError: false,
+        },
+      }),
+    });
+
+    const result = await expectDefined(runtime.tools[0], "runtime.tools[0] test invariant").execute(
+      "call-bundle-image",
+      {},
+      undefined,
+      undefined,
+    );
+
+    expect(result.content).toEqual([
+      { type: "image", data: "aGVsbG8=", mimeType: "image/png" },
+      {
+        type: "text",
+        text: `structuredContent:\n${JSON.stringify(
+          { url: "https://example.com", title: "Example" },
+          null,
+          2,
+        )}`,
+      },
+    ]);
+  });
+
   it("coerces non-text/image MCP tool-result blocks to text (resource_link/resource/audio)", async () => {
     // resource_link/resource/audio blocks have no base64 image source; if they
     // leaked into the provider image branch Anthropic would 400 on an image with

@@ -102,10 +102,11 @@ function toAgentToolResult(params: {
           text: `structuredContent:\n${JSON.stringify(params.result.structuredContent, null, 2)}`,
         } as const)
       : null;
-  // Structured MCP results are the canonical model payload here; replacing
-  // mirrored content avoids duplicating large tool output in the prompt.
+  // structuredContent replaces only the spec's mirrored text copy; image blocks
+  // have no JSON representation and must survive, or the model silently goes
+  // blind on servers that pair screenshots with structured output.
   const normalizedContent: AgentToolResult<unknown>["content"] = structuredContentBlock
-    ? [structuredContentBlock]
+    ? [...content.filter((block) => block.type === "image"), structuredContentBlock]
     : content.length > 0
       ? content
       : ([

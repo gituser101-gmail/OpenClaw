@@ -170,8 +170,52 @@ describe("huggingface models", () => {
   it("parses a valid bounded discovery response", async () => {
     process.env.VITEST = "false";
     process.env.NODE_ENV = "development";
-    const modelId = "test-org/test-model";
-    const body = new TextEncoder().encode(JSON.stringify({ data: [{ id: modelId }] }));
+    const body = new TextEncoder().encode(
+      JSON.stringify({
+        data: [
+          {
+            id: "test-org/tool-model",
+            providers: [
+              null,
+              "malformed",
+              { provider: "fallback", status: "live" },
+              {
+                provider: "primary",
+                status: "live",
+                supports_tools: true,
+                context_length: 65536,
+              },
+            ],
+          },
+          {
+            id: "test-org/chat-model",
+            providers: [
+              { provider: "fallback", status: "live" },
+              { provider: "primary", status: "live", supports_tools: false },
+            ],
+          },
+          {
+            id: "test-org/unknown-model",
+            providers: [{ provider: "fallback", status: "live" }],
+          },
+          {
+            id: "Qwen/Qwen3.5-9B",
+            providers: [
+              {
+                provider: "primary",
+                status: "live",
+                supports_tools: true,
+                context_length: 262144,
+              },
+            ],
+          },
+          {
+            id: "Qwen/Qwen3-4B-Instruct-2507",
+            providers: [{ provider: "primary", status: "live", supports_tools: true }],
+          },
+        ],
+      }),
+    );
     const read = vi
       .fn()
       .mockResolvedValueOnce({ done: false, value: body })
@@ -190,7 +234,25 @@ describe("huggingface models", () => {
 
     const models = await discoverHuggingfaceModels("hf_test_token");
 
-    expect(models.some((model) => model.id === modelId)).toBe(true);
+    expect(models.find((model) => model.id === "test-org/tool-model")?.compat).toEqual({
+      supportsTools: true,
+    });
+    expect(models.find((model) => model.id === "test-org/tool-model")?.contextWindow).toBe(65536);
+    expect(models.find((model) => model.id === "test-org/chat-model")?.compat).toEqual({
+      supportsTools: false,
+    });
+    expect(models.find((model) => model.id === "test-org/unknown-model")?.compat).toBeUndefined();
+    expect(models.find((model) => model.id === "Qwen/Qwen3.5-9B")).toMatchObject({
+      reasoning: true,
+      compat: {
+        supportsTools: true,
+        thinkingFormat: "qwen-chat-template",
+      },
+    });
+    expect(models.find((model) => model.id === "Qwen/Qwen3-4B-Instruct-2507")).toMatchObject({
+      reasoning: false,
+      compat: { supportsTools: true },
+    });
     expect(cancel).not.toHaveBeenCalled();
     expect(releaseLock).toHaveBeenCalledTimes(1);
   });

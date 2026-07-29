@@ -13,7 +13,10 @@ import { completionRequiresMessageToolDelivery } from "../auto-reply/reply/compl
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { isFastTestRuntimeEnv } from "../infra/env.js";
 import { isOutboundDeliveryError } from "../infra/outbound/deliver-types.js";
-import { sourceDeliveryTargetsMatch } from "../infra/outbound/source-delivery-plan.js";
+import {
+  sourceDeliveryTargetsMatch,
+  type SourceDeliveryPlan,
+} from "../infra/outbound/source-delivery-plan.js";
 import { scheduleSessionDelivery } from "../infra/session-delivery-queue-runtime.js";
 import {
   enqueueClaimedSessionDelivery,
@@ -42,7 +45,6 @@ import {
 } from "../utils/message-channel.js";
 import { resolveDefaultAgentId } from "./agent-scope-config.js";
 import {
-  collectAutomaticDeliveredMediaUrls,
   collectDeliveredMediaUrls,
   collectMessagingToolDeliveredMediaUrls,
   getAgentCommandDeliveryFailure,
@@ -732,6 +734,120 @@ function isGatewayAgentRunPending(response: unknown): boolean {
   return isNonTerminalAgentRunStatus(status);
 }
 
+type CompletionDeliveryTarget = SourceDeliveryPlan["target"];
+type CompletionEvidenceTarget = Parameters<typeof sourceDeliveryTargetsMatch>[0];
+
+function hasConcreteCompletionDeliveryTarget(target: CompletionDeliveryTarget): boolean {
+  return Boolean(target.channel?.trim() && target.to?.trim());
+}
+
+function completionDeliveryTargetRequiresExactEvidence(target: CompletionDeliveryTarget): boolean {
+  return target.threadId != null;
+}
+
+function normalizeCompletionEvidenceTarget(value: unknown): CompletionEvidenceTarget | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  return value as CompletionEvidenceTarget;
+}
+
+function completionDeliveryTargetsMatch(
+  observed: CompletionEvidenceTarget,
+  expected: CompletionDeliveryTarget,
+): boolean {
+  if (!sourceDeliveryTargetsMatch(observed, expected)) {
+    return false;
+  }
+  const expectedAccountId = expected.accountId?.trim();
+  const observedAccountId = observed.accountId?.trim();
+  if (!expectedAccountId) {
+    return true;
+  }
+  if (expected.threadId != null) {
+    return observedAccountId === expectedAccountId;
+  }
+  return !observedAccountId || observedAccountId === expectedAccountId;
+}
+
+function getPayloadDeliveryStatusRecord(
+  result: NonNullable<ReturnType<typeof getGatewayAgentResult>>,
+): Record<string, unknown> | undefined {
+  return result.deliveryStatus && typeof result.deliveryStatus === "object"
+    ? (result.deliveryStatus as Record<string, unknown>)
+    : undefined;
+}
+
+function hasTargetedMessagingToolDeliveryEvidence(
+  response: unknown,
+  deliveryTarget: CompletionDeliveryTarget,
+): boolean {
+  const result = getGatewayAgentResult(response);
+  if (!result || !hasMessagingToolDeliveryEvidence(result)) {
+    return false;
+  }
+  if (!hasConcreteCompletionDeliveryTarget(deliveryTarget)) {
+    return true;
+  }
+  const targets = Array.isArray(result.messagingToolSentTargets)
+    ? result.messagingToolSentTargets
+    : [];
+  if (
+    targets.some((target) => {
+      const normalized = normalizeCompletionEvidenceTarget(target);
+      return normalized ? completionDeliveryTargetsMatch(normalized, deliveryTarget) : false;
+    })
+  ) {
+    return true;
+  }
+  if (collectMessagingToolDeliveredMediaUrlsForTarget(result, deliveryTarget).length > 0) {
+    return true;
+  }
+  return targets.length === 0 && !completionDeliveryTargetRequiresExactEvidence(deliveryTarget);
+}
+
+function collectPayloadOutcomeDeliveryTargets(
+  result: NonNullable<ReturnType<typeof getGatewayAgentResult>>,
+): CompletionEvidenceTarget[] {
+  const outcomes = getPayloadDeliveryStatusRecord(result)?.payloadOutcomes;
+  if (!Array.isArray(outcomes)) {
+    return [];
+  }
+  const targets: CompletionEvidenceTarget[] = [];
+  for (const outcome of outcomes) {
+    if (!outcome || typeof outcome !== "object" || Array.isArray(outcome)) {
+      continue;
+    }
+    const record = outcome as Record<string, unknown>;
+    if (normalizeOptionalLowercaseString(record.status) !== "sent") {
+      continue;
+    }
+    const target = normalizeCompletionEvidenceTarget(record.target ?? record.deliveryTarget);
+    if (target) {
+      targets.push(target);
+    }
+  }
+  return targets;
+}
+
+function hasTargetedAutomaticDeliveryEvidence(
+  response: unknown,
+  deliveryTarget: CompletionDeliveryTarget,
+): boolean {
+  const result = getGatewayAgentResult(response);
+  if (!result || !hasVisibleAgentPayload(result)) {
+    return false;
+  }
+  if (!hasConcreteCompletionDeliveryTarget(deliveryTarget)) {
+    return true;
+  }
+  const targets = collectPayloadOutcomeDeliveryTargets(result);
+  if (targets.some((target) => completionDeliveryTargetsMatch(target, deliveryTarget))) {
+    return true;
+  }
+  return targets.length === 0 && !completionDeliveryTargetRequiresExactEvidence(deliveryTarget);
+}
+
 function resolveGeneratedMediaCompletionLabel(params: {
   sourceTool?: string;
   internalEvents?: readonly AgentInternalEvent[];
@@ -1025,10 +1141,10 @@ function collectAutomaticCompletionDeliveredMediaUrls(params: {
   if (params.automaticDeliveryRequested) {
     if (params.automaticDeliveryFailed || hasPayloadDeliveryOutcomes(params.result)) {
       addUrls(
-        collectAutomaticDeliveredMediaUrls(params.result, {
-          includeAmbiguousSinglePayloadFailure:
+        collectPayloadOutcomeDeliveredMediaUrls(params.result, {
+          countAmbiguousSinglePayloadFailure:
             params.automaticDeliveryFailed && params.expectedMediaCount === 1,
-          includeSuppressedOutcomes: false,
+          deliveryTarget: params.deliveryTarget,
         }),
       );
     } else if (!hasSuppressedPayloadDeliveryStatus(params.result)) {
@@ -1045,6 +1161,56 @@ function collectPayloadMediaUrls(
   return collectDeliveredMediaUrls({
     payloads: Array.isArray(result.payloads) ? result.payloads : [],
   });
+}
+
+function collectPayloadOutcomeDeliveredMediaUrls(
+  result: NonNullable<ReturnType<typeof getGatewayAgentResult>>,
+  options: {
+    countAmbiguousSinglePayloadFailure: boolean;
+    deliveryTarget: CompletionDeliveryTarget;
+  },
+): string[] {
+  const payloads = Array.isArray(result.payloads) ? result.payloads : [];
+  const deliveryStatus = getPayloadDeliveryStatusRecord(result);
+  const payloadOutcomes = Array.isArray(deliveryStatus?.payloadOutcomes)
+    ? deliveryStatus.payloadOutcomes
+    : [];
+  const urls = new Set<string>();
+  for (const outcome of payloadOutcomes) {
+    if (!outcome || typeof outcome !== "object" || Array.isArray(outcome)) {
+      continue;
+    }
+    const record = outcome as Record<string, unknown>;
+    const status = normalizeOptionalLowercaseString(record.status);
+    const ambiguousSinglePayloadFailure =
+      status === "failed" &&
+      record.sentBeforeError === true &&
+      options.countAmbiguousSinglePayloadFailure &&
+      payloadOutcomes.length === 1 &&
+      payloads.length === 1;
+    if (status !== "sent" && !ambiguousSinglePayloadFailure) {
+      continue;
+    }
+    const outcomeTarget = normalizeCompletionEvidenceTarget(record.target ?? record.deliveryTarget);
+    if (hasConcreteCompletionDeliveryTarget(options.deliveryTarget)) {
+      if (outcomeTarget && !completionDeliveryTargetsMatch(outcomeTarget, options.deliveryTarget)) {
+        continue;
+      }
+      if (!outcomeTarget && completionDeliveryTargetRequiresExactEvidence(options.deliveryTarget)) {
+        continue;
+      }
+    }
+    const index =
+      typeof record.index === "number" && Number.isInteger(record.index) ? record.index : undefined;
+    const payload = index === undefined ? undefined : payloads[index];
+    if (!payload) {
+      continue;
+    }
+    for (const url of collectDeliveredMediaUrls({ payloads: [payload] })) {
+      urls.add(url);
+    }
+  }
+  return Array.from(urls);
 }
 
 function collectMessagingToolDeliveredMediaUrlsForTarget(
@@ -1572,12 +1738,13 @@ async function sendSubagentAnnounceDirectly(params: {
           : {}),
       };
     }
-    const hasMessagingToolDelivery = Boolean(
-      directAnnounceResult && hasMessagingToolDeliveryEvidence(directAnnounceResult),
+    const hasMessagingToolDelivery = hasTargetedMessagingToolDeliveryEvidence(
+      directAnnounceResponse,
+      deliveryTarget,
     );
-    const hasVisibleGatewayPayload = Boolean(
-      directAnnounceResult &&
-      (hasVisibleAgentPayload(directAnnounceResult) || hasMessagingToolDelivery),
+    const hasVisibleGatewayPayload = hasTargetedAutomaticDeliveryEvidence(
+      directAnnounceResponse,
+      deliveryTarget,
     );
     const hasIntentionalSilentCompletionReply = Boolean(
       directAnnounceResult && hasIntentionalSilentAgentPayload(directAnnounceResult),
@@ -1670,7 +1837,8 @@ async function sendSubagentAnnounceDirectly(params: {
       params.expectsCompletionMessage &&
       shouldDeliverAgentFinal &&
       !isSubagentCompletion &&
-      !hasVisibleGatewayPayload
+      !hasVisibleGatewayPayload &&
+      !hasMessagingToolDelivery
     ) {
       return {
         delivered: false,
@@ -1876,6 +2044,8 @@ export async function deliverSubagentAnnouncement(params: {
 }
 
 const testing = {
+  hasTargetedAutomaticDeliveryEvidence,
+  hasTargetedMessagingToolDeliveryEvidence,
   setDepsForTest(
     overrides?: Partial<SubagentAnnounceDeliveryDeps> & {
       callGateway?: typeof callGateway;

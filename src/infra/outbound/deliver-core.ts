@@ -283,6 +283,7 @@ export async function deliverOutboundPayloadsCore(
         sessionKey: diagnosticSessionKey,
       });
     };
+    let payloadDeliveryTarget: ReturnType<ChannelHandler["buildTargetRef"]> | undefined;
     try {
       throwIfAborted(abortSignal);
 
@@ -387,6 +388,7 @@ export async function deliverOutboundPayloadsCore(
           consumeImplicitReply: replyToResolution.source === "implicit",
         });
       const deliveryTarget = deliveryHandler.buildTargetRef({ threadId: sendOverrides.threadId });
+      payloadDeliveryTarget = deliveryTarget;
       if (
         deliveryHandler.sendPayload &&
         ((effectivePayload.isError === true &&
@@ -426,6 +428,7 @@ export async function deliverOutboundPayloadsCore(
           index: payloadIndex,
           status: "sent",
           results: deliveredResults,
+          target: deliveryTarget,
         });
         recordDeliveredPayload(payloadSummary, deliveredResults);
         await maybePinDeliveredMessage({
@@ -467,6 +470,7 @@ export async function deliverOutboundPayloadsCore(
             index: payloadIndex,
             status: "sent",
             results: deliveredResults,
+            target: deliveryTarget,
           });
           recordDeliveredPayload(payloadSummary, deliveredResults);
         } else {
@@ -524,6 +528,7 @@ export async function deliverOutboundPayloadsCore(
             index: payloadIndex,
             status: "sent",
             results: deliveredResults,
+            target: deliveryTarget,
           });
           recordDeliveredPayload(
             { ...payloadSummary, text: fallbackText, mediaUrls: [] },
@@ -593,6 +598,7 @@ export async function deliverOutboundPayloadsCore(
           index: payloadIndex,
           status: "sent",
           results: deliveredResults,
+          target: deliveryTarget,
         });
         recordDeliveredPayload(payloadSummary, deliveredResults);
       } else {
@@ -634,6 +640,7 @@ export async function deliverOutboundPayloadsCore(
         sentBeforeError: failedPayloadResults.length > 0,
         stage: "platform_send",
         results: failedPayloadResults,
+        ...(payloadDeliveryTarget ? { target: payloadDeliveryTarget } : {}),
       });
       errorDeliveryDiagnostics(err);
       emitMessageSent({

@@ -5,6 +5,10 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
+import {
+  validateJsonSchemaValue,
+  type JsonSchemaObject,
+} from "openclaw/plugin-sdk/json-schema-runtime";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk/plugin-entry";
 import type { PluginRuntime } from "openclaw/plugin-sdk/plugin-runtime";
 import type { SessionCatalogProvider } from "openclaw/plugin-sdk/session-catalog";
@@ -119,6 +123,24 @@ type SessionEntrySummary = ReturnType<
 >[number];
 
 const config = {} as OpenClawConfig;
+
+async function normalizeCodexManifestConfig(value: unknown): Promise<Record<string, unknown>> {
+  const manifest = JSON.parse(
+    await fs.readFile(new URL("../openclaw.plugin.json", import.meta.url), "utf8"),
+  ) as { configSchema: JsonSchemaObject };
+  const result = validateJsonSchemaValue({
+    cacheKey: "codex.session-catalog.manifest-config",
+    schema: manifest.configSchema,
+    value,
+    applyDefaults: true,
+  });
+  if (!result.ok) {
+    throw new Error(
+      `Expected valid Codex manifest config: ${result.errors.map((error) => error.text).join(", ")}`,
+    );
+  }
+  return result.value as Record<string, unknown>;
+}
 
 function idleThread(overrides: Partial<CodexThread> = {}): CodexThread {
   return {
@@ -491,6 +513,74 @@ describe("Codex supervision catalog", () => {
     expect(commandRpcMocks.codexControlRequest.mock.calls.map((call) => call[1])).not.toContain(
       "thread/resume",
     );
+  });
+
+  it("keeps omitted home scope user-scoped across normalized live config reloads", async () => {
+    let pluginConfig: unknown = await normalizeCodexManifestConfig({
+      appServer: { command: "codex-catalog-a" },
+    });
+    let runtimeConfig = {
+      agents: { defaults: { workspace: "/workspace/a" } },
+    } as OpenClawConfig;
+    commandRpcMocks.codexControlRequest.mockResolvedValue({ data: [] });
+    const control = createCodexSessionCatalogControl({
+      getPluginConfig: () => pluginConfig,
+      getRuntimeConfig: () => runtimeConfig,
+    });
+
+    expect(pluginConfig).toMatchObject({
+      appServer: { command: "codex-catalog-a", transport: "stdio" },
+    });
+    expect((pluginConfig as { appServer: object }).appServer).not.toHaveProperty("homeScope");
+    await expect(control.listPage({ limit: 1, forceRefresh: true })).resolves.toEqual({
+      sessions: [],
+    });
+
+    pluginConfig = await normalizeCodexManifestConfig({
+      appServer: { command: "codex-catalog-b" },
+    });
+    runtimeConfig = {
+      agents: { defaults: { workspace: "/workspace/b" } },
+    } as OpenClawConfig;
+    await expect(control.listPage({ limit: 1, forceRefresh: true })).resolves.toEqual({
+      sessions: [],
+    });
+
+    pluginConfig = await normalizeCodexManifestConfig({
+      appServer: { command: "codex-catalog-c", homeScope: "agent" },
+    });
+    runtimeConfig = {
+      agents: { defaults: { workspace: "/workspace/c" } },
+    } as OpenClawConfig;
+    await expect(control.listPage({ limit: 1, forceRefresh: true })).resolves.toEqual({
+      sessions: [],
+    });
+
+    expect(commandRpcMocks.codexControlRequest).toHaveBeenCalledTimes(3);
+    expect(commandRpcMocks.codexControlRequest.mock.calls[0]?.[3]).toMatchObject({
+      config: { agents: { defaults: { workspace: "/workspace/a" } } },
+      startOptions: {
+        command: "codex-catalog-a",
+        transport: "stdio",
+        homeScope: "user",
+      },
+    });
+    expect(commandRpcMocks.codexControlRequest.mock.calls[1]?.[3]).toMatchObject({
+      config: { agents: { defaults: { workspace: "/workspace/b" } } },
+      startOptions: {
+        command: "codex-catalog-b",
+        transport: "stdio",
+        homeScope: "user",
+      },
+    });
+    expect(commandRpcMocks.codexControlRequest.mock.calls[2]?.[3]).toMatchObject({
+      config: { agents: { defaults: { workspace: "/workspace/c" } } },
+      startOptions: {
+        command: "codex-catalog-c",
+        transport: "stdio",
+        homeScope: "agent",
+      },
+    });
   });
 
   it("uses a sanitized preview only when Codex has no thread name", async () => {

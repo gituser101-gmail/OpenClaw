@@ -235,8 +235,7 @@
           },
           "homeScope": {
             "type": "string",
-            "enum": ["agent", "user"],
-            "default": "agent"
+            "enum": ["agent", "user"]
           },
           "command": { "type": "string" },
           "args": {

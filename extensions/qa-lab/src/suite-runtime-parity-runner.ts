@@ -246,6 +246,7 @@ export async function runQaRuntimeParitySuite(params: {
         scenarioDefinitions: params.selectedScenarios,
         evidenceMode: params.evidenceMode,
         transport,
+        realizedAdapter: transportFactoryResult.realizedAdapter,
         providerMode: params.providerMode,
         primaryModel: params.primaryModel,
         alternateModel: params.alternateModel,
@@ -276,6 +277,7 @@ export async function runQaRuntimeParitySuite(params: {
     return {
       outputDir: params.outputDir,
       evidence,
+      realizedAdapter: transportFactoryResult.realizedAdapter,
       evidencePath,
       reportPath,
       summaryPath,

@@ -20,6 +20,7 @@ import {
 import type { QaThinkingLevel } from "./qa-gateway-config.js";
 import {
   createQaTransportAdapter,
+  type QaRealizedTransportAdapter,
   type QaTransportAdapterFactory,
   type QaTransportFactoryContext,
   type QaTransportId,
@@ -96,14 +97,17 @@ export async function createQaSuiteTransportAdapter(params: {
       params.channelDriver === "live" &&
       params.channelId !== undefined &&
       params.adapterFactories !== undefined;
-    return await createQaTransportAdapter(
+    const realizedAdapter = {
+      channelId: params.channelId ?? params.channelDriverSelection?.channel ?? params.transportId,
+      driver: usesLiveAdapter
+        ? "live"
+        : params.channelDriverSelection
+          ? "crabline"
+          : params.transportId,
+    } satisfies QaRealizedTransportAdapter;
+    const transportFactoryResult = await createQaTransportAdapter(
       {
-        channelId: params.channelId ?? params.channelDriverSelection?.channel ?? params.transportId,
-        driver: usesLiveAdapter
-          ? "live"
-          : params.channelDriverSelection
-            ? "crabline"
-            : params.transportId,
+        ...realizedAdapter,
         outputDir: params.outputDir,
         adapterOptions: {
           ...params.adapterOptions,
@@ -120,6 +124,7 @@ export async function createQaSuiteTransportAdapter(params: {
       },
       usesLiveAdapter ? params.adapterFactories : undefined,
     );
+    return { ...transportFactoryResult, realizedAdapter };
   } catch (error) {
     await params.cleanupOnFailure?.().catch(() => undefined);
     throw error;
@@ -375,6 +380,7 @@ const QA_IMAGE_UNDERSTANDING_VALID_PNG_BASE64 =
 
 export type QaSuiteResult = {
   evidence?: QaEvidenceSummaryJson;
+  realizedAdapter: QaRealizedTransportAdapter;
   outputDir: string;
   evidencePath: string;
   reportPath: string;

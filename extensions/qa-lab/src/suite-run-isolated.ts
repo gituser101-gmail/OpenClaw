@@ -104,6 +104,7 @@ export async function runQaFlowSuiteIsolated(
           scenarioDefinitions: completedScenarioDefinitions,
           evidenceMode: params?.evidenceMode,
           transport,
+          realizedAdapter: transportFactoryResult.realizedAdapter,
           providerMode,
           primaryModel,
           alternateModel,
@@ -270,6 +271,7 @@ export async function runQaFlowSuiteIsolated(
         scenarioDefinitions: selectedScenarios,
         evidenceMode: params?.evidenceMode,
         transport,
+        realizedAdapter: transportFactoryResult.realizedAdapter,
         providerMode,
         primaryModel,
         alternateModel,
@@ -303,6 +305,7 @@ export async function runQaFlowSuiteIsolated(
     return {
       outputDir,
       evidence,
+      realizedAdapter: transportFactoryResult.realizedAdapter,
       evidencePath,
       reportPath,
       summaryPath,

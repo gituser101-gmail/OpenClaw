@@ -418,6 +418,10 @@ coverage IDs, channel, driver actually used, and result. Channel and driver are
 report dimensions, not additional coverage-ID vocabularies or scenario
 eligibility axes.
 
+Channel evidence marks actual adapters with `realization: "realized"` and `driver`/`live`.
+A run blocked before creation uses `requested` plus `requestedDriver`, or `unknown`, and never claims actual execution.
+Summary driver/channel fields are set only for one realized adapter; mixed facts remain per-scenario.
+
 For a disposable Linux VM lane without bringing Docker into the QA path, run:
 
 ```bash

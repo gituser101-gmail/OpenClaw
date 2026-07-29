@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
 import { resolveClickClackMentionFacts } from "./mention-facts.js";
 
 describe("resolveClickClackMentionFacts", () => {
@@ -63,15 +64,18 @@ describe("resolveClickClackMentionFacts", () => {
       botUserId: "usr_abc123",
     });
     expect(result.wasMentioned).toBe(false);
+    expect(result.hasAnyMention).toBe(true);
   });
 
-  it("non-matching pattern returns wasMentioned false", () => {
+  it("tracks another user's native mention separately from a bot mention", () => {
     const result = resolveClickClackMentionFacts({
       isDirect: false,
-      body: "just a message",
-      mentionPatterns: ["@bot", "@assistant"],
+      body: "<@usr_other> /status",
+      mentionPatterns: [],
+      botUserId: "usr_abc123",
     });
     expect(result.wasMentioned).toBe(false);
+    expect(result.hasAnyMention).toBe(true);
   });
 
   it("plain display name does not count unless configured as a pattern", () => {
@@ -84,11 +88,45 @@ describe("resolveClickClackMentionFacts", () => {
     expect(result.wasMentioned).toBe(false);
   });
 
-  it("invalid regex pattern is ignored", () => {
+  it("rejects unsafe configured regexes without evaluating them", () => {
     const result = resolveClickClackMentionFacts({
       isDirect: false,
-      body: "hello",
-      mentionPatterns: ["[invalid"],
+      body: `${"a".repeat(20_000)}!`,
+      mentionPatterns: ["(a+)+$"],
+    });
+    expect(result.wasMentioned).toBe(false);
+    expect(result.hasAnyMention).toBe(false);
+  });
+
+  it("matches shared routed-agent mention patterns", () => {
+    const cfg = {
+      agents: {
+        entries: {
+          "service-bot": {
+            groupChat: {
+              mentionPatterns: ["@service"],
+            },
+          },
+        },
+      },
+    } as unknown as OpenClawConfig;
+    const result = resolveClickClackMentionFacts({
+      isDirect: false,
+      body: "hey @service please help",
+      mentionPatterns: [],
+      cfg,
+      agentId: "service-bot",
+      channelId: "chn_123",
+    });
+    expect(result.wasMentioned).toBe(true);
+    expect(result.hasAnyMention).toBe(true);
+  });
+
+  it("non-matching pattern returns wasMentioned false", () => {
+    const result = resolveClickClackMentionFacts({
+      isDirect: false,
+      body: "just a message",
+      mentionPatterns: ["@bot", "@assistant"],
     });
     expect(result.wasMentioned).toBe(false);
   });

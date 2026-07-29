@@ -7,9 +7,11 @@ import {
   type StableChannelIngressIdentityParams,
 } from "openclaw/plugin-sdk/channel-ingress-runtime";
 import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
+import { normalizeAgentId } from "openclaw/plugin-sdk/routing";
 import { resolveClickClackGroupPolicy } from "./group-policy.js";
 import { resolveClickClackMentionFacts } from "./mention-facts.js";
 import { getClickClackRuntime } from "./runtime.js";
+import { buildClickClackTarget } from "./target.js";
 import type { ClickClackMessage, CoreConfig, ResolvedClickClackAccount } from "./types.js";
 
 const CHANNEL_ID = "clickclack" as const;
@@ -58,6 +60,21 @@ export async function resolveClickClackInboundAccess(params: {
   const runtime = getClickClackRuntime();
   const isDirect = Boolean(params.message.direct_conversation_id);
   const cfg = params.config as OpenClawConfig;
+  const target = buildClickClackTarget(
+    isDirect
+      ? { chatType: "direct", kind: "dm", id: params.message.author_id }
+      : { chatType: "group", kind: "channel", id: params.message.channel_id ?? "" },
+  );
+  const route = runtime.channel.routing.resolveAgentRoute({
+    cfg,
+    channel: CHANNEL_ID,
+    accountId: params.account.accountId,
+    peer: {
+      kind: isDirect ? "direct" : "channel",
+      id: target,
+    },
+  });
+  const agentId = normalizeAgentId(params.account.agentId ?? route.agentId);
   const shouldCheckCommand = runtime.channel.commands.shouldComputeCommandAuthorized(
     params.message.body,
     cfg,
@@ -73,7 +90,17 @@ export async function resolveClickClackInboundAccess(params: {
     body: params.message.body,
     mentionPatterns: effectiveGroupPolicy.mentionPatterns,
     botUserId: params.account.botUserId,
+    cfg,
+    agentId,
+    channelId: params.message.channel_id,
   });
+  const allowTextCommands =
+    params.account.replyMode === "agent" &&
+    runtime.channel.commands.shouldHandleTextCommands({
+      cfg,
+      surface: CHANNEL_ID,
+      commandSource: "text",
+    });
 
   const resolved = await resolveStableChannelMessageIngress({
     channelId: CHANNEL_ID,
@@ -94,7 +121,7 @@ export async function resolveClickClackInboundAccess(params: {
     policy: {
       activation: {
         requireMention: effectiveGroupPolicy.requireMention,
-        allowTextCommands: true,
+        allowTextCommands,
       },
     },
     command: shouldCheckCommand

@@ -95,7 +95,7 @@ async function processEvent(params: {
   client: ReturnType<typeof createClickClackClient>;
   event: ClickClackEvent;
   botUserId: string;
-  log: { info: (message: string) => void };
+  log?: { info: (message: string) => void };
 }) {
   if (params.event.type !== "message.created" && params.event.type !== "thread.reply_created") {
     return;
@@ -126,7 +126,7 @@ async function processEvent(params: {
     message,
   });
   if (!access.shouldDispatch) {
-    params.log.info(
+    params.log?.info(
       `[${params.account.accountId}] skipped ClickClack message before agent dispatch: ` +
         `kind=${message.direct_conversation_id ? "dm" : "group"} ` +
         `requireMention=${access.requireMention ?? "unknown"} ` +

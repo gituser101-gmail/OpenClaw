@@ -212,6 +212,9 @@ describe("handleClickClackInbound", () => {
       commandMenu: true,
       discussions: { enabled: false, workspace: "wsp_1", section: "Sessions" },
       config: {},
+      requireMention: false,
+      mentionPatterns: [],
+      groups: {},
     } satisfies ResolvedClickClackAccount;
 
     await handleClickClackInbound({

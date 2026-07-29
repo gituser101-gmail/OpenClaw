@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
 import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
+import { describe, expect, it } from "vitest";
 import { resolveClickClackMentionFacts } from "./mention-facts.js";
 
 describe("resolveClickClackMentionFacts", () => {

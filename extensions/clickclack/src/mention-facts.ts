@@ -5,11 +5,11 @@
  * Pure helper – no side effects, no runtime imports.
  */
 
-import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
 import {
   buildMentionRegexes,
   normalizeMentionText,
 } from "openclaw/plugin-sdk/channel-mention-gating";
+import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
 
 export type ClickClackMentionFacts = {
   canDetectMention: boolean;
@@ -69,15 +69,7 @@ export function resolveClickClackMentionFacts(params: {
   agentId?: string;
   channelId?: string;
 }): ClickClackMentionFacts {
-  const {
-    isDirect,
-    body,
-    mentionPatterns,
-    botUserId,
-    cfg,
-    agentId,
-    channelId,
-  } = params;
+  const { isDirect, body, mentionPatterns, botUserId, cfg, agentId, channelId } = params;
 
   if (isDirect) {
     return {

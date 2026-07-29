@@ -491,7 +491,7 @@ describe("ClickClack gateway", () => {
       expect(mocks.resolveClickClackInboundAccess).toHaveBeenCalledTimes(1),
     );
     expect(mocks.handleClickClackInbound).not.toHaveBeenCalled();
-    expect(ctx.log.info).toHaveBeenCalledWith(
+    expect(ctx.log?.info).toHaveBeenCalledWith(
       expect.stringContaining("skipped ClickClack message before agent dispatch"),
     );
     abort.abort();

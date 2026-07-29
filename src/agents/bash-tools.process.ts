@@ -672,12 +672,18 @@ export function createProcessTool(
             return failText(`Session ${params.sessionId} is finalizing.`);
           }
           const canceled = cancelManagedSession(scopedSession.id);
-          if (!canceled) {
+          if (canceled) {
+            // Supervisor manages this session. The supervisor's cancel path
+            // sends async SIGTERM then SIGKILL. We additionally send synchronous
+            // killProcessTree as a physical guarantee. Do NOT markExited — let
+            // the supervisor's observed-exit path finalize the session state so
+            // we don't report a finished session before the child actually exits.
+            terminateSessionFallback(scopedSession);
+          } else {
+            // No supervisor record — we own the full lifecycle.
             const terminated = terminateSessionFallback(scopedSession);
             if (!terminated) {
-              return failText(
-                `Unable to terminate session ${params.sessionId}: no active supervisor run or process id.`,
-              );
+              return failText(`Unable to terminate session ${params.sessionId}: no process id.`);
             }
             markExited(scopedSession, null, "SIGKILL", "failed");
           }
@@ -686,9 +692,7 @@ export function createProcessTool(
             content: [
               {
                 type: "text",
-                text: canceled
-                  ? `Termination requested for session ${params.sessionId}.`
-                  : `Killed session ${params.sessionId}.`,
+                text: `Killed session ${params.sessionId}.`,
               },
             ],
             details: {
@@ -725,17 +729,20 @@ export function createProcessTool(
             }
             const canceled = cancelManagedSession(scopedSession.id);
             if (canceled) {
-              // Keep remove semantics deterministic: drop from process registry now.
+              // Supervisor manages this session. Send killProcessTree as
+              // insurance, then drop from registry. Do not markExited — let
+              // the supervisor's exit path handle final state.
+              terminateSessionFallback(scopedSession);
               scopedSession.backgrounded = false;
               deleteSession(params.sessionId);
             } else {
+              // No supervisor record — we own the full lifecycle.
               const terminated = terminateSessionFallback(scopedSession);
               if (!terminated) {
-                return failText(
-                  `Unable to remove session ${params.sessionId}: no active supervisor run or process id.`,
-                );
+                return failText(`Unable to remove session ${params.sessionId}: no process id.`);
               }
               markExited(scopedSession, null, "SIGKILL", "failed");
+              scopedSession.backgrounded = false;
               deleteSession(params.sessionId);
             }
             resetPollRetrySuggestion(params.sessionId);
@@ -743,9 +750,7 @@ export function createProcessTool(
               content: [
                 {
                   type: "text",
-                  text: canceled
-                    ? `Removed session ${params.sessionId} (termination requested).`
-                    : `Removed session ${params.sessionId}.`,
+                  text: `Removed session ${params.sessionId}.`,
                 },
               ],
               details: {

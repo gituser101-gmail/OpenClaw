@@ -393,6 +393,39 @@ describe("doctor-contract-registry module loader", () => {
     ).toEqual(["ollama-cloud"]);
   });
 
+  it("collects provider ids from agent-only model refs", () => {
+    const raw = {
+      agents: {
+        defaults: {
+          model: {
+            primary: "opencode/hy3-free",
+            fallbacks: ["opencode-go/kimi-k3@work"],
+          },
+          models: {
+            "opencode/laguna-s-2.1-free": {},
+          },
+          subagents: {
+            model: "openai/gpt-5.6-sol",
+          },
+        },
+        list: [{ id: "main", model: "anthropic/claude-opus-5" }],
+      },
+    };
+
+    expect(collectRelevantDoctorPluginIds(raw)).toEqual([
+      "anthropic",
+      "openai",
+      "opencode",
+      "opencode-go",
+    ]);
+    expect(
+      collectRelevantDoctorPluginIdsForTouchedPaths({
+        raw,
+        touchedPaths: [["agents", "defaults", "model", "primary"]],
+      }),
+    ).toEqual(["anthropic", "openai", "opencode", "opencode-go"]);
+  });
+
   it("collects provider ids from media model entries", () => {
     const raw = {
       tools: {

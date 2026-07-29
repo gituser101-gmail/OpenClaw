@@ -267,6 +267,90 @@ function collectMediaProviderIds(root: Record<string, unknown>, ids: Set<string>
   }
 }
 
+function addProviderIdFromModelRef(value: unknown, ids: Set<string>): void {
+  if (typeof value !== "string") {
+    return;
+  }
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return;
+  }
+  // Drop trailing auth profile (`provider/model@profile`) before splitting.
+  const withoutProfile = trimmed.includes("@")
+    ? trimmed.slice(0, trimmed.lastIndexOf("@"))
+    : trimmed;
+  const slash = withoutProfile.indexOf("/");
+  if (slash <= 0) {
+    return;
+  }
+  const provider = withoutProfile.slice(0, slash).trim();
+  if (provider) {
+    ids.add(normalizeProviderId(provider));
+  }
+}
+
+function collectProviderIdsFromModelShape(value: unknown, ids: Set<string>): void {
+  if (typeof value === "string") {
+    addProviderIdFromModelRef(value, ids);
+    return;
+  }
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      addProviderIdFromModelRef(entry, ids);
+    }
+    return;
+  }
+  const record = asNullableRecord(value);
+  if (!record) {
+    return;
+  }
+  addProviderIdFromModelRef(record.primary, ids);
+  addProviderIdFromModelRef(record.model, ids);
+  if (Array.isArray(record.fallbacks)) {
+    for (const entry of record.fallbacks) {
+      addProviderIdFromModelRef(entry, ids);
+    }
+  }
+  if (Array.isArray(record.modelFallbacks)) {
+    for (const entry of record.modelFallbacks) {
+      addProviderIdFromModelRef(entry, ids);
+    }
+  }
+  const allow = asNullableRecord(record.modelPolicy)?.allow;
+  if (Array.isArray(allow)) {
+    for (const entry of allow) {
+      addProviderIdFromModelRef(entry, ids);
+    }
+  }
+  const models = asNullableRecord(record.models);
+  if (models) {
+    for (const key of Object.keys(models)) {
+      addProviderIdFromModelRef(key, ids);
+    }
+  }
+  collectProviderIdsFromModelShape(asNullableRecord(record.subagents)?.model, ids);
+}
+
+function collectAgentModelProviderIds(root: Record<string, unknown>, ids: Set<string>): void {
+  // Agent model refs are a common sole owner of provider plugins (no
+  // models.providers.<id> block). Without this harvest, plugin doctor contracts
+  // that rewrite agent surfaces never load for agent-only configs.
+  const agents = asNullableRecord(root.agents);
+  if (!agents) {
+    return;
+  }
+  const defaults = asNullableRecord(agents.defaults);
+  if (defaults) {
+    collectProviderIdsFromModelShape(defaults.model, ids);
+    collectProviderIdsFromModelShape(defaults, ids);
+  }
+  if (Array.isArray(agents.list)) {
+    for (const agent of agents.list) {
+      collectProviderIdsFromModelShape(agent, ids);
+    }
+  }
+}
+
 export function collectRelevantDoctorPluginIds(raw: unknown): string[] {
   const ids = new Set<string>();
   const root = asNullableRecord(raw);
@@ -298,6 +382,7 @@ export function collectRelevantDoctorPluginIds(raw: unknown): string[] {
   }
 
   collectMediaProviderIds(root, ids);
+  collectAgentModelProviderIds(root, ids);
 
   if (hasLegacyElevenLabsTalkFields(root)) {
     ids.add("elevenlabs");
@@ -343,6 +428,10 @@ export function collectRelevantDoctorPluginIdsForTouchedPaths(params: {
     }
     if (first === "tools" && second === "media") {
       collectMediaProviderIds(root, ids);
+      continue;
+    }
+    if (first === "agents") {
+      collectAgentModelProviderIds(root, ids);
       continue;
     }
     if (first === "talk" && hasLegacyElevenLabsTalkFields(root)) {

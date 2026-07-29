@@ -28,18 +28,42 @@ const FREE_COST: ModelDefinitionConfig["cost"] = {
 };
 
 // Zen publishes route-specific limits that differ from the family defaults below.
+// Free tiers and route-specific rows must be listed here: family-name heuristics
+// (deepseek→1M, gpt→400k, claude→200k, default→128k) cannot represent free routes
+// or models.dev overrides. Authority: models.dev `opencode` limit.context/output.
 const MODEL_LIMITS: Record<string, { contextWindow: number; maxTokens: number }> = {
+  "big-pickle": { contextWindow: 200_000, maxTokens: 32_000 },
+  "claude-fable-5": { contextWindow: 1_000_000, maxTokens: 128_000 },
+  "claude-haiku-4-5": { contextWindow: 200_000, maxTokens: 64_000 },
+  "claude-opus-4-1": { contextWindow: 200_000, maxTokens: 32_000 },
+  "claude-opus-4-5": { contextWindow: 200_000, maxTokens: 64_000 },
+  "claude-opus-4-6": { contextWindow: 1_000_000, maxTokens: 128_000 },
+  "claude-opus-4-7": { contextWindow: 1_000_000, maxTokens: 128_000 },
+  "claude-opus-4-8": { contextWindow: 1_000_000, maxTokens: 128_000 },
   "claude-opus-5": { contextWindow: 1_000_000, maxTokens: 128_000 },
+  "claude-sonnet-4": { contextWindow: 1_000_000, maxTokens: 64_000 },
+  "claude-sonnet-4-5": { contextWindow: 1_000_000, maxTokens: 64_000 },
+  "claude-sonnet-4-6": { contextWindow: 1_000_000, maxTokens: 64_000 },
   "claude-sonnet-5": { contextWindow: 1_000_000, maxTokens: 128_000 },
+  "deepseek-v4-flash-free": { contextWindow: 200_000, maxTokens: 128_000 },
+  "gpt-5.3-codex-spark": { contextWindow: 128_000, maxTokens: 128_000 },
+  "gpt-5.4": { contextWindow: 1_050_000, maxTokens: 128_000 },
+  "gpt-5.4-pro": { contextWindow: 1_050_000, maxTokens: 128_000 },
+  "gpt-5.5": { contextWindow: 1_050_000, maxTokens: 128_000 },
+  "gpt-5.5-pro": { contextWindow: 1_050_000, maxTokens: 128_000 },
   "gpt-5.6-luna": { contextWindow: 1_050_000, maxTokens: 128_000 },
   "gpt-5.6-sol": { contextWindow: 1_050_000, maxTokens: 128_000 },
   "gpt-5.6-terra": { contextWindow: 1_050_000, maxTokens: 128_000 },
   "glm-5.2": { contextWindow: 1_000_000, maxTokens: 131_072 },
   "grok-4.5": { contextWindow: 500_000, maxTokens: 500_000 },
+  "grok-build-0.1": { contextWindow: 256_000, maxTokens: 256_000 },
   "kimi-k2.7-code": { contextWindow: 262_144, maxTokens: 262_144 },
   "laguna-s-2.1-free": { contextWindow: 256_000, maxTokens: 32_000 },
   "ling-3.0-flash-free": { contextWindow: 262_144, maxTokens: 32_768 },
+  "mimo-v2.5-free": { contextWindow: 200_000, maxTokens: 32_000 },
   "minimax-m3": { contextWindow: 512_000, maxTokens: 128_000 },
+  "nemotron-3-ultra-free": { contextWindow: 1_000_000, maxTokens: 128_000 },
+  "north-mini-code-free": { contextWindow: 256_000, maxTokens: 64_000 },
 };
 
 // These rows are the inverse of their family's usual image-input capability.
@@ -83,7 +107,7 @@ const MODEL_COSTS: Record<string, ModelDefinitionConfig["cost"]> = {
   "claude-sonnet-5": { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 },
   "deepseek-v4-flash": { input: 0.14, output: 0.28, cacheRead: 0.028, cacheWrite: 0 },
   "deepseek-v4-flash-free": FREE_COST,
-  "deepseek-v4-pro": { input: 1.74, output: 3.48, cacheRead: 0.145, cacheWrite: 0 },
+  "deepseek-v4-pro": { input: 1.74, output: 3.84, cacheRead: 0.145, cacheWrite: 0 },
   "gemini-3-flash": { input: 0.5, output: 3, cacheRead: 0.05, cacheWrite: 0 },
   "gemini-3.1-pro": {
     input: 2,
@@ -183,8 +207,8 @@ const MODEL_COSTS: Record<string, ModelDefinitionConfig["cost"]> = {
   "laguna-s-2.1-free": FREE_COST,
   "ling-3.0-flash-free": FREE_COST,
   "mimo-v2.5-free": FREE_COST,
-  "minimax-m2.5": { input: 0.3, output: 1.2, cacheRead: 0.06, cacheWrite: 0 },
-  "minimax-m2.7": { input: 0.3, output: 1.2, cacheRead: 0.06, cacheWrite: 0 },
+  "minimax-m2.5": { input: 0.3, output: 1.2, cacheRead: 0.06, cacheWrite: 0.375 },
+  "minimax-m2.7": { input: 0.3, output: 1.2, cacheRead: 0.06, cacheWrite: 0.375 },
   "minimax-m3": { input: 0.3, output: 1.2, cacheRead: 0.06, cacheWrite: 0 },
   "nemotron-3-ultra-free": FREE_COST,
   "north-mini-code-free": FREE_COST,

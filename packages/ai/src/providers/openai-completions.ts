@@ -718,8 +718,7 @@ function buildParams(
     providerOptions?: unknown;
   };
 
-  const supportsPromptCacheKey =
-    model.baseUrl.includes("api.openai.com") || compat.supportsPromptCacheKey;
+  const supportsPromptCacheKey = compat.supportsPromptCacheKey;
   const promptCacheKey =
     supportsPromptCacheKey && cacheRetention !== "none"
       ? clampOpenAIPromptCacheKey(options?.promptCacheKey ?? options?.sessionId)

@@ -43,6 +43,7 @@ import {
   withFirstStreamEventTimeout,
 } from "../utils/stream-first-event-timeout.js";
 import { stripSystemPromptCacheBoundary } from "../utils/system-prompt-cache-boundary.js";
+import { isAzureOpenAICompatibleHostname } from "./azure-openai-hostnames-internal.js";
 import { createDeepSeekTextFilter } from "./deepseek-text-filter.js";
 import {
   buildGuardedModelFetch,
@@ -181,14 +182,6 @@ function createOpenAICompletionsClient(
   });
 }
 
-function isAzureOpenAICompatibleHost(hostname: string): boolean {
-  return (
-    hostname.endsWith(".openai.azure.com") ||
-    hostname.endsWith(".services.ai.azure.com") ||
-    hostname.endsWith(".cognitiveservices.azure.com")
-  );
-}
-
 function isKnownOpenAICompletionsEndpoint(model: Pick<Model, "baseUrl">): boolean {
   if (!model.baseUrl.trim()) {
     return true;
@@ -198,7 +191,7 @@ function isKnownOpenAICompletionsEndpoint(model: Pick<Model, "baseUrl">): boolea
     return true;
   }
   try {
-    return isAzureOpenAICompatibleHost(new URL(model.baseUrl).hostname.toLowerCase());
+    return isAzureOpenAICompatibleHostname(new URL(model.baseUrl).hostname.toLowerCase());
   } catch {
     return false;
   }
@@ -220,7 +213,7 @@ function buildOpenAICompletionsClientConfig(
 
   try {
     const parsed = new URL(model.baseUrl);
-    isAzureHost = isAzureOpenAICompatibleHost(parsed.hostname.toLowerCase());
+    isAzureHost = isAzureOpenAICompatibleHostname(parsed.hostname.toLowerCase());
     parsed.searchParams.forEach((value, key) => {
       if (value) {
         defaultQuery[key] = value;

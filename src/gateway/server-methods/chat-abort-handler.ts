@@ -53,11 +53,13 @@ export async function handleChatAbortRequestWithLifecycle(
     sessionKey: rawSessionKey,
     runId,
     preserveSideRuns,
+    exemptRunId,
   } = params as {
     sessionKey: string;
     agentId?: string;
     runId?: string;
     preserveSideRuns?: boolean;
+    exemptRunId?: string;
   };
   const agentIdOverride = normalizeOptionalText((params as { agentId?: string }).agentId);
   const abortCfg = context.getRuntimeConfig();
@@ -118,6 +120,7 @@ export async function handleChatAbortRequestWithLifecycle(
       stopReason: "rpc",
       requester,
       preserveSideRuns,
+      exemptRunId,
       onAuthorizedAfterQueuedAbort: lifecycle.onAuthorizedAfterQueuedAbort,
     });
     if (res.unauthorized) {

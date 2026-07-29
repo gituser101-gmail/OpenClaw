@@ -31,6 +31,7 @@ import {
   visibleSessionMatches,
   type SessionCapability,
   type SessionMessageSubscription,
+  type SessionResetIdentity,
 } from "../../lib/sessions/index.ts";
 import {
   areUiSessionKeysEquivalent,
@@ -1071,7 +1072,15 @@ type ClearChatHistoryState = ChatState &
     sessions: Pick<SessionCapability, "reset">;
   };
 
-type ClearChatHistoryResult = "completed" | "failed" | "uncertain";
+type ClearChatHistoryResult = {
+  outcome: "completed" | "failed" | "uncertain";
+  /**
+   * Identity of the incarnation the reset produced, when the gateway reported
+   * it. Lets callers bind follow-up mutations (e.g. a /new --name label patch)
+   * to exactly this incarnation.
+   */
+  resetEntry?: SessionResetIdentity;
+};
 
 type RewindChatHistoryState = ChatState &
   Parameters<typeof scheduleChatScroll>[0] & {
@@ -1110,7 +1119,7 @@ export async function clearChatHistory(
   state: ClearChatHistoryState,
 ): Promise<ClearChatHistoryResult> {
   if (!state.client || !state.connected) {
-    return "failed";
+    return { outcome: "failed" };
   }
   const client = state.client;
   const connectionEpoch = state.connectionEpoch;
@@ -1118,19 +1127,21 @@ export async function clearChatHistory(
   const agentParams = scopedAgentParamsForSession(state, sessionKey);
   const runId = state.chatRunId;
   const hadActiveRun = hasAbortableChatSessionRun(state);
+  let resetEntry: SessionResetIdentity | undefined;
   try {
     const resetResult = await state.sessions.reset(sessionKey, agentParams);
-    if (resetResult === "not-started") {
+    if (resetResult.outcome === "not-started") {
       setChatError(state, "Gateway was unavailable before chat history could be cleared.");
       scheduleChatScroll(state);
-      return "failed";
+      return { outcome: "failed" };
     }
+    resetEntry = resetResult.entry;
     // Reset is destructive once issued. Drop the captured session's cached
     // transcript before classifying the result so an ambiguous response cannot
     // expose stale pre-reset history after a route switch.
     clearCachedChatMessagesForSession(state, sessionKey, agentParams.agentId);
     if (
-      resetResult === "uncertain" ||
+      resetResult.outcome === "uncertain" ||
       state.client !== client ||
       state.connectionEpoch !== connectionEpoch ||
       !state.connected
@@ -1156,15 +1167,15 @@ export async function clearChatHistory(
       scheduleChatScroll(state);
       // sessions.reset is not idempotent. Treat an uncertain completion as
       // consumed so a durable /clear row cannot erase newer history on retry.
-      return "uncertain";
+      return { outcome: "uncertain", ...(resetEntry ? { resetEntry } : {}) };
     }
   } catch (err) {
     setChatError(state, String(err));
     scheduleChatScroll(state);
-    return "failed";
+    return { outcome: "failed" };
   }
   if (!visibleSessionMatches(state, sessionKey, agentParams.agentId)) {
-    return "completed";
+    return { outcome: "completed", ...(resetEntry ? { resetEntry } : {}) };
   }
   resetChatHistoryProjection(state, agentParams.agentId);
   state.chatRunError = null;
@@ -1181,7 +1192,7 @@ export async function clearChatHistory(
   });
   await loadChatHistory(state);
   scheduleChatScroll(state);
-  return "completed";
+  return { outcome: "completed", ...(resetEntry ? { resetEntry } : {}) };
 }
 
 export async function rewindChatHistory(

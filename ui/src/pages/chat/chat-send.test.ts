@@ -1193,7 +1193,7 @@ describe("handleSendChat", () => {
     const confirm = vi.fn(() => true);
     vi.stubGlobal("confirm", confirm);
 
-    const createChatSession = vi.fn(async () => true);
+    const createChatSession = vi.fn(async () => "completed" as const);
     const host = makeHost({
       requestHandlers: {},
       chatMessage: "restore me",
@@ -1214,7 +1214,7 @@ describe("handleSendChat", () => {
     const confirm = vi.fn(() => false);
     vi.stubGlobal("confirm", confirm);
 
-    const createChatSession = vi.fn(async () => true);
+    const createChatSession = vi.fn(async () => "completed" as const);
     const host = makeHost({
       requestHandlers: {},
       chatMessage: "/new",
@@ -1231,7 +1231,7 @@ describe("handleSendChat", () => {
   });
 
   it("restores typed /new when session creation is cancelled", async () => {
-    const createChatSession = vi.fn(async () => false);
+    const createChatSession = vi.fn(async () => "cancelled" as const);
     const host = makeHost({
       chatMessage: "/new",
       sessionKey: "agent:main",
@@ -1244,8 +1244,25 @@ describe("handleSendChat", () => {
     expect(host.chatMessage).toBe("/new");
   });
 
+  it("does not restore typed /new when the reset landed but a follow-up step failed", async () => {
+    // "consumed-error" means the destructive reset already committed (only a
+    // follow-up step such as the label patch failed). Restoring the draft would
+    // invite a retry that resets the fresh conversation again.
+    const createChatSession = vi.fn(async () => "consumed-error" as const);
+    const host = makeHost({
+      chatMessage: "/new --name Planning notes",
+      sessionKey: "agent:main",
+      createChatSession,
+    });
+
+    await handleSendChat(host);
+
+    expect(createChatSession).toHaveBeenCalledOnce();
+    expect(host.chatMessage).toBe("");
+  });
+
   it("does not queue typed /new behind an active run", async () => {
-    const createChatSession = vi.fn(async () => true);
+    const createChatSession = vi.fn(async () => "completed" as const);
     const host = makeHost({
       chatMessage: "/new",
       chatRunId: "run-main",

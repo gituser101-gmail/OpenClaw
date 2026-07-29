@@ -23,6 +23,7 @@ import {
 } from "../../lib/sessions/session-key.ts";
 import { executeSlashCommand } from "./chat-command-executor.ts";
 import { clearChatHistory } from "./chat-history.ts";
+import type { ChatNewSessionResult } from "./chat-pane-shared.ts";
 import { enqueuePendingRunMessage } from "./chat-queue.ts";
 import { handleAbortChat } from "./run-lifecycle.ts";
 import { scheduleChatScroll } from "./scroll.ts";
@@ -59,7 +60,7 @@ export type ChatCommandHost = Parameters<typeof handleAbortChat>[0] &
     chatModelCatalog: ModelCatalogEntry[];
     sessionsResult?: SessionsListResult | null;
     sessionsResultAgentId?: string | null;
-    createChatSession?: () => Promise<boolean>;
+    createChatSession?: (options?: { label?: string }) => Promise<ChatNewSessionResult>;
     confirmConversationReset?: () => Promise<boolean>;
     exportCurrentChat?: () => Promise<void> | void;
     refreshCurrentSessionTools?: () => Promise<void>;
@@ -219,6 +220,27 @@ export async function confirmConversationResetForCurrentSession(
   return host.chatRunId ? "deferred" : "confirmed";
 }
 
+/**
+ * Extracts an explicit session title from the Control UI `/new` argument tail.
+ * Mirrors the backend `parseExplicitNamedNewSessionTail`: honors `--name X`,
+ * `--name=X`, and `name:X` while never treating a `--model`/`model:` directive as a title.
+ */
+export function parseNamedNewCommandTitle(args: string): string | undefined {
+  const tail = args.trim();
+  if (!tail || /^(?:--model(?:=|\s+)|model:)/i.test(tail)) {
+    return undefined;
+  }
+  const flagMatch = tail.match(/^--name(?:=|\s+)(.+)$/i);
+  if (flagMatch?.[1]) {
+    return flagMatch[1].trim() || undefined;
+  }
+  const prefixMatch = tail.match(/^name:(.+)$/i);
+  if (prefixMatch?.[1]) {
+    return prefixMatch[1].trim() || undefined;
+  }
+  return undefined;
+}
+
 export async function dispatchChatSlashCommand(
   host: ChatCommandHost,
   name: string,
@@ -229,12 +251,22 @@ export async function dispatchChatSlashCommand(
     case "stop":
       await handleAbortChat(host);
       return "completed";
-    case "new":
+    case "new": {
       if (!host.createChatSession) {
         setChatCommandError(host, "New Chat is unavailable.");
         return "failed";
       }
-      return (await host.createChatSession()) ? "completed" : "cancelled";
+      const label = parseNamedNewCommandTitle(args);
+      const created = await host.createChatSession(label ? { label } : undefined);
+      if (created === "consumed-error") {
+        // The reset landed but a follow-up step (e.g. the label patch) failed.
+        // The command is consumed: map to "uncertain" so the composer does not
+        // restore a retryable /new draft that would reset again destructively.
+        // The pane already surfaced the specific error.
+        return "uncertain";
+      }
+      return created === "completed" ? "completed" : "cancelled";
+    }
     case "reset": {
       const confirmation = await confirmConversationResetForCurrentSession(host);
       if (confirmation !== "confirmed") {
@@ -248,7 +280,7 @@ export async function dispatchChatSlashCommand(
       if (confirmation !== "confirmed") {
         return confirmation;
       }
-      return await clearChatHistory(host);
+      return (await clearChatHistory(host)).outcome;
     }
     case "export-session":
       await host.exportCurrentChat?.();

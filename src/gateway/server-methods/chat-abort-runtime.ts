@@ -176,6 +176,7 @@ export async function abortChatRunsForSessionKeyWithPartials(params: {
   stopReason?: string;
   requester: ChatAbortRequester;
   preserveSideRuns?: boolean;
+  exemptRunId?: string;
   /** Internal session-wide cleanup after exact resolution and all matching owner checks. */
   onAuthorizedAfterQueuedAbort?: () => boolean;
 }): Promise<{ aborted: boolean; runIds: string[]; unauthorized: boolean }> {
@@ -202,6 +203,7 @@ export async function abortChatRunsForSessionKeyWithPartials(params: {
     defaultAgentId: params.defaultAgentId,
     requester: params.requester,
     preserveSideRuns: params.preserveSideRuns,
+    exemptRunId: params.exemptRunId,
   });
   const {
     authorizedRuns: authorizedPendingAgentRuns,

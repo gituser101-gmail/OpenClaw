@@ -132,6 +132,8 @@ type SystemAgentChatReply = {
   handoff?: SystemAgentOperation;
   /** Structured choice mirroring the awaited wizard step for card-capable clients. */
   question?: SystemAgentChatQuestion;
+  /** The awaited wizard step in full; `question` is its lossy card projection. */
+  step?: WizardStep;
 };
 
 type WizardPrompterLike = import("../wizard/prompts.js").WizardPrompter;
@@ -508,6 +510,21 @@ function wizardStepChatQuestion(step: WizardStep | null): SystemAgentChatQuestio
   };
 }
 
+/**
+ * A sensitive step's `initialValue` is the secret itself (an existing token being
+ * offered for edit). Chat results reach every gateway client, which may log,
+ * persist, or relay them, so the value stops here; `sensitive` still tells the
+ * client to mask its own input. Mirrors the history redaction in handleSerialized.
+ */
+function chatResultWizardStep(step: WizardStep): WizardStep {
+  if (step.sensitive !== true || step.initialValue === undefined) {
+    return step;
+  }
+  const safe = { ...step };
+  delete safe.initialValue;
+  return safe;
+}
+
 function renderWizardStep(step: WizardStep): string {
   const lines: string[] = [];
   if (step.title) {
@@ -753,12 +770,15 @@ export class SystemAgentChatEngine {
     }
     // While a hosted wizard awaits a step, every turn routes to it, so the
     // awaited step is always the question this reply asks.
-    const question = wizardStepChatQuestion(this.wizardBridge?.step ?? null);
+    const step = this.wizardBridge?.step ?? null;
+    const question = wizardStepChatQuestion(step);
+    const clientStep = step ? chatResultWizardStep(step) : null;
     return {
       ...reply,
-      ...(this.wizardBridge?.step?.sensitive === true ? { sensitive: true } : {}),
+      ...(step?.sensitive === true ? { sensitive: true } : {}),
       ...(this.wizardBridge ? { wizardInputPending: true } : {}),
       ...(question ? { question } : {}),
+      ...(clientStep ? { step: clientStep } : {}),
     };
   }
 

@@ -29,6 +29,7 @@ import {
   type PersistedWorkboardAttachment,
   type PersistedWorkboardBoard,
   type PersistedWorkboardCard,
+  type PersistedWorkboardCardProofPage,
   type PersistedWorkboardNotificationSubscription,
   type WorkboardKeyedStore,
 } from "./persistence-types.js";
@@ -302,6 +303,12 @@ const WORKBOARD_SCHEMA_SQL = `
       created_at INTEGER NOT NULL
     ) STRICT;
 
+    CREATE INDEX IF NOT EXISTS workboard_card_proof_card_ordinal_idx
+      ON workboard_card_proof(card_id, ordinal);
+    CREATE INDEX IF NOT EXISTS workboard_card_proof_noted_idx
+      ON workboard_card_proof(card_id, ordinal)
+      WHERE note IS NOT NULL AND trim(note) <> '';
+
     CREATE TABLE IF NOT EXISTS workboard_card_artifacts (
       id TEXT PRIMARY KEY,
       card_id TEXT NOT NULL REFERENCES workboard_cards(id) ON DELETE CASCADE,
@@ -560,7 +567,77 @@ function readProof(db: DatabaseSync, cardId: string): WorkboardProof[] {
   return childRows(db, "workboard_card_proof", cardId).map(proofFromRow);
 }
 
-function readMetadata(db: DatabaseSync, row: Row): WorkboardMetadata | undefined {
+function readProofPage(
+  db: DatabaseSync,
+  cardId: string,
+  request: Parameters<NonNullable<WorkboardCardStore["listProofPage"]>>[1],
+) {
+  const total = requiredNumber(
+    db
+      .prepare("SELECT COUNT(*) AS total FROM workboard_card_proof WHERE card_id = ?")
+      .get(cardId) as Row,
+    "total",
+  );
+  let beforeOrdinal: number | undefined;
+  if (request.beforeProofId !== undefined) {
+    const cursor = db
+      .prepare("SELECT ordinal FROM workboard_card_proof WHERE card_id = ? AND id = ?")
+      .get(cardId, request.beforeProofId) as Row | undefined;
+    if (!cursor) {
+      throw new Error("proof cursor does not belong to this card.");
+    }
+    beforeOrdinal = requiredNumber(cursor, "ordinal");
+  }
+  const rows =
+    beforeOrdinal === undefined
+      ? (db
+          .prepare(
+            `
+              SELECT * FROM workboard_card_proof
+              WHERE card_id = ?
+              ORDER BY ordinal DESC, id DESC
+              LIMIT ?
+            `,
+          )
+          .all(cardId, request.limit + 1) as Row[])
+      : (db
+          .prepare(
+            `
+              SELECT * FROM workboard_card_proof
+              WHERE card_id = ? AND ordinal < ?
+              ORDER BY ordinal DESC, id DESC
+              LIMIT ?
+            `,
+          )
+          .all(cardId, beforeOrdinal, request.limit + 1) as Row[]);
+  const hasMore = rows.length > request.limit;
+  return {
+    proof: rows.slice(0, request.limit).map(proofFromRow).toReversed(),
+    total,
+    hasMore,
+  };
+}
+
+function readLatestProofNote(db: DatabaseSync, cardId: string): string | undefined {
+  const row = db
+    .prepare(
+      `
+        SELECT note
+        FROM workboard_card_proof
+        WHERE card_id = ? AND note IS NOT NULL AND trim(note) <> ''
+        ORDER BY ordinal DESC, id DESC
+        LIMIT 1
+      `,
+    )
+    .get(cardId) as Row | undefined;
+  return row ? stringValue(row, "note") : undefined;
+}
+
+function readMetadata(
+  db: DatabaseSync,
+  row: Row,
+  options: { includeProof?: boolean } = {},
+): WorkboardMetadata | undefined {
   const cardId = requiredString(row, "id");
   const attempts = childRows(db, "workboard_card_attempts", cardId).map((child) => {
     const entry: WorkboardRunAttempt = {
@@ -630,7 +707,7 @@ function readMetadata(db: DatabaseSync, row: Row): WorkboardMetadata | undefined
     }
     return entry;
   });
-  const proof = readProof(db, cardId);
+  const proof = options.includeProof === false ? [] : readProof(db, cardId);
   const artifacts = childRows(db, "workboard_card_artifacts", cardId).map((child) => {
     const entry: WorkboardArtifact = {
       id: requiredString(child, "id"),
@@ -764,7 +841,11 @@ function readMetadata(db: DatabaseSync, row: Row): WorkboardMetadata | undefined
   });
 }
 
-function readCard(db: DatabaseSync, row: Row): WorkboardCard {
+function readCard(
+  db: DatabaseSync,
+  row: Row,
+  options: { includeProof?: boolean } = {},
+): WorkboardCard {
   const card: WorkboardCard = {
     id: requiredString(row, "id"),
     title: requiredString(row, "title"),
@@ -775,7 +856,7 @@ function readCard(db: DatabaseSync, row: Row): WorkboardCard {
     createdAt: requiredNumber(row, "created_at"),
     updatedAt: requiredNumber(row, "updated_at"),
   };
-  const metadata = readMetadata(db, row);
+  const metadata = readMetadata(db, row, options);
   return {
     ...card,
     ...(stringValue(row, "notes") ? { notes: stringValue(row, "notes") } : {}),
@@ -794,6 +875,23 @@ function readCard(db: DatabaseSync, row: Row): WorkboardCard {
     ...(readEvents(db, card.id) ? { events: readEvents(db, card.id) } : {}),
     ...(metadata ? { metadata } : {}),
   };
+}
+
+function readCardProofPage(
+  db: DatabaseSync,
+  row: Row,
+  request: Parameters<NonNullable<WorkboardCardStore["listProofPage"]>>[1],
+): PersistedWorkboardCardProofPage {
+  const cardId = requiredString(row, "id");
+  const result: PersistedWorkboardCardProofPage = {
+    card: readCard(db, row, { includeProof: false }),
+    proofPage: readProofPage(db, cardId, request),
+  };
+  const latestProofNote = readLatestProofNote(db, cardId);
+  if (latestProofNote) {
+    result.latestProofNote = latestProofNote;
+  }
+  return result;
 }
 
 function cardBoardId(card: WorkboardCard): string {
@@ -825,12 +923,53 @@ function insertChildren<T>(
   entries?.forEach(insert);
 }
 
-function assertPersistedProofHistoryTransition(
+function persistProofHistory(
   db: DatabaseSync,
   card: WorkboardCard,
-  context: string,
+  existing: readonly WorkboardProof[],
 ): void {
-  assertProofHistoryTransition(readProof(db, card.id), card.metadata?.proof, context);
+  const next = card.metadata?.proof ?? [];
+  for (const [ordinal, previous] of existing.entries()) {
+    const current = next[ordinal];
+    if (!current || current.status === previous.status) {
+      continue;
+    }
+    const updated = db
+      .prepare(
+        `
+          UPDATE workboard_card_proof
+          SET status = ?
+          WHERE card_id = ? AND id = ? AND ordinal = ? AND status = ?
+        `,
+      )
+      .run(current.status, card.id, current.id, ordinal, previous.status);
+    if (updated.changes !== 1) {
+      throw new WorkboardStaleSnapshotError(card.id);
+    }
+  }
+  for (let ordinal = existing.length; ordinal < next.length; ordinal += 1) {
+    const entry = next[ordinal];
+    if (!entry) {
+      continue;
+    }
+    db.prepare(
+      `
+        INSERT INTO workboard_card_proof
+          (id, card_id, ordinal, status, label, command, url, note, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `,
+    ).run(
+      entry.id,
+      card.id,
+      ordinal,
+      entry.status,
+      bindNull(entry.label),
+      bindNull(entry.command),
+      bindNull(entry.url),
+      bindNull(entry.note),
+      entry.createdAt,
+    );
+  }
 }
 
 function insertCard(db: DatabaseSync, card: WorkboardCard): void {
@@ -997,25 +1136,6 @@ function insertCard(db: DatabaseSync, card: WorkboardCard): void {
       entry.createdAt,
     );
   });
-  insertChildren(db, "workboard_card_proof", card.id, metadata?.proof, (entry, ordinal) => {
-    db.prepare(
-      `
-        INSERT INTO workboard_card_proof
-          (id, card_id, ordinal, status, label, command, url, note, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `,
-    ).run(
-      entry.id,
-      card.id,
-      ordinal,
-      entry.status,
-      bindNull(entry.label),
-      bindNull(entry.command),
-      bindNull(entry.url),
-      bindNull(entry.note),
-      entry.createdAt,
-    );
-  });
   insertChildren(db, "workboard_card_artifacts", card.id, metadata?.artifacts, (entry, ordinal) => {
     db.prepare(
       `
@@ -1165,9 +1285,10 @@ class WorkboardSqliteCardStore implements WorkboardCardStore {
       const currentRow = this.db.prepare("SELECT * FROM workboard_cards WHERE id = ?").get(key) as
         | Row
         | undefined;
+      let currentCard: WorkboardCard | undefined;
       if (currentRow) {
         const expectedFingerprint = cardSnapshot(expected?.card ?? value.card);
-        const currentCard = readCard(this.db, currentRow);
+        currentCard = readCard(this.db, currentRow);
         if (!expectedFingerprint || cardFingerprint(currentCard) !== expectedFingerprint) {
           throw new WorkboardStaleSnapshotError(key);
         }
@@ -1177,12 +1298,14 @@ class WorkboardSqliteCardStore implements WorkboardCardStore {
       } else if (expected || cardSnapshot(value.card)) {
         throw new WorkboardStaleSnapshotError(key);
       }
-      assertPersistedProofHistoryTransition(
-        this.db,
-        value.card,
+      const existingProof = currentCard?.metadata?.proof ?? [];
+      assertProofHistoryTransition(
+        existingProof,
+        value.card.metadata?.proof,
         currentRow ? "persisted card update" : "persisted card create",
       );
       insertCard(this.db, value.card);
+      persistProofHistory(this.db, value.card, existingProof);
       const persistedRow = this.db
         .prepare("SELECT * FROM workboard_cards WHERE id = ?")
         .get(key) as Row | undefined;
@@ -1222,51 +1345,35 @@ class WorkboardSqliteCardStore implements WorkboardCardStore {
       if (!card) {
         return undefined;
       }
-      const total = requiredNumber(
-        this.db
-          .prepare("SELECT COUNT(*) AS total FROM workboard_card_proof WHERE card_id = ?")
-          .get(cardId) as Row,
-        "total",
-      );
-      let beforeOrdinal: number | undefined;
-      if (request.beforeProofId !== undefined) {
-        const cursor = this.db
-          .prepare("SELECT ordinal FROM workboard_card_proof WHERE card_id = ? AND id = ?")
-          .get(cardId, request.beforeProofId) as Row | undefined;
-        if (!cursor) {
-          throw new Error("proof cursor does not belong to this card.");
-        }
-        beforeOrdinal = requiredNumber(cursor, "ordinal");
-      }
-      const rows =
-        beforeOrdinal === undefined
-          ? (this.db
-              .prepare(
-                `
-                  SELECT * FROM workboard_card_proof
-                  WHERE card_id = ?
-                  ORDER BY ordinal DESC, id DESC
-                  LIMIT ?
-                `,
-              )
-              .all(cardId, request.limit + 1) as Row[])
-          : (this.db
-              .prepare(
-                `
-                  SELECT * FROM workboard_card_proof
-                  WHERE card_id = ? AND ordinal < ?
-                  ORDER BY ordinal DESC, id DESC
-                  LIMIT ?
-                `,
-              )
-              .all(cardId, beforeOrdinal, request.limit + 1) as Row[]);
-      const hasMore = rows.length > request.limit;
-      return {
-        proof: rows.slice(0, request.limit).map(proofFromRow).toReversed(),
-        total,
-        hasMore,
-      };
+      return readProofPage(this.db, cardId, request);
     });
+  }
+
+  async lookupCardProofPage(
+    cardId: string,
+    request: Parameters<NonNullable<WorkboardCardStore["lookupCardProofPage"]>>[1],
+  ) {
+    return runReadTransaction(this.db, () => {
+      const row = this.db.prepare("SELECT * FROM workboard_cards WHERE id = ?").get(cardId) as
+        | Row
+        | undefined;
+      if (!row) {
+        return undefined;
+      }
+      return readCardProofPage(this.db, row, request);
+    });
+  }
+
+  async listCardProofPages(
+    request: Parameters<NonNullable<WorkboardCardStore["listCardProofPages"]>>[0],
+  ) {
+    return runReadTransaction(this.db, () =>
+      (
+        this.db
+          .prepare("SELECT * FROM workboard_cards ORDER BY created_at ASC, id ASC")
+          .all() as Row[]
+      ).map((row) => readCardProofPage(this.db, row, request)),
+    );
   }
 
   async delete(key: string): Promise<boolean> {

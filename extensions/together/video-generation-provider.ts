@@ -14,6 +14,7 @@ import {
   readProviderJsonResponse,
   resolveProviderOperationTimeoutMs,
   resolveProviderHttpRequestConfig,
+  sanitizeConfiguredModelProviderRequest,
   type ProviderOperationTimeoutMs,
 } from "openclaw/plugin-sdk/provider-http";
 import { readResponseWithLimit } from "openclaw/plugin-sdk/response-limit-runtime";
@@ -230,6 +231,9 @@ export function buildTogetherVideoGenerationProvider(): VideoGenerationProvider 
           },
           provider: "together",
           capability: "video",
+          request: sanitizeConfiguredModelProviderRequest(
+            req.cfg?.models?.providers?.together?.request,
+          ),
           transport: "http",
         });
       const body: Record<string, unknown> = {

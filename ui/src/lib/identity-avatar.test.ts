@@ -229,7 +229,7 @@ describe("authenticated profile avatar cache", () => {
       }),
     );
     // No Authorization header when none was configured.
-    expect(fetchAvatar.mock.calls[0][1]).not.toHaveProperty("headers.Authorization");
+    expect(fetchAvatar.mock.calls[0]![1]!).not.toHaveProperty("headers.Authorization");
   });
 
   it("refetches when the gateway publishes a newer avatar revision", async () => {

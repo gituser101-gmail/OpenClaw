@@ -2099,6 +2099,13 @@ describe("grouped chat rendering", () => {
       timestamp: 1000,
       isStreaming: false,
     };
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(new Uint8Array([1, 2, 3]), {
+        headers: { "content-type": "image/png" },
+      }),
+    );
+    vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:alice-avatar");
+
     render(
       renderMessageGroup(group, {
         showReasoning: true,
@@ -2112,7 +2119,7 @@ describe("grouped chat rendering", () => {
     const image = await vi.waitFor(() => {
       const result = container.querySelector<HTMLImageElement>(".chat-author-avatar__image");
       expect(result).not.toBeNull();
-      expect(result?.getAttribute("src")).toBe("/api/users/alice/avatar");
+      expect(result?.getAttribute("src")).toBe("blob:alice-avatar");
       return result!;
     });
     image.dispatchEvent(new Event("error"));

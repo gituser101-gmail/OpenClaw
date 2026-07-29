@@ -20,6 +20,7 @@ import {
   readSessionTranscriptMessageEventPage,
   SessionTranscriptProjectionUnavailableError,
 } from "./session-accessor.sqlite-active-events.js";
+import { readSessionTranscriptContextByteSize } from "./session-accessor.sqlite-context-bytes.js";
 import { runExclusiveSqliteSessionWrite } from "./session-accessor.sqlite-scope.js";
 import { appendTranscriptEventsInTransaction } from "./session-accessor.sqlite-transcript-store.js";
 import {
@@ -152,6 +153,51 @@ describe("SQLite active transcript event projection", () => {
         0,
       ),
     });
+  });
+
+  it("measures only the replay window after compaction while retaining durable history", async () => {
+    await persistSessionTranscriptTurn(scope, {
+      messages: [
+        {
+          eventId: "large-old",
+          parentId: null,
+          message: { role: "user", content: `old ${"x".repeat(8_000)}` },
+        },
+        {
+          eventId: "kept",
+          parentId: "large-old",
+          message: { role: "assistant", content: "kept answer" },
+        },
+      ],
+      touchSessionEntry: false,
+    });
+    const bytesBefore = readSessionTranscriptContextByteSize(scope);
+
+    await appendTranscriptEvent(scope, {
+      type: "compaction",
+      id: "compaction-boundary",
+      parentId: "kept",
+      timestamp: "2026-07-22T00:01:00.000Z",
+      summary: "short summary",
+      firstKeptEntryId: "kept",
+      tokensBefore: 2_000,
+    });
+    await persistSessionTranscriptTurn(scope, {
+      messages: [
+        {
+          eventId: "post-compaction",
+          parentId: "compaction-boundary",
+          message: { role: "user", content: "new turn" },
+        },
+      ],
+      touchSessionEntry: false,
+    });
+
+    const bytesAfter = readSessionTranscriptContextByteSize(scope);
+    expect(bytesBefore).toBeGreaterThan(8_000);
+    expect(bytesAfter).toBeGreaterThan(0);
+    expect(bytesAfter).toBeLessThan(bytesBefore / 2);
+    expect(readSessionTranscriptMessageEventCount(scope)).toBe(3);
   });
 
   it("defers mixed legacy and canonical rebuilds off request stacks", async () => {

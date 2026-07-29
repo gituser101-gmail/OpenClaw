@@ -41,7 +41,7 @@ import {
 import { parseSqliteSessionFileMarker } from "../../config/sessions/legacy-sqlite-marker.js";
 import {
   readRecentSessionTranscriptActiveEvents,
-  readSessionTranscriptActiveStats,
+  readSessionTranscriptContextByteSize,
   updateSessionEntry,
 } from "../../config/sessions/session-accessor.js";
 import { resolveSessionStorePathForScope } from "../../config/sessions/session-store-path.js";
@@ -494,7 +494,7 @@ function readSqliteSessionLogSnapshot(
   const snapshot: SessionLogSnapshot = {};
   try {
     if (options.includeByteSize) {
-      snapshot.byteSize = readSessionTranscriptActiveStats(scope).sizeBytes;
+      snapshot.byteSize = readSessionTranscriptContextByteSize(scope);
     }
     if (options.includeUsage || options.includeTurnTaint) {
       const events = readRecentSessionTranscriptActiveEvents(scope, SQLITE_USAGE_TAIL_MAX_EVENTS);

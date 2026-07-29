@@ -3217,6 +3217,94 @@ describe("compaction-safeguard double-compaction guard", () => {
     expect(messages.map((message) => requireRecord(message).role)).toEqual(["user", "assistant"]);
   });
 
+  it("recovers only the active branch tail after the latest compaction", async () => {
+    mockSummarizeInStages.mockReset();
+    mockSummarizeInStages.mockResolvedValue(summaryResult("active branch summary"));
+
+    const now = Date.now();
+    const sessionManager = {
+      ...stubSessionManager(),
+      getBranch: () => [
+        {
+          type: "message",
+          id: "old-user",
+          parentId: null,
+          timestamp: new Date(now).toISOString(),
+          message: {
+            role: "user",
+            content: "already summarized request",
+            timestamp: now,
+          },
+        },
+        {
+          type: "compaction",
+          id: "latest-compaction",
+          parentId: "old-user",
+          timestamp: new Date(now + 1).toISOString(),
+          summary: "prior summary",
+        },
+        {
+          type: "message",
+          id: "new-user",
+          parentId: "latest-compaction",
+          timestamp: new Date(now + 2).toISOString(),
+          message: {
+            role: "user",
+            content: "active request",
+            timestamp: now + 2,
+          },
+        },
+        {
+          type: "message",
+          id: "new-assistant",
+          parentId: "new-user",
+          timestamp: new Date(now + 3).toISOString(),
+          message: {
+            role: "assistant",
+            content: [{ type: "text", text: "active response" }],
+            timestamp: now + 3,
+          },
+        },
+      ],
+    } as ExtensionContext["sessionManager"];
+    const model = createAnthropicModelFixture();
+    setCompactionSafeguardRuntime(sessionManager, { model, recentTurnsPreserve: 0 });
+
+    const mockEvent = {
+      preparation: {
+        messagesToSummarize: [
+          {
+            role: "toolResult",
+            toolCallId: "call-1",
+            toolName: "status",
+            content: [{ type: "text", text: "active result" }],
+            timestamp: now + 4,
+          },
+        ] as AgentMessage[],
+        turnPrefixMessages: [] as AgentMessage[],
+        firstKeptEntryId: "entry-7",
+        tokensBefore: 38085,
+        fileOps: { read: [], edited: [], written: [] },
+        settings: { reserveTokens: 4000 },
+        isSplitTurn: true,
+      },
+      customInstructions: "",
+      signal: new AbortController().signal,
+    };
+    const { result } = await runCompactionScenario({
+      sessionManager,
+      event: mockEvent,
+      apiKey: "test-key",
+    });
+
+    expect(expectCompactionResult(result).summary).toContain("active branch summary");
+    const summarizeCall = requireRecord(mockCallArg(mockSummarizeInStages));
+    const messages = requireArray(summarizeCall.messages);
+    expect(JSON.stringify(messages)).not.toContain("already summarized request");
+    expect(JSON.stringify(messages)).toContain("active request");
+    expect(JSON.stringify(messages)).toContain("active response");
+  });
+
   it("continues when messages include real conversation content", async () => {
     const sessionManager = stubSessionManager();
     const model = createAnthropicModelFixture();

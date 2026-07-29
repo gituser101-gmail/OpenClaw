@@ -175,7 +175,18 @@ function collectSessionBranchMessages(sessionManager: unknown): AgentMessage[] {
   if (!Array.isArray(entries)) {
     return [];
   }
-  return entries
+  // SessionManager.getBranch() returns the full ancestry, including messages
+  // already represented by the latest compaction entry. Replaying that prefix
+  // makes later safeguards summarize the same historical branch again.
+  const latestCompactionIndex = entries.findLastIndex(
+    (entry) =>
+      entry !== null &&
+      typeof entry === "object" &&
+      (entry as SessionBranchEntry).type === "compaction",
+  );
+  const activeEntries =
+    latestCompactionIndex >= 0 ? entries.slice(latestCompactionIndex + 1) : entries;
+  return activeEntries
     .map((entry) =>
       entry && typeof entry === "object"
         ? sessionBranchEntryToMessage(entry as SessionBranchEntry)

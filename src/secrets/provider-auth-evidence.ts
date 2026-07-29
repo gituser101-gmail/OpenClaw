@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import { normalizeOptionalString as normalizeOptionalPathInput } from "@openclaw/normalization-core/string-coerce";
 import { normalizeOptionalSecretInput } from "../utils/normalize-secret-input.js";
+import type { ProviderAuthEvidence } from "./provider-env-vars.js";
 
 type LocalProviderAuthEvidence = {
   type: "local-file-with-env";
@@ -33,7 +34,7 @@ function expandAuthEvidencePath(rawPath: string, env: NodeJS.ProcessEnv): string
 }
 
 function hasRequiredAuthEvidenceEnv(
-  evidence: LocalProviderAuthEvidence,
+  evidence: ProviderAuthEvidence,
   env: NodeJS.ProcessEnv,
 ): boolean {
   const hasEnv = (key: string) => Boolean(normalizeOptionalSecretInput(env[key]));
@@ -66,21 +67,28 @@ function hasLocalFileAuthEvidence(
 }
 
 export function resolveLocalProviderAuthEvidence(
-  evidenceEntries: readonly LocalProviderAuthEvidence[] | undefined,
+  evidenceEntries: readonly ProviderAuthEvidence[] | undefined,
   env: NodeJS.ProcessEnv,
 ): ResolvedLocalProviderAuthEvidence | null {
   for (const evidence of evidenceEntries ?? []) {
-    if (
-      evidence.type !== "local-file-with-env" ||
-      !hasRequiredAuthEvidenceEnv(evidence, env) ||
-      !hasLocalFileAuthEvidence(evidence, env)
-    ) {
+    if (!hasRequiredAuthEvidenceEnv(evidence, env)) {
       continue;
     }
-    return {
-      credentialMarker: evidence.credentialMarker,
-      source: evidence.source ?? "local auth evidence",
-    };
+    // Ambient credential sources (metadata server, workload identity) expose no
+    // credentials file; the required env vars alone are sufficient evidence.
+    if (evidence.type === "env-vars-with-marker") {
+      return {
+        credentialMarker: evidence.credentialMarker,
+        source: evidence.source ?? "env auth evidence",
+      };
+    }
+    // local-file-with-env additionally requires the credential file to exist.
+    if (evidence.type === "local-file-with-env" && hasLocalFileAuthEvidence(evidence, env)) {
+      return {
+        credentialMarker: evidence.credentialMarker,
+        source: evidence.source ?? "local auth evidence",
+      };
+    }
   }
   return null;
 }

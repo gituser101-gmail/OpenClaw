@@ -76,6 +76,20 @@ export function shouldSuppressConfiguredModel(params: {
   });
 }
 
+/**
+ * Map well-known provider names to their native API transport. Providers like
+ * google-vertex build request URLs dynamically and carry no configured baseUrl,
+ * so the provider name implies the transport even without an explicit api.
+ */
+function resolveProviderNameDefaultApi(provider: string): Api | undefined {
+  switch (provider) {
+    case "google-vertex":
+      return "google-vertex";
+    default:
+      return undefined;
+  }
+}
+
 export function resolveConfiguredProviderDefaultApi(params: {
   provider: string;
   providerConfig: InlineProviderConfig | undefined;
@@ -87,6 +101,10 @@ export function resolveConfiguredProviderDefaultApi(params: {
   const explicit = normalizeResolvedTransportApi(providerConfig?.api);
   if (explicit) {
     return explicit;
+  }
+  const providerNameDefault = resolveProviderNameDefaultApi(params.provider);
+  if (providerNameDefault) {
+    return providerNameDefault;
   }
   const providerConfiguredBaseUrl = normalizeTransportBaseUrl(providerConfig?.baseUrl);
   if (!providerConfiguredBaseUrl) {

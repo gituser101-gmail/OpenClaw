@@ -66,8 +66,12 @@ export function buildGoogleProvider(): ProviderPlugin {
         },
       }),
     ],
-    normalizeTransport: ({ provider, api, baseUrl }) =>
-      resolveGoogleGenerativeAiTransport({ provider, api, baseUrl }),
+    normalizeTransport: ({ provider, api, baseUrl }) => {
+      if (provider === "google-vertex" && !api) {
+        return { api: "google-vertex" as const, baseUrl };
+      }
+      return resolveGoogleGenerativeAiTransport({ provider, api, baseUrl });
+    },
     normalizeConfig: ({ provider, providerConfig }) =>
       normalizeGoogleProviderConfig(provider, providerConfig),
     resolveConfigApiKey: ({ provider, env }) =>
@@ -105,13 +109,13 @@ export function buildGoogleProvider(): ProviderPlugin {
         providerId: ctx.provider,
         ctx,
       }),
-    createStreamFn: ({ model }) => {
+    createStreamFn: ({ model, config }) => {
       if (
         model.api === "google-vertex" ||
         (model.api === "google-generative-ai" &&
           (model.provider === "google-vertex" || isGoogleVertexBaseUrl(model.baseUrl)))
       ) {
-        return createGoogleVertexTransportStreamFn();
+        return createGoogleVertexTransportStreamFn(config);
       }
       if (model.api === "google-generative-ai") {
         return createGoogleGenerativeAiTransportStreamFn();

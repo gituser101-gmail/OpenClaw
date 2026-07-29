@@ -36,7 +36,7 @@ type ConfiguredTlonAccount = ResolvedTlonAccount & {
   code: string;
 };
 
-async function createHttpPokeApi(params: {
+export async function createHttpPokeApi(params: {
   url: string;
   code: string;
   ship: string;
@@ -85,6 +85,12 @@ async function createHttpPokeApi(params: {
 
         return pokeId;
       } finally {
+        // Guard release does not settle unread response streams; cancel first so
+        // the poke cannot leave its pinned connection open (same pattern as
+        // probeTlonAccount).
+        if (!response.bodyUsed) {
+          await response.body?.cancel().catch(() => undefined);
+        }
         await release();
       }
     },

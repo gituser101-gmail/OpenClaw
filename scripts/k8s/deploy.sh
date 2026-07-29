@@ -8,7 +8,9 @@
 #   ./scripts/k8s/deploy.sh                   # Deploy (requires API key in env or secret already in cluster)
 #   ./scripts/k8s/deploy.sh --create-secret   # Create or update the K8s Secret from env vars
 #   ./scripts/k8s/deploy.sh --show-token      # Print the gateway token after deploy
-#   ./scripts/k8s/deploy.sh --delete          # Tear down
+#   ./scripts/k8s/deploy.sh --delete          # Tear down OpenClaw resources (keeps the namespace)
+#   ./scripts/k8s/deploy.sh --delete --delete-namespace
+#                                             # Also delete the namespace itself
 #
 # Environment:
 #   OPENCLAW_NAMESPACE   Kubernetes namespace (default: openclaw)
@@ -34,7 +36,10 @@ Usage: ./scripts/k8s/deploy.sh [OPTION]
   (no args)        Deploy OpenClaw (creates secret from env if needed)
   --create-secret  Create or update the K8s Secret from env vars without deploying
   --show-token     Print the gateway token after deploy or secret creation
-  --delete         Delete the namespace and all resources
+  --delete         Delete the OpenClaw resources (the namespace is preserved)
+  --delete-namespace
+                   With --delete, also delete the namespace itself. This
+                   destroys every other workload in that namespace.
   -h, --help       Show this help
 
 Environment:
@@ -47,6 +52,7 @@ HELP
 fi
 
 SHOW_TOKEN=false
+DELETE_NAMESPACE=false
 MODE="deploy"
 
 while [[ $# -gt 0 ]]; do
@@ -56,6 +62,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --delete)
       MODE="delete"
+      ;;
+    --delete-namespace)
+      MODE="delete"
+      DELETE_NAMESPACE=true
       ;;
     --show-token)
       SHOW_TOKEN=true
@@ -73,8 +83,19 @@ done
 # --delete
 # ---------------------------------------------------------------------------
 if [[ "$MODE" == "delete" ]]; then
-  echo "Deleting namespace '$NS' and all resources..."
-  kubectl delete namespace "$NS" --ignore-not-found
+  # Only remove what this script created. Deleting the namespace outright also
+  # destroys unrelated workloads whenever OPENCLAW_NAMESPACE points at a shared
+  # namespace, which is data loss the user never asked for.
+  echo "Deleting OpenClaw resources in namespace '$NS'..."
+  kubectl delete -k "$MANIFESTS" -n "$NS" --ignore-not-found
+  kubectl delete secret openclaw-secrets -n "$NS" --ignore-not-found
+
+  if $DELETE_NAMESPACE; then
+    echo "Deleting namespace '$NS'..."
+    kubectl delete namespace "$NS" --ignore-not-found
+  else
+    echo "Namespace '$NS' was left in place. Remove it with --delete --delete-namespace."
+  fi
   echo "Done."
   exit 0
 fi

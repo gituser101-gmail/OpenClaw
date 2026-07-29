@@ -665,6 +665,12 @@ export function createPluginRuntimeResolver(state: PluginRegistryState) {
             invoke: (params) => runWithPluginScope(() => nodes.invoke(params)),
           } satisfies PluginRuntime["nodes"];
         }
+        if (prop === "talk") {
+          const talk = getRuntimeProperty();
+          return {
+            onActivity: (listener) => talk.onActivity(listener),
+          } satisfies PluginRuntime["talk"];
+        }
         if (prop === "agent") {
           if (scopedAgentRuntime) {
             return scopedAgentRuntime;

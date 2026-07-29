@@ -26,7 +26,7 @@ Bun remains usable as an optional package-script runner. The default package man
   <Step title="Build and test">
     ```sh
     bun run build
-    bun run vitest run
+    pnpm test
     ```
 
     Commands that launch OpenClaw itself should still run through Node; Bun runtimes that provide `node:sqlite` (1.4.0 canary and later) can run them experimentally.

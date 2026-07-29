@@ -40,6 +40,7 @@ const { spawn, spawnSync } = require("node:child_process");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+const { setTimeout: sleep } = require("node:timers/promises");
 
 const params = JSON.parse(fs.readFileSync(process.argv[2], "utf-8"));
 
@@ -68,9 +69,6 @@ function isPidAlive(pid) {
   }
 }
 
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
 
 function cleanupSensitiveFiles() {
   for (const filePath of params.sensitivePaths || []) {

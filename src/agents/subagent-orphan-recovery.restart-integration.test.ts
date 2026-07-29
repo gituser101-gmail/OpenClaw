@@ -208,6 +208,55 @@ describe("subagent orphan recovery — faithful restart path", () => {
     expect(result.recovered).toBe(1);
   });
 
+  it("rejects recovery when the session rotates after the final local read", async () => {
+    const now = Date.now();
+    const childSessionKey = "agent:main:subagent:rotated-before-dispatch";
+    const runId = "run-rotated-before-dispatch";
+    const storePath = await writeSubagentSessionEntry({
+      stateDir: tempStateDir!,
+      agentId: "main",
+      sessionKey: childSessionKey,
+      sessionId: "sess-before-rotation",
+      updatedAt: now,
+      abortedLastRun: true,
+      defaultSessionId: "sess-before-rotation",
+    });
+    const record = makeRunRecord({ runId, childSessionKey, execution: { status: "interrupted" } });
+    addSubagentRunForTests(record);
+    dispatchAgent.mockImplementationOnce(async (payload) => {
+      await writeSubagentSessionEntry({
+        stateDir: tempStateDir!,
+        agentId: "main",
+        sessionKey: childSessionKey,
+        sessionId: "sess-after-rotation",
+        updatedAt: now + 1,
+        abortedLastRun: true,
+        defaultSessionId: "sess-after-rotation",
+      });
+      if (
+        typeof payload.expectedExistingSessionId === "string" &&
+        payload.expectedExistingSessionId !== "sess-after-rotation"
+      ) {
+        throw new Error("session changed before expected recovery work could start");
+      }
+      return { runId: "wrong-session-run" };
+    });
+
+    const result = await recoverOrphanedSubagentSessions({
+      getActiveRuns: () => new Map([[runId, record]]),
+    });
+
+    expect(result).toMatchObject({ recovered: 0, failed: 1, skipped: 0 });
+    expect(dispatchAgent.mock.calls[0]?.[0]).toMatchObject({
+      sessionKey: childSessionKey,
+      expectedExistingSessionId: "sess-before-rotation",
+    });
+    expect((await readSubagentSessionStore(storePath))[childSessionKey]).toMatchObject({
+      sessionId: "sess-after-rotation",
+      abortedLastRun: true,
+    });
+  });
+
   it("finalizes only a stale predecessor when a fresh generation shares its child session", async () => {
     const now = Date.now();
     const childSessionKey = "agent:main:subagent:shared-generation";

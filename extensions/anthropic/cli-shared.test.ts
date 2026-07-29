@@ -206,6 +206,7 @@ describe("resolveClaudeCliExecutionArgs", () => {
         workspaceDir: "/tmp",
         provider: "claude-cli",
         modelId: "claude-opus-4-8",
+        fastMode: true,
         useResume: false,
         baseArgs: [
           "-p",
@@ -269,7 +270,7 @@ describe("resolveClaudeCliExecutionArgs", () => {
       "--setting-sources",
       "",
       "--settings",
-      '{"disableAllHooks":true,"enabledPlugins":{},"autoMemoryEnabled":false,"claudeMdExcludes":["**/CLAUDE.md","**/CLAUDE.local.md","**/.claude/rules/**"]}',
+      '{"disableAllHooks":true,"enabledPlugins":{},"autoMemoryEnabled":false,"fastMode":false,"claudeMdExcludes":["**/CLAUDE.md","**/CLAUDE.local.md","**/.claude/rules/**"]}',
       "--disable-slash-commands",
       "--no-chrome",
       "--strict-mcp-config",
@@ -343,7 +344,7 @@ describe("resolveClaudeCliExecutionArgs", () => {
       "--setting-sources",
       "",
       "--settings",
-      '{"disableAllHooks":true,"enabledPlugins":{},"autoMemoryEnabled":false,"claudeMdExcludes":["**/CLAUDE.md","**/CLAUDE.local.md","**/.claude/rules/**"]}',
+      '{"disableAllHooks":true,"enabledPlugins":{},"autoMemoryEnabled":false,"fastMode":false,"claudeMdExcludes":["**/CLAUDE.md","**/CLAUDE.local.md","**/.claude/rules/**"]}',
       "--disable-slash-commands",
       "--no-chrome",
       "--strict-mcp-config",
@@ -402,7 +403,7 @@ describe("resolveClaudeCliExecutionArgs", () => {
       "--setting-sources",
       "",
       "--settings",
-      '{"disableAllHooks":true,"enabledPlugins":{},"autoMemoryEnabled":false,"claudeMdExcludes":["**/CLAUDE.md","**/CLAUDE.local.md","**/.claude/rules/**"]}',
+      '{"disableAllHooks":true,"enabledPlugins":{},"autoMemoryEnabled":false,"fastMode":false,"claudeMdExcludes":["**/CLAUDE.md","**/CLAUDE.local.md","**/.claude/rules/**"]}',
       "--disable-slash-commands",
       "--no-chrome",
       "--strict-mcp-config",
@@ -487,6 +488,35 @@ describe("resolveClaudeCliExecutionArgs", () => {
     ).toEqual(["-p", "--effort", "max"]);
   });
 
+  it.each([
+    [true, '{"fastMode":true}'],
+    [false, '{"fastMode":false}'],
+  ] as const)("maps fast mode %s to inline Claude settings", (fastMode, settings) => {
+    expect(
+      resolveClaudeCliExecutionArgs({
+        workspaceDir: "/tmp",
+        provider: "claude-cli",
+        modelId: "claude-opus-5",
+        fastMode,
+        useResume: false,
+        baseArgs: ["-p"],
+      }),
+    ).toEqual(["-p", "--settings", settings]);
+  });
+
+  it("merges fast mode into the effective inline settings argument", () => {
+    expect(
+      resolveClaudeCliExecutionArgs({
+        workspaceDir: "/tmp",
+        provider: "claude-cli",
+        modelId: "claude-opus-5",
+        fastMode: true,
+        useResume: false,
+        baseArgs: ["-p", "--settings", '{"hooks":{"PreToolUse":[]}}'],
+      }),
+    ).toEqual(["-p", "--settings", '{"hooks":{"PreToolUse":[]},"fastMode":true}']);
+  });
+
   it("forces isolated no-tool one-shot args for side-question execution", () => {
     expect(
       resolveClaudeCliExecutionArgs({
@@ -494,6 +524,7 @@ describe("resolveClaudeCliExecutionArgs", () => {
         provider: "claude-cli",
         modelId: "claude-opus-4-7",
         thinkingLevel: "max",
+        fastMode: true,
         useResume: true,
         executionMode: "side-question",
         baseArgs: [
@@ -539,6 +570,8 @@ describe("resolveClaudeCliExecutionArgs", () => {
       "1",
       "--permission-mode",
       "default",
+      "--settings",
+      '{"fastMode":false}',
     ]);
   });
 });

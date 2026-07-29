@@ -26,6 +26,7 @@ import {
 import { getCoreCliCommandNames, registerCoreCliByName } from "./program/command-registry-core.js";
 import { getProgramContext } from "./program/program-context.js";
 import { getSubCliEntries, registerSubCliByName } from "./program/register.subclis-core.js";
+import { quoteCliArg } from "./quote-cli-arg.js";
 
 export function getCompletionScript(shell: CompletionShell, program: Command): string {
   if (shell === "zsh") {
@@ -56,6 +57,41 @@ function fishWords(values: readonly string[]): string {
 // alongside the canonical name or advertised commands appear nonexistent.
 function commandNameVariants(cmd: Command): string[] {
   return [cmd.name(), ...cmd.aliases()];
+}
+
+type CompletionOptionChoices = {
+  commandPaths: string[];
+  flags: string[];
+  choices: string[];
+  required: boolean;
+};
+
+function collectCompletionOptionChoices(
+  contexts: readonly ShellCompletionContext[],
+): CompletionOptionChoices[] {
+  const result: CompletionOptionChoices[] = [];
+
+  for (const context of contexts) {
+    const seenFlags = new Set<string>();
+    for (let command: Command | null = context.command; command; command = command.parent) {
+      for (const option of command.options) {
+        const flags = completionFlags(option).filter((flag) => !seenFlags.has(flag));
+        for (const flag of flags) {
+          seenFlags.add(flag);
+        }
+        if (flags.length > 0 && option.argChoices?.length) {
+          result.push({
+            commandPaths: context.pathVariants.map((segments) => segments.join(" ")),
+            flags,
+            choices: option.argChoices,
+            required: option.required,
+          });
+        }
+      }
+    }
+  }
+
+  return result;
 }
 
 function generateFishPathHelper(rootCmd: string, contexts: ShellCompletionContext[]): string {
@@ -304,12 +340,25 @@ function generateZshArgs(cmd: Command): string {
       const name = preferredCompletionFlag(opt);
       const alternate = flags.find((flag) => flag !== name);
       const desc = escapeZshDoubleQuotedDescription(opt.description);
+      const valueSpec =
+        opt.required || opt.optional
+          ? `${opt.optional ? "::" : ":"}${opt.name()}:${
+              opt.argChoices?.length
+                ? `(${opt.argChoices.map(escapeZshCompletionChoice).join(" ")})`
+                : ""
+            }`
+          : "";
       if (alternate) {
-        return `"(${name} ${alternate})"{${name},${alternate}}"[${desc}]"`;
+        return `"(${name} ${alternate})"{${name},${alternate}}"[${desc}]${valueSpec}"`;
       }
-      return `"${name}[${desc}]"`;
+      return `"${name}[${desc}]${valueSpec}"`;
     })
     .join(" \\\n    ");
+}
+
+function escapeZshCompletionChoice(choice: string): string {
+  // `_arguments` parses this list after zsh parses the surrounding double-quoted spec.
+  return escapeZshDoubleQuotedDescription(choice.replace(/([\\\s:()\[\]{}*?!|&;<>"'$`])/g, "\\$1"));
 }
 
 function generateZshSubcmdList(cmd: Command): string {
@@ -391,9 +440,11 @@ function generateBashCompletion(program: Command): string {
   const rootCompletions = root.completions;
   const rootValueOptions = root.valueOptions;
   const commandPathUpdate = generateBashCommandPathUpdate(contexts);
+  const optionValueCompletion = generateBashOptionValueCompletion([root, ...contexts]);
   return `
 _${rootCmd}_completion() {
-    local cur opts command_path candidate_path value_options word flag i
+    local cur opts command_path candidate_path value_options value_prefix value_required word flag choice i
+    local -a value_choices
     COMPREPLY=()
     cur="\${COMP_WORDS[COMP_CWORD]}"
     opts="${rootCompletions.join(" ")}"
@@ -419,10 +470,55 @@ _${rootCmd}_completion() {
 ${commandPathUpdate}
     done
 
-    COMPREPLY=( $(compgen -W "\${opts}" -- \${cur}) )
+${optionValueCompletion}
+    COMPREPLY=( $(compgen -W "\${opts}" -- "\${cur}") )
 }
 
 complete -F _${rootCmd}_completion ${rootCmd}
+`;
+}
+
+function generateBashOptionValueCompletion(contexts: readonly ShellCompletionContext[]): string {
+  const choiceCases = collectCompletionOptionChoices(contexts)
+    .map(({ commandPaths, flags, choices, required }) => {
+      const patterns = commandPaths
+        .flatMap((commandPath) => flags.map((flag) => `"${commandPath}:${flag}"`))
+        .join("|");
+      // Choices are shell data, not shell source; preserve each value as one inert array entry.
+      const quotedChoices = choices.map(quoteCliArg).join(" ");
+      return `        ${patterns}) value_choices=(${quotedChoices}); value_required=${required ? 1 : 0} ;;`;
+    })
+    .join("\n");
+
+  if (!choiceCases) {
+    return "";
+  }
+
+  return `    value_choices=()
+    value_required=0
+    value_prefix=""
+    if [[ \${cur} == -*=* ]]; then
+        flag="\${cur%%=*}"
+        value_prefix="\${flag}="
+        cur="\${cur#*=}"
+    elif (( COMP_CWORD > 0 )); then
+        flag="\${COMP_WORDS[COMP_CWORD - 1]}"
+    fi
+
+    case "\${command_path}:\${flag}" in
+${choiceCases}
+    esac
+
+    if (( \${#value_choices[@]} > 0 )); then
+        for choice in "\${value_choices[@]}"; do
+            if [[ \${choice} == "\${cur}"* ]]; then
+                COMPREPLY+=("\${value_prefix}\${choice}")
+            fi
+        done
+        if (( value_required || \${#COMPREPLY[@]} > 0 )) || [[ -n \${value_prefix} || \${cur} != -* ]]; then
+            return
+        fi
+    fi
 `;
 }
 
@@ -461,9 +557,21 @@ function generatePowerShellCompletion(program: Command): string {
   const rootCmd = program.name();
   const segments: string[] = [];
   const formatPowerShellArray = (entries: string[]) =>
-    entries.length > 0 ? `@(${entries.map((entry) => `'${entry}'`).join(",")})` : "@()";
+    entries.length > 0
+      ? `@(${entries.map((entry) => `'${entry.replaceAll("'", "''")}'`).join(",")})`
+      : "@()";
   const { root, descendants: contexts } = collectShellCompletionCommandTree(program);
   const rootValueOptions = root.valueOptions;
+  const optionChoiceCases = collectCompletionOptionChoices([root, ...contexts])
+    .flatMap(({ commandPaths, flags, choices, required }) =>
+      commandPaths.flatMap((commandPath) =>
+        flags.map(
+          (flag) =>
+            `        '${`${commandPath}:${flag}`.replaceAll("'", "''")}' { $valueChoices = ${formatPowerShellArray(choices)}; $valueRequired = $${required} }`,
+        ),
+      ),
+    )
+    .join("\n");
   const commandPathCases = contexts
     .flatMap((context) =>
       context.pathVariants.map(
@@ -519,6 +627,47 @@ Register-ArgumentCompleter -Native -CommandName ${rootCmd} -ScriptBlock {
         $candidatePath = if ($commandPath -eq '') { $element } else { "$commandPath $element" }
         switch ($candidatePath) {
 ${commandPathCases}
+            default {}
+        }
+    }
+
+    $valueChoices = @()
+    $valueRequired = $false
+    $valuePrefix = ''
+    if ($wordToComplete -like '-*=*') {
+        $valueFlag, $valueToComplete = $wordToComplete -split '=', 2
+        $valuePrefix = "$valueFlag="
+    } else {
+        $valueToComplete = $wordToComplete
+        $valueElementIndex = $commandElements.Count - 1
+        if ($wordToComplete -ne '') { $valueElementIndex-- }
+        $valueFlag = if ($valueElementIndex -gt 0) {
+            $commandElements[$valueElementIndex].Extent.Text
+        } else { '' }
+    }
+    switch ("$($commandPath):$valueFlag") {
+${optionChoiceCases}
+        default {}
+    }
+    if ($valueChoices.Count -gt 0) {
+        $valueMatches = @(
+            $valueChoices | Where-Object {
+                $_.StartsWith($valueToComplete, [StringComparison]::OrdinalIgnoreCase)
+            }
+        )
+        $valueMatches | ForEach-Object {
+            $valueToken = if ($_ -match '^[A-Za-z0-9_./:+-]+$') {
+                $_
+            } else {
+                "'" + $_.Replace("'", "''") + "'"
+            }
+            $completion = "$valuePrefix$valueToken"
+            [System.Management.Automation.CompletionResult]::new(
+                $completion, $completion, 'ParameterValue', $_
+            )
+        }
+        if ($valueRequired -or $valueMatches.Count -gt 0 -or $valuePrefix -ne '' -or $valueToComplete -notlike '-*') {
+            return
         }
     }
     
@@ -563,14 +712,20 @@ function generateFishCompletion(program: Command): string {
       }
       // Options
       for (const opt of cmd.options) {
-        segments.push(
-          buildFishOptionCompletionLine({
-            rootCmd,
-            condition,
-            flags: completionFlags(opt),
-            description: opt.description,
-          }),
-        );
+        const line = buildFishOptionCompletionLine({
+          rootCmd,
+          condition,
+          flags: completionFlags(opt),
+          description: opt.description,
+        });
+        if (opt.argChoices?.length) {
+          // Fish evaluates `-a` later; a quoted printf returns one inert candidate per line.
+          const choiceCommand = `(printf '%s\\n' ${opt.argChoices.map(quoteCliArg).join(" ")})`;
+          const required = opt.required ? " -r" : "";
+          segments.push(`${line.trimEnd()}${required} -f -a ${quoteCliArg(choiceCommand)}\n`);
+        } else {
+          segments.push(line);
+        }
       }
     }
   }

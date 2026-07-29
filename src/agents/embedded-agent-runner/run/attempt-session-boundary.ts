@@ -5,6 +5,7 @@ import type { AgentMessage } from "../../runtime/index.js";
 import type { guardSessionManager } from "../../session-tool-result-guard-wrapper.js";
 import type { AgentSession } from "../../sessions/index.js";
 import {
+  dropReplayableAbortedAssistantLeaf,
   replayTrailingEntriesForOrphanRepair,
   resolveOrphanRepairPlan,
 } from "./attempt-orphan-repair.js";
@@ -57,6 +58,16 @@ export function prepareEmbeddedAttemptSessionBoundary(input: {
       preparedUserTurnMessage: input.preparedUserTurnMessage,
       userTurnAlreadyPersisted: attempt.userTurnTranscriptRecorder?.hasPersisted() === true,
     });
+  let orphanRepairInitialEntry: ReturnType<typeof sessionManager.getLeafEntry>;
+  if (!preserveExactPrompt && !detachedCurrentUser && !attempt.suppressNextUserMessagePersistence) {
+    const leafEntry = sessionManager.getLeafEntry();
+    const droppedParent = dropReplayableAbortedAssistantLeaf(sessionManager, leafEntry);
+    orphanRepairInitialEntry = droppedParent ?? leafEntry;
+    if (droppedParent) {
+      activeSession.agent.state.messages = sessionManager.buildSessionContext().messages;
+    }
+  }
+
   const orphanRepair =
     preserveExactPrompt || detachedCurrentUser
       ? undefined
@@ -64,6 +75,7 @@ export function prepareEmbeddedAttemptSessionBoundary(input: {
           sessionManager,
           prompt: attempt.prompt,
           trigger: attempt.trigger,
+          initialEntry: orphanRepairInitialEntry,
         });
   if (orphanRepair?.removeLeaf) {
     if (orphanRepair.messageEntry.parentId) {

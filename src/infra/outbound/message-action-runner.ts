@@ -203,6 +203,7 @@ export type RunMessageActionParams = {
   /** @internal Runs on identified platform evidence before queue acknowledgement. */
   onDeliveryResult?: (result: OutboundDeliveryResult) => Promise<void> | void;
   sandboxRoot?: string;
+  sandboxContainerWorkdir?: string;
   dryRun?: boolean;
   sourceReplyDeliveryMode?: SourceReplyDeliveryMode;
   sourceReplyFinal?: boolean;
@@ -1289,6 +1290,7 @@ async function buildSendPayloadParts(params: {
   const normalizedMediaUrls = await normalizeSandboxMediaList({
     values: mergedMediaUrls,
     sandboxRoot: input.sandboxRoot,
+    ...(input.sandboxContainerWorkdir ? { containerWorkdir: input.sandboxContainerWorkdir } : {}),
   });
   mergedMediaUrls.length = 0;
   mergedMediaUrls.push(...normalizedMediaUrls);
@@ -2017,6 +2019,7 @@ export async function runMessageAction(
   }
   const normalizationPolicy = resolveAttachmentMediaPolicy({
     sandboxRoot: input.sandboxRoot,
+    ...(input.sandboxContainerWorkdir ? { containerWorkdir: input.sandboxContainerWorkdir } : {}),
     mediaLocalRoots: getAgentScopedMediaLocalRoots(cfg, resolvedAgentId),
   });
   const extraActionMediaSourceParamKeys = resolveExtraActionMediaSourceParamKeys({
@@ -2056,6 +2059,7 @@ export async function runMessageAction(
   });
   const mediaPolicy = resolveAttachmentMediaPolicy({
     sandboxRoot: input.sandboxRoot,
+    ...(input.sandboxContainerWorkdir ? { containerWorkdir: input.sandboxContainerWorkdir } : {}),
     mediaAccess,
   });
   const gateway = input.gateway;

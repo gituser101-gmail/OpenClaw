@@ -4,6 +4,7 @@ import { sendMessage } from "./client.js";
 import type { SynologyInboundMessage } from "./inbound-context.js";
 import { getSynologyRuntime } from "./runtime.js";
 import { buildSynologyChatInboundSessionKey } from "./session-key.js";
+import { chunkSynologyChatText } from "./text-chunking.js";
 import type { ResolvedSynologyChatAccount } from "./types.js";
 import type { SynologyIngressLifecycle } from "./webhook-ingress.js";
 
@@ -49,13 +50,18 @@ async function deliverSynologyChatReply(params: {
   if (!text) {
     return { visibleReplySent: false };
   }
-  const ok = await sendMessage(
-    params.account.incomingUrl,
-    text,
-    params.sendUserId,
-    params.account.allowInsecureSsl,
-  );
-  return { visibleReplySent: ok };
+  for (const chunk of chunkSynologyChatText(text)) {
+    const visibleReplySent = await sendMessage(
+      params.account.incomingUrl,
+      chunk,
+      params.sendUserId,
+      params.account.allowInsecureSsl,
+    );
+    if (!visibleReplySent) {
+      return { visibleReplySent: false };
+    }
+  }
+  return { visibleReplySent: true };
 }
 
 export async function dispatchSynologyChatInboundEvent(params: {

@@ -1037,14 +1037,36 @@ describe("Tool Search", () => {
     expect(details.ok).toBe(true);
     const telemetry = details.telemetry as {
       catalogSize?: number;
+      counterScope?: string;
       searchCount?: number;
       describeCount?: number;
       callCount?: number;
     };
     expect(telemetry.catalogSize).toBe(2);
+    expect(telemetry.counterScope).toBeTypeOf("string");
     expect(telemetry.searchCount).toBe(1);
     expect(telemetry.describeCount).toBe(1);
     expect(telemetry.callCount).toBe(1);
+  });
+
+  it("changes the telemetry counter scope when a catalog is replaced", () => {
+    const config = { tools: { toolSearch: true } } as never;
+    const catalogRef = createToolSearchCatalogRef();
+    const codeTool = fakeTool(TOOL_SEARCH_CODE_MODE_TOOL_NAME, "code mode");
+    applyToolSearchCatalog({
+      tools: [codeTool, pluginTool("fake_first", "First capability")],
+      config,
+      catalogRef,
+    });
+    const firstScope = expectDefined(catalogRef.current, "first catalog").counterScope;
+
+    applyToolSearchCatalog({
+      tools: [codeTool, pluginTool("fake_second", "Second capability")],
+      config,
+      catalogRef,
+    });
+
+    expect(expectDefined(catalogRef.current, "second catalog").counterScope).not.toBe(firstScope);
   });
 
   it("scopes catalogs by run id when attempts share a session", async () => {
@@ -1653,6 +1675,10 @@ describe("Tool Search", () => {
       config,
       sessionId: "session-client",
     });
+    const initialScope = expectDefined(
+      testCatalogRefs.get("session:session-client")?.current,
+      "initial client catalog",
+    ).counterScope;
 
     const clientTool = fakeTool("client_pick_file", "Ask the client to pick a file");
     const compacted = addClientToolsToToolSearchCatalog({
@@ -1663,9 +1689,14 @@ describe("Tool Search", () => {
 
     expect(compacted.tools).toEqual([]);
     expect(compacted.catalogToolCount).toBe(1);
-    const clientEntry = testCatalogRefs
-      .get("session:session-client")
-      ?.current?.entries.find((entry) => entry.id === "client:client:client_pick_file");
+    const appendedCatalog = expectDefined(
+      testCatalogRefs.get("session:session-client")?.current,
+      "appended client catalog",
+    );
+    expect(appendedCatalog.counterScope).toBe(initialScope);
+    const clientEntry = appendedCatalog.entries.find(
+      (entry) => entry.id === "client:client:client_pick_file",
+    );
     expect(clientEntry?.source).toBe("client");
 
     const executeTool = vi.fn(async () => jsonResult({ status: "ok" }));

@@ -40,6 +40,7 @@ describe("applyPromptBuildToolsAllow", () => {
     const catalogRef: ToolSearchCatalogRef = {
       current: {
         entries: [catalogEntry("read"), catalogEntry("write")],
+        counterScope: "scope-1",
         searchCount: 0,
         describeCount: 0,
         callCount: 0,
@@ -90,6 +91,7 @@ describe("applyPromptBuildToolsAllow", () => {
     const catalogRef: ToolSearchCatalogRef = {
       current: {
         entries: [catalogEntry("read"), catalogEntry("write")],
+        counterScope: "scope-1",
         searchCount: 0,
         describeCount: 0,
         callCount: 0,
@@ -144,6 +146,7 @@ describe("applyPromptBuildToolsAllow", () => {
     const catalogRef: ToolSearchCatalogRef = {
       current: {
         entries: [catalogEntry(pluginTool.name, pluginTool)],
+        counterScope: "scope-1",
         searchCount: 0,
         describeCount: 0,
         callCount: 0,

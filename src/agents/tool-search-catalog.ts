@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { getPluginToolMeta, type PluginToolMcpMeta } from "../plugins/tools.js";
 import type { HookContext } from "./agent-tools.before-tool-call.js";
 import {
@@ -32,6 +33,10 @@ const catalogToolIdentities = new WeakMap<object, number>();
 const untrustedSchemaIdentities = new WeakMap<object, number>();
 let nextCatalogToolIdentity = 1;
 let nextUntrustedSchemaIdentity = 1;
+
+function createToolSearchCounterScope(): string {
+  return randomBytes(12).toString("base64url");
+}
 
 export function getReusableCatalogSnapshotCountForTest(): number {
   return reusableCatalogSnapshots.size;
@@ -131,6 +136,7 @@ function restoreToolSearchCatalog(params: {
 }): void {
   const next = {
     entries: params.entries,
+    counterScope: createToolSearchCounterScope(),
     searchCount: 0,
     describeCount: 0,
     callCount: 0,
@@ -284,6 +290,9 @@ function registerToolSearchCatalog(params: {
   }
   const next = {
     entries: Array.from(byId.values()).toSorted((a, b) => a.id.localeCompare(b.id)),
+    // Appended client tools extend the same counter lifetime. A replacement
+    // gets a new scope so telemetry consumers never infer resets from values.
+    counterScope: prior?.counterScope ?? createToolSearchCounterScope(),
     searchCount: prior?.searchCount ?? 0,
     describeCount: prior?.describeCount ?? 0,
     callCount: prior?.callCount ?? 0,

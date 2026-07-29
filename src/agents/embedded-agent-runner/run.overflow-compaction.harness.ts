@@ -434,7 +434,7 @@ export function resetRunOverflowCompactionHarnessMocks(): void {
     id: "codex",
     label: "Codex",
     supports: (ctx) =>
-      ctx.provider === "codex" || ctx.provider === "openai" || ctx.provider === "openai"
+      ctx.provider === "codex" || ctx.provider === "openai"
         ? { supported: true, priority: 100 }
         : { supported: false },
     runAttempt: async (params) => await mockedRunEmbeddedAttempt(params),
@@ -669,8 +669,37 @@ export async function loadRunOverflowCompactionHarness(): Promise<{
     ensureRuntimePluginsLoaded: mockedEnsureRuntimePluginsLoaded,
   }));
 
+  vi.doMock("../session-placement-admission.js", () => ({
+    withSessionPlacementTurnAdmission: vi.fn(
+      async (_claim: unknown, _params: unknown, task: () => Promise<unknown>) => await task(),
+    ),
+  }));
+
   vi.doMock("../harness/runtime-plugin.js", () => ({
     ensureSelectedAgentHarnessPlugin: vi.fn(async () => {}),
+  }));
+
+  vi.doMock("../harness/builtin-openclaw.js", () => ({
+    createOpenClawAgentHarness: vi.fn(() => ({
+      id: "openclaw",
+      label: "OpenClaw",
+      supports: () => ({ supported: true, priority: 0 }),
+      runAttempt: async (params: unknown) => await mockedRunEmbeddedAttempt(params),
+      finalizeSettledTurn: async ({ attempt }: { attempt: unknown }) => {
+        const result = await mockedRunEmbeddedAttempt({
+          ...(attempt as object),
+          disableTools: true,
+        });
+        const assistant =
+          result.currentAttemptCompletedAssistant ??
+          result.currentAttemptAssistant ??
+          result.lastAssistant;
+        if (!assistant) {
+          throw new Error("mocked settled-turn finalization returned no assistant message");
+        }
+        return { assistant, ...(result.attemptUsage ? { usage: result.attemptUsage } : {}) };
+      },
+    })),
   }));
 
   vi.doMock("../runtime-plan/build.js", () => ({
@@ -719,6 +748,13 @@ export async function loadRunOverflowCompactionHarness(): Promise<{
     shouldPreferProviderRuntimeResolvedModel: vi.fn(() => false),
     prepareProviderExtraParams: vi.fn(async () => ({})),
     wrapProviderStreamFn: vi.fn((_cfg: unknown, _model: unknown, fn: unknown) => fn),
+  }));
+  vi.doMock("../../plugins/provider-hook-runtime.js", () => ({
+    clearProviderRuntimePluginCacheForTest: vi.fn(),
+    resolveProviderRuntimePluginHandle: vi.fn((params: unknown) => ({
+      ...(params && typeof params === "object" ? params : {}),
+      plugin: undefined,
+    })),
   }));
   vi.doMock("../auth-profiles.js", () => ({
     isProfileInCooldown: mockedIsProfileInCooldown,
@@ -1005,7 +1041,10 @@ export async function loadRunOverflowCompactionHarness(): Promise<{
   const { runEmbeddedAgent } = await import("./run.js");
   return {
     runEmbeddedAgent: (params) =>
-      runEmbeddedAgent({ ...params, agentId: params.agentId ?? "main" }),
+      runEmbeddedAgent({
+        ...params,
+        agentId: params.agentId ?? "main",
+      }),
   };
 }
 
@@ -1015,11 +1054,39 @@ export async function warmRunOverflowCompactionHarness(
   params?: Partial<Parameters<typeof runEmbeddedAgent>[0]>,
 ): Promise<void> {
   resetRunOverflowCompactionHarnessMocks();
+  useOpenAIPlatformAuthFixture();
   mockedGlobalHookRunner.hasHooks.mockReturnValue(false);
   mockedBuildEmbeddedRunPayloads.mockReturnValue([{ text: "warmup" }]);
-  mockedRunEmbeddedAttempt.mockResolvedValueOnce(makeAttemptResult({ assistantTexts: ["warmup"] }));
+  const warmupAssistant: EmbeddedRunAttemptResult["lastAssistant"] = {
+    role: "assistant",
+    content: [{ type: "text", text: "warmup" }],
+    api: "messages",
+    provider: "anthropic",
+    model: "test-model",
+    usage: {
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 0,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+    },
+    stopReason: "stop",
+    timestamp: Date.now(),
+  };
+  mockedRunEmbeddedAttempt.mockResolvedValueOnce(
+    makeAttemptResult({
+      assistantTexts: ["warmup"],
+      lastAssistant: warmupAssistant,
+      currentAttemptAssistant: warmupAssistant,
+      currentAttemptCompletedAssistant: warmupAssistant,
+    }),
+  );
   await runEmbeddedAgent({
     ...overflowBaseRunParams,
+    provider: "openai",
+    model: "test-model",
+    agentHarnessRuntimeOverride: "codex",
     ...params,
     runId: params?.runId ?? "run-overflow-compaction-harness-warmup",
   });

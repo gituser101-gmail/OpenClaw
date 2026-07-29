@@ -64,16 +64,12 @@ import {
   overflowBaseRunParams,
   resetRunOverflowCompactionHarnessMocks,
   useOpenAIPlatformAuthFixture,
-  warmRunOverflowCompactionHarness,
 } from "./run.overflow-compaction.harness.js";
 import type { RunEmbeddedAgentParams } from "./run/params.js";
 import type { EmbeddedRunAttemptParams } from "./run/types.js";
 
 let runEmbeddedAgent: typeof import("./run.js").runEmbeddedAgent;
 
-// Cold GitHub-hosted fork runners can spend more than two minutes loading and
-// warming this broad harness before the first test reports progress.
-const COLD_FORK_RUNNER_HOOK_TIMEOUT_MS = 420_000;
 type RuntimePlanAuthOverrides = Partial<Omit<AgentRuntimeAuthPlan, "modelRoute">> & {
   modelRoute?: AgentRuntimeAuthModelRoute;
 };
@@ -139,7 +135,7 @@ function makeForwardingCase(internalEvents: AgentInternalEvent[]) {
 function codexHarnessSupportsKnownProviders(
   ctx: Parameters<AgentHarness["supports"]>[0],
 ): ReturnType<AgentHarness["supports"]> {
-  return ctx.provider === "codex" || ctx.provider === "openai" || ctx.provider === "openai"
+  return ctx.provider === "codex" || ctx.provider === "openai"
     ? { supported: true, priority: 100 }
     : { supported: false };
 }
@@ -308,8 +304,7 @@ async function waitForRunEvent(events: string[], expected: string): Promise<void
 describe("runEmbeddedAgent overflow compaction trigger routing", () => {
   beforeAll(async () => {
     ({ runEmbeddedAgent } = await loadRunOverflowCompactionHarness());
-    await warmRunOverflowCompactionHarness(runEmbeddedAgent);
-  }, COLD_FORK_RUNNER_HOOK_TIMEOUT_MS);
+  });
 
   beforeEach(() => {
     resetAgentEventsForTest();

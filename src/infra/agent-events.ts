@@ -75,6 +75,8 @@ export type AgentEventRuntimePayload = AgentEventPayload & {
 };
 
 /** Per-run metadata used to stamp events and gate Control UI visibility. */
+type AgentRunContextQueueWait = { resumeAcrossLifecycleRotation: boolean };
+
 type AgentRunContext = {
   sessionKey?: string;
   /** Resolved agent owner, including for unscoped session keys. */
@@ -94,6 +96,8 @@ type AgentRunContext = {
   registeredAt?: number;
   /** Timestamp of last activity (updated on every emitAgentEvent). */
   lastActiveAt?: number;
+  /** Active command-lane waits that keep this context eligible for admission. */
+  activeQueueWaits?: Set<AgentRunContextQueueWait>;
 };
 
 type AgentEventState = {
@@ -207,6 +211,15 @@ export function captureAgentRunLifecycleGeneration(runId: string): string {
 export function rotateAgentEventLifecycleGeneration(): string {
   const state = getAgentEventState();
   state.lifecycleGeneration = randomUUID();
+  // Queue claims follow the same restart-resume contract as lane admission.
+  // Retiring blocked stale work here prevents a paused lane from pinning it forever.
+  for (const [runId, context] of state.runContextById) {
+    for (const wait of context.activeQueueWaits ?? []) {
+      if (!wait.resumeAcrossLifecycleRotation) {
+        releaseAgentRunContextQueueWait(state, runId, context, wait);
+      }
+    }
+  }
   // Rotation is the liveness choke point: after it returns, no prior-generation
   // owner is operationally reachable. Recovery and runtime consumers therefore
   // agree that only current-generation owners can drive or receive work.
@@ -239,11 +252,13 @@ export function registerAgentRunContext(runId: string, context: AgentRunContext,
   }
   const existing = state.runContextById.get(runId);
   if (!existing) {
-    state.runContextById.set(runId, {
+    const registeredContext = {
       ...context,
       lifecycleGeneration: context.lifecycleGeneration ?? state.lifecycleGeneration,
       registeredAt: context.registeredAt ?? Date.now(),
-    });
+    };
+    delete registeredContext.activeQueueWaits;
+    state.runContextById.set(runId, registeredContext);
     return;
   }
   if (
@@ -370,11 +385,15 @@ export function claimAgentRunContext(
     );
     return claimId;
   }
-  state.runContextById.set(runId, {
+  const claimedContext = {
     ...context,
     lifecycleGeneration,
     registeredAt: context.registeredAt ?? Date.now(),
-  });
+  };
+  // Queue waits belong to the exact context object they started against.
+  // Carrying the claims across lifecycle replacement would pin a newer run.
+  delete claimedContext.activeQueueWaits;
+  state.runContextById.set(runId, claimedContext);
   state.seqByRun.delete(runId);
   clearAgentRunUsage(runId);
   return claimId;
@@ -383,6 +402,48 @@ export function claimAgentRunContext(
 /** Returns the currently registered context for a run, if it has not been cleared or swept. */
 export function getAgentRunContext(runId: string) {
   return getAgentEventState().runContextById.get(runId);
+}
+
+/**
+ * Pins one run context while it waits for command-lane admission.
+ * The returned release is idempotent and restarts inactivity after the final wait.
+ */
+export function beginAgentRunContextQueueWait(
+  runId: string,
+  options: { lifecycleGeneration: string; resumeAcrossLifecycleRotation: boolean },
+): () => void {
+  const state = getAgentEventState();
+  const context = state.runContextById.get(runId);
+  const contextLifecycleGeneration = context?.lifecycleGeneration ?? state.lifecycleGeneration;
+  if (
+    !context ||
+    contextLifecycleGeneration !== options.lifecycleGeneration ||
+    (!options.resumeAcrossLifecycleRotation &&
+      contextLifecycleGeneration !== state.lifecycleGeneration)
+  ) {
+    return () => {};
+  }
+  const wait = { resumeAcrossLifecycleRotation: options.resumeAcrossLifecycleRotation };
+  (context.activeQueueWaits ??= new Set()).add(wait);
+  return () => releaseAgentRunContextQueueWait(state, runId, context, wait);
+}
+
+function releaseAgentRunContextQueueWait(
+  state: AgentEventState,
+  runId: string,
+  context: AgentRunContext,
+  wait: AgentRunContextQueueWait,
+): void {
+  // Exact object ownership keeps a stale queue callback from changing a
+  // replacement context that reused the run id after lifecycle rotation.
+  if (state.runContextById.get(runId) !== context || !context.activeQueueWaits?.delete(wait)) {
+    return;
+  }
+  if (context.activeQueueWaits.size > 0) {
+    return;
+  }
+  delete context.activeQueueWaits;
+  context.lastActiveAt = Date.now();
 }
 
 /** Records the latest next-check proposal on the matching paced cron run. */
@@ -561,6 +622,11 @@ export function sweepStaleRunContexts(maxAgeMs = 30 * 60 * 1000): number {
   const now = Date.now();
   let swept = 0;
   for (const [runId, ctx] of state.runContextById.entries()) {
+    // Command-lane ownership is active scheduler state. Sweeping it would let
+    // registry maintenance false-terminal work before the lane admits it.
+    if (ctx.activeQueueWaits?.size) {
+      continue;
+    }
     // Use lastActiveAt (refreshed on every event) to avoid sweeping active runs.
     // Fall back to registeredAt, then treat missing timestamps as infinitely old.
     const lastSeen = ctx.lastActiveAt ?? ctx.registeredAt;

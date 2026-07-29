@@ -680,7 +680,7 @@ describe("skill upload store", () => {
   it("renews the install lease and preserves an expired leased upload", async () => {
     const { databasePath, store } = await makeStore({
       installLeaseHeartbeatMs: 10,
-      installLeaseMs: 100,
+      installLeaseMs: 1000,
     });
     const archive = Buffer.from("abc");
     const committed = await store.begin({

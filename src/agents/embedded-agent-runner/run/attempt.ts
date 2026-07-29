@@ -158,6 +158,9 @@ export async function runEmbeddedAttempt(
     prepStages.mark("skills");
 
     const isRawModelRun = params.modelRun === true || params.promptMode === "none";
+    // When a per-spawn runtime tool policy is active, strip the skills catalog from the prompt.
+    const hasSessionRuntimeToolPolicy = params.hasSessionRuntimeToolPolicy === true;
+    const effectiveSkillsPrompt = hasSessionRuntimeToolPolicy ? "" : skillsPrompt;
     if (isRawModelRun && log.isEnabled("debug")) {
       log.debug(
         `raw model run enabled: modelRun=${params.modelRun === true} promptMode=${params.promptMode ?? "unset"}`,
@@ -296,7 +299,7 @@ export async function runEmbeddedAttempt(
       sandbox: sandbox ?? undefined,
       sandboxSessionKey,
       sessionAgentId,
-      skillsPrompt,
+      skillsPrompt: effectiveSkillsPrompt,
       codeModeActive: codeModeControlsEnabledForRun,
       toolSearchCatalogRef,
       toolSearchDirectoryEnabled: toolSearchControlsEnabledForRun && toolSearch.catalogRegistered,

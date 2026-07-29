@@ -52,6 +52,7 @@ const SESSION_ENTRY_RESERVED_SLOT_KEY_LIST = [
   "inheritedToolAllow",
   "mainRestartRecovery",
   "subagentRecovery",
+  "runtimeToolPolicy",
   "pluginOwnerId",
   "systemSent",
   "abortedLastRun",

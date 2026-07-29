@@ -247,6 +247,9 @@ Per-agent override: `agents.entries.*.subagents.delegationMode`.
 <ParamField path="worktreeBaseRef" type="string">
   Optional git base ref for the managed worktree. Requires `visible: true` and `worktree: true`.
 </ParamField>
+<ParamField path="tools" type='string | object'>
+  Native embedded sub-agent runs only. Narrows the spawned child's model-facing tool set. Pass `"none"` to run the child with zero callable tools, or `{ "allow": ["read", "exec"] }` / `{ "deny": ["exec"] }` for selective narrowing (deny wins). Omit to use the normal child tool policy. The policy is **immutable** once set: for `thread: true` or `mode: "session"` native spawns, OpenClaw stores it on the child session and applies it to all subsequent turns — it cannot be widened or cleared later. `runtime: "acp"` rejects this field. CLI-backed native runs accept allow-only and `"none"` policies but reject deny-based policies (the CLI harness cannot compute the complement).
+</ParamField>
 
 <Warning>
 `sessions_spawn` does **not** accept channel-delivery params (`target`,

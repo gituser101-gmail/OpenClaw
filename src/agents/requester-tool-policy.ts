@@ -10,6 +10,7 @@ import { normalizeInputProvenance } from "../sessions/input-provenance.js";
 import {
   resolveGroupToolPolicy,
   resolveInheritedToolPolicyForSession,
+  resolveRuntimeToolPolicyForSession,
   resolveSubagentToolPolicyForSession,
 } from "./agent-tools.policy.js";
 import type { SandboxToolPolicy } from "./sandbox/types.js";
@@ -37,6 +38,7 @@ type RequesterToolPolicyResolution = {
   senderPolicy?: SandboxToolPolicy;
   subagentPolicy?: SandboxToolPolicy;
   inheritedToolPolicy?: SandboxToolPolicy;
+  sessionRuntimeToolPolicy?: SandboxToolPolicy;
   subagentStore?: SessionCapabilityStore;
 };
 
@@ -221,6 +223,11 @@ export function resolveRequesterToolPolicies(
     inheritedToolPolicy: resolveInheritedToolPolicyForSession(params.config, subagentSessionKey, {
       store: subagentStore,
     }),
+    sessionRuntimeToolPolicy: resolveRuntimeToolPolicyForSession(
+      params.config,
+      subagentSessionKey,
+      { store: subagentStore },
+    ),
     subagentStore,
   };
 }

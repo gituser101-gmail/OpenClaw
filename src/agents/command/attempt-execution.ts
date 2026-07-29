@@ -59,7 +59,7 @@ import {
 } from "../cli-execution-auth.js";
 import { runCliAgent } from "../cli-runner.js";
 import { hasClaudeLiveSessionForOwner } from "../cli-runner/claude-live-session.js";
-import { resolveCliRuntimeToolsAllow } from "../cli-runner/tool-policy.js";
+import { resolveCliRuntimeToolsAllow, resolveCliRuntimeToolPolicyFromSession } from "../cli-runner/tool-policy.js";
 import {
   getCliSessionBinding,
   resolveCliSessionClearReason,
@@ -74,6 +74,7 @@ import { resolveOpenAIRuntimeProvider } from "../openai-routing.js";
 import { resolveAgentRunSessionTarget, type AgentRunSessionTarget } from "../run-session-target.js";
 import { resolveAgentRunAbortLifecycleFields } from "../run-termination.js";
 import { buildAgentRuntimeAuthPlan } from "../runtime-plan/auth.js";
+import { isRuntimeToolPolicyActive } from "../runtime-tool-policy.js";
 import type { AgentMessage } from "../runtime/index.js";
 import { withLocalSessionPlacementTurnAdmission } from "../session-placement-admission.js";
 import {
@@ -860,9 +861,8 @@ export function runAgentAttempt(params: {
             groupChannel: params.runContext.groupChannel,
             groupSpace: params.runContext.groupSpace,
             spawnedBy: params.spawnedBy,
-            toolsAllow: resolveCliRuntimeToolsAllow(
-              params.opts.toolsAllow,
-              params.opts.toolsAllowIsDefault,
+            toolsAllow: resolveCliRuntimeToolPolicyFromSession(
+              params.sessionEntry?.runtimeToolPolicy,
             ),
             scheduledToolPolicy: params.opts.scheduledToolPolicy,
             cleanupBundleMcpOnRunEnd: params.opts.cleanupBundleMcpOnRunEnd,
@@ -1029,8 +1029,8 @@ export function runAgentAttempt(params: {
     extraSystemPrompt: params.opts.extraSystemPrompt,
     bootstrapContextMode: params.opts.bootstrapContextMode,
     bootstrapContextRunKind: params.opts.bootstrapContextRunKind,
-    toolsAllow: params.opts.toolsAllow,
     runtimePluginToolGrant: params.opts.runtimePluginToolGrant,
+    hasSessionRuntimeToolPolicy: isRuntimeToolPolicyActive(params.sessionEntry?.runtimeToolPolicy),
     trustedInternalHandoff: params.opts.trustedInternalHandoff,
     scheduledToolPolicy: params.opts.scheduledToolPolicy,
     internalEvents: params.opts.internalEvents,

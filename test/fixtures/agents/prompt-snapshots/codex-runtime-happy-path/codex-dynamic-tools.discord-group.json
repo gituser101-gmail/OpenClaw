@@ -236,6 +236,36 @@
           "description": "Bind new chat thread when supported; true defaults mode=\"session\"; unavailable with visible=true.",
           "type": "boolean"
         },
+        "tools": {
+          "anyOf": [
+            {
+              "const": "none",
+              "description": "Run the child with zero callable model tools. For embedded runtime=\"subagent\" only.",
+              "type": "string"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "allow": {
+                  "description": "Allowed tool names (deny wins; tool groups/globs supported).",
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "deny": {
+                  "description": "Denied tool names (deny wins over allow).",
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                }
+              },
+              "type": "object"
+            }
+          ],
+          "description": "Per-spawn tool policy for embedded runtime=\"subagent\" runs. Omit for the default tool set; \"none\" disables all model tools; { allow, deny } narrows the child set (deny wins). Persistent spawns store the policy on the child session and reuse it on follow-up turns. The policy is immutable once set. ACP and unsupported CLI-backed runs reject this field."
+        },
         "visible": {
           "description": "Persistent UI session; subagent only; omit mode/thread/thinking/lightContext/attachments/attachAs; unavailable with inherited tool allow/denylist.",
           "type": "boolean"

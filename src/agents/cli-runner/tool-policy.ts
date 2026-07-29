@@ -1,3 +1,4 @@
+import type { RuntimeToolPolicy } from "../../config/sessions/runtime-tool-policy.types.js";
 import type { CliBackendToolAvailability } from "../../plugins/cli-backend.types.js";
 import { normalizeToolName } from "../tool-policy.js";
 
@@ -34,4 +35,35 @@ export function resolveCliRuntimeToolsAllow(
   return toolsAllow.some((toolName) => normalizeToolName(toolName) === "*")
     ? undefined
     : toolsAllow;
+}
+
+/**
+ * Convert a per-spawn `RuntimeToolPolicy` to the CLI harness's allow-only list.
+ *
+ * The CLI harness can only enforce an explicit allow list — it cannot compute
+ * the complement of a deny list against the full tool inventory. Therefore:
+ * - `undefined` → `undefined` (no restriction).
+ * - `"none"` → `[]` (zero tools).
+ * - `{ allow: [...] }` without deny → the allow list.
+ * - `{ deny: [...] }` without allow → **throw** (CLI can't compute the complement; fail closed).
+ * - `{ allow, deny }` → **throw** (CLI can't subtract deny from allow reliably with globs/groups; fail closed).
+ */
+export function resolveCliRuntimeToolPolicyFromSession(
+  policy: RuntimeToolPolicy | undefined,
+): string[] | undefined {
+  if (policy === undefined) {
+    return undefined;
+  }
+  if (policy === "none") {
+    return [];
+  }
+  if (policy.deny && policy.deny.length > 0) {
+    throw new Error(
+      "CLI-backed native runs cannot enforce a deny-based runtime tool policy. " +
+        "Deny-only and allow+deny policies are rejected because the CLI harness " +
+        "cannot compute the tool complement. Use an allow-only policy or an embedded runtime.",
+    );
+  }
+  // allow-only (deny is absent or empty)
+  return policy.allow ?? [];
 }

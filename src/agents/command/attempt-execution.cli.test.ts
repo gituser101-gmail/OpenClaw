@@ -400,6 +400,7 @@ describe("CLI attempt execution", () => {
     body: string;
     runId: string;
     cwd?: string;
+    opts?: Partial<Parameters<typeof runAgentAttempt>[0]["opts"]>;
   }) {
     await runAgentAttempt({
       providerOverride: "claude-cli",
@@ -418,7 +419,10 @@ describe("CLI attempt execution", () => {
       resolvedThinkLevel: "medium",
       timeoutMs: 1_000,
       runId: params.runId,
-      opts: {} as Parameters<typeof runAgentAttempt>[0]["opts"],
+      opts: {
+        senderIsOwner: false,
+        ...params.opts,
+      } as Parameters<typeof runAgentAttempt>[0]["opts"],
       runContext: {} as Parameters<typeof runAgentAttempt>[0]["runContext"],
       spawnedBy: undefined,
       messageChannel: undefined,
@@ -470,6 +474,36 @@ describe("CLI attempt execution", () => {
       claudeCliSessionId: cliSessionId,
     };
   }
+
+  it.each([
+    { label: "deny-only", runtimeToolPolicy: { deny: ["exec"] } },
+    { label: "allow+deny", runtimeToolPolicy: { allow: ["read"], deny: ["exec"] } },
+  ])(
+    "rejects $label runtime tool policy for CLI-backed native runs",
+    async ({ runtimeToolPolicy }) => {
+      const sessionKey = "agent:main:subagent:cli-tools-allow";
+      const sessionEntry: SessionEntry = {
+        sessionId: "session-cli-tools-allow",
+        updatedAt: Date.now(),
+        runtimeToolPolicy,
+      };
+      const sessionStore: Record<string, SessionEntry> = { [sessionKey]: sessionEntry };
+      await fs.writeFile(storePath, JSON.stringify(sessionStore, null, 2), "utf-8");
+
+      await expect(
+        runClaudeCliAttempt({
+          sessionKey,
+          sessionEntry,
+          sessionStore,
+          body: "use only read",
+          runId: "run-cli-tools-allow",
+        }),
+      ).rejects.toThrow("CLI-backed native runs cannot enforce a deny-based runtime tool policy");
+
+      expect(runCliAgentMock).not.toHaveBeenCalled();
+      expect(runEmbeddedAgentMock).not.toHaveBeenCalled();
+    },
+  );
 
   it("clears stale Claude CLI session IDs before a fresh retry after session expiration", async () => {
     const sessionKey = "agent:main:subagent:cli-expired";
@@ -2523,11 +2557,12 @@ describe("CLI attempt execution", () => {
     expect(firstRunCliAgentArg().authProfileId).toBeUndefined();
   });
 
-  it("forwards runtime toolsAllow into CLI attempts so the CLI harness can fail closed", async () => {
+  it("forwards runtime tool policy allow-list into CLI attempts", async () => {
     const sessionKey = "agent:main:direct:claude-tools-allow";
     const sessionEntry: SessionEntry = {
       sessionId: "openclaw-session-cli-tools-allow",
       updatedAt: Date.now(),
+      runtimeToolPolicy: { allow: ["read", "web_search"] },
     };
     const sessionStore: Record<string, SessionEntry> = { [sessionKey]: sessionEntry };
     await writeSessionStoreSeed(sessionStore);
@@ -2549,9 +2584,7 @@ describe("CLI attempt execution", () => {
       resolvedThinkLevel: "medium",
       timeoutMs: 1_000,
       runId: "run-cli-tools-allow",
-      opts: {
-        toolsAllow: ["read", "web_search"],
-      } as Parameters<typeof runAgentAttempt>[0]["opts"],
+      opts: {} as Parameters<typeof runAgentAttempt>[0]["opts"],
       runContext: {} as Parameters<typeof runAgentAttempt>[0]["runContext"],
       spawnedBy: undefined,
       messageChannel: "discord",
@@ -3576,10 +3609,11 @@ describe("embedded attempt harness pinning", () => {
     });
   });
 
-  it("forwards runtime toolsAllow into embedded attempts", async () => {
+  it("forwards hasSessionRuntimeToolPolicy into embedded attempts when session has a policy", async () => {
     const sessionEntry: SessionEntry = {
       sessionId: "tools-allow-session",
       updatedAt: Date.now(),
+      runtimeToolPolicy: { allow: ["read"] },
     };
     runEmbeddedAgentMock.mockResolvedValueOnce({
       meta: { durationMs: 1 },
@@ -3601,9 +3635,7 @@ describe("embedded attempt harness pinning", () => {
       resolvedThinkLevel: "medium",
       timeoutMs: 1_000,
       runId: "run-tools-allow",
-      opts: {
-        toolsAllow: ["read", "web_search"],
-      } as Parameters<typeof runAgentAttempt>[0]["opts"],
+      opts: {} as Parameters<typeof runAgentAttempt>[0]["opts"],
       runContext: {} as Parameters<typeof runAgentAttempt>[0]["runContext"],
       spawnedBy: undefined,
       messageChannel: undefined,
@@ -3615,7 +3647,7 @@ describe("embedded attempt harness pinning", () => {
       sessionHasHistory: false,
     });
 
-    expectMockArgFields(runEmbeddedAgentMock, { toolsAllow: ["read", "web_search"] });
+    expectMockArgFields(runEmbeddedAgentMock, { hasSessionRuntimeToolPolicy: true });
   });
 
   it("lets provider/model runtime policy choose Codex without storing a session harness pin", async () => {
@@ -3932,6 +3964,53 @@ describe("embedded attempt harness pinning", () => {
       authProfileId: "openai:work",
       authProfileIdSource: "user",
     });
+  });
+
+  it("passes runtime tool policy flag to embedded runs", async () => {
+    const sessionEntry: SessionEntry = {
+      sessionId: "tools-allow-embedded-session",
+      updatedAt: Date.now(),
+      runtimeToolPolicy: { allow: ["read", "exec"] },
+    };
+    runEmbeddedAgentMock.mockResolvedValueOnce({
+      meta: { durationMs: 1 },
+    } satisfies EmbeddedAgentRunResult);
+
+    await runAgentAttempt({
+      providerOverride: "openai",
+      originalProvider: "openai",
+      modelOverride: "gpt-5.4",
+      cfg: {} as OpenClawConfig,
+      sessionEntry,
+      sessionId: sessionEntry.sessionId,
+      sessionKey: "agent:main:main",
+      sessionAgentId: "main",
+      sessionFile: path.join(tmpDir, "session.jsonl"),
+      workspaceDir: tmpDir,
+      body: "use only read and exec",
+      isFallbackRetry: false,
+      resolvedThinkLevel: "medium",
+      timeoutMs: 1_000,
+      runId: "run-tools-allow",
+      opts: {
+        senderIsOwner: false,
+      } as Parameters<typeof runAgentAttempt>[0]["opts"],
+      runContext: {} as Parameters<typeof runAgentAttempt>[0]["runContext"],
+      spawnedBy: undefined,
+      messageChannel: undefined,
+      skillsSnapshot: undefined,
+      resolvedVerboseLevel: undefined,
+      agentDir: tmpDir,
+      onAgentEvent: vi.fn(),
+      authProfileProvider: "openai",
+      sessionHasHistory: false,
+    });
+
+    expect(runEmbeddedAgentMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        hasSessionRuntimeToolPolicy: true,
+      }),
+    );
   });
 
   it("does not pass CLI runtime aliases as embedded harness ids for fallback providers", async () => {

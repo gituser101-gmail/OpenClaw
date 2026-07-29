@@ -153,6 +153,9 @@ async function agentCommandInternal(
     | RestartRecoveryTerminalDeliveryEvidenceResult
     | undefined;
   const preparedSessionId = sessionEntry?.sessionId;
+  // The runtime tool policy is read from the session capability store via the
+  // policy resolver — not passed through opts. This makes SessionEntry the
+  // single immutable source of truth for per-spawn tool restrictions.
   const internalModelRunTargets =
     initialOpts.modelRun === true && suppressVisibleSessionEffects
       ? new Map<string, AgentRunSessionTarget>()

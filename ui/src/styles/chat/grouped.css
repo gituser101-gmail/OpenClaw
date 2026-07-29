@@ -428,6 +428,11 @@
   color: inherit;
 }
 
+.chat-history-omitted {
+  color: var(--muted);
+  font-style: italic;
+}
+
 /* Avatar Styles */
 .chat-avatar {
   width: 36px;

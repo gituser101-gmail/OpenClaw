@@ -298,9 +298,16 @@ a polling loop just to wait for completion.
 When active children exist, OpenClaw injects a compact runtime-generated
 `Active Subagents` prompt block into normal turns so the requester can see
 the current child sessions, run ids, statuses, labels, tasks, and
-`taskName` aliases without polling. The task and label fields in that
-block are quoted as data, not instructions, because they can originate
-from user/model-provided spawn arguments.
+`taskName` aliases without polling. When children finished within the
+recent window (default 30 minutes), OpenClaw also injects a
+`Recently Completed Subagents` block with the same quoted fields so later
+turns keep a runtime completion anchor. Successful entries (`status=done`) should not be re-spawned unless the user asks; non-success terminals remain recovery evidence and may be retried.
+The prompt keeps only the newest 8 completed entries from that window so
+bursty sequential work cannot unbounded-grow later parent turns.
+Neither block replaces the completion announce Result; they are status
+anchors only. The task and label fields in those blocks are quoted as
+data, not instructions, because they can originate from user/model-
+provided spawn arguments.
 
 ## Tool: `subagents`
 

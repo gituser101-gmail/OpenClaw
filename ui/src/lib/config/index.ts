@@ -2,6 +2,7 @@
 import type { GatewayBrowserClient } from "../../api/gateway.ts";
 import type { ConfigSchemaResponse, ConfigSnapshot, ConfigUiHints } from "../../api/types.ts";
 import type { ApplicationGatewayPhase } from "../../app/gateway.ts";
+import type { HostPolicyCapability } from "../../app/host-policy.ts";
 import { schemaType, type JsonSchema } from "../../components/config-form.shared.ts";
 import { t } from "../../i18n/index.ts";
 import { copyToClipboard } from "../clipboard.ts";
@@ -1202,6 +1203,7 @@ async function openConfigFile(state: ConfigState): Promise<void> {
 
 export function createRuntimeConfigCapability(
   gateway: RuntimeConfigGateway,
+  hostPolicy?: HostPolicyCapability,
 ): RuntimeConfigCapability {
   const state = createInitialConfigState(gateway.snapshot);
   const listeners = new Set<(state: ConfigState) => void>();
@@ -1263,6 +1265,20 @@ export function createRuntimeConfigCapability(
   const mutate = (task: () => void) => {
     task();
     publish();
+  };
+  const settingPath = (path: Array<string | number>) => path.map(String).join(".");
+  const blockIfSettingLocked = (path: Array<string | number> | string): boolean => {
+    if (!hostPolicy) {
+      return false;
+    }
+    const policy = hostPolicy.settingPolicy(Array.isArray(path) ? settingPath(path) : path);
+    if (policy.state === "editable") {
+      state.lastError = null;
+      return false;
+    }
+    state.lastError = policy.reason ?? `Setting '${Array.isArray(path) ? settingPath(path) : path}' is locked/read-only by the host.`;
+    publish();
+    return true;
   };
   const trackLoad = (key: "config" | "schema", promise: Promise<unknown>): Promise<void> => {
     const next = promise
@@ -1597,6 +1613,9 @@ export function createRuntimeConfigCapability(
   });
 
   const queueConfigPatch = (resolveOptions: () => ConfigPatchBuildResult): Promise<boolean> => {
+    if (blockIfSettingLocked("*")) {
+      return Promise.resolve(false);
+    }
     cancelAppliedRefresh();
     if (autoSaveTimer) {
       cancelScheduledAutoSave();
@@ -1646,14 +1665,25 @@ export function createRuntimeConfigCapability(
         run(() => loadConfigSchema(state)),
       ),
     patchForm: (path, value) => {
+      if (blockIfSettingLocked(path)) {
+        return;
+      }
       mutate(() => updateConfigFormValue(state, path, value));
       scheduleAutoSave();
     },
     removeFormValue: (path) => {
+      if (blockIfSettingLocked(path)) {
+        return;
+      }
       mutate(() => removeConfigFormValue(state, path));
       scheduleAutoSave();
     },
-    setRaw: (value) => mutate(() => updateConfigRawValue(state, value)),
+    setRaw: (value) => {
+      if (blockIfSettingLocked("*")) {
+        return;
+      }
+      mutate(() => updateConfigRawValue(state, value));
+    },
     resetDraft: () => {
       cancelScheduledAutoSave();
       mutate(() => resetConfigPendingChanges(state));

@@ -59,6 +59,7 @@ export type ConfigProps = {
   applying: boolean;
   /** App updater running; config writes and restarts are interlocked. */
   updating: boolean;
+  readOnly?: boolean;
   connected: boolean;
   schema: unknown;
   schemaLoading: boolean;

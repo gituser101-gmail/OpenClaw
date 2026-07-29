@@ -1769,6 +1769,7 @@
                 "pages": [
                   "web/index",
                   "web/control-ui",
+                  "web/host-control-policy",
                   "web/notifications",
                   "web/urls",
                   "web/dashboard",

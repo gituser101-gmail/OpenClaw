@@ -368,6 +368,13 @@ const TRANSCRIPT_OUTPUT_READ_BUFFER_TOKENS = 8192;
 const TRANSCRIPT_TAIL_CHUNK_BYTES = 64 * 1024;
 const SQLITE_USAGE_TAIL_MAX_EVENTS = 512;
 const FALLBACK_TRANSCRIPT_BYTES_PER_TOKEN = 4;
+// Byte-triggered compaction can legitimately leave an active transcript above
+// the configured threshold (for example when branch/state preservation keeps a
+// large successor transcript). Require both an absolute and relative amount of
+// new growth before retrying so we avoid every-turn compaction loops while still
+// allowing later material-growth retries.
+const TRANSCRIPT_BYTES_COMPACTION_RETRY_GROWTH_BYTES = 1024 * 1024;
+const TRANSCRIPT_BYTES_COMPACTION_RETRY_GROWTH_RATIO = 0.1;
 
 function parseUsageFromTranscriptLine(line: string): ReturnType<typeof normalizeUsage> | undefined {
   const trimmed = line.trim();
@@ -399,6 +406,61 @@ function resolveSessionLogPath(
   // Runtime session rows carry SQLite identity only. Tests may inject an artifact
   // resolver to cover explicit exported JSONL inputs, but runtime never infers one.
   return undefined;
+}
+
+function resolveTranscriptBytesCompactionRetryAfterBytes(previousBytes: number): number {
+  return Math.max(
+    previousBytes + TRANSCRIPT_BYTES_COMPACTION_RETRY_GROWTH_BYTES,
+    Math.ceil(previousBytes * (1 + TRANSCRIPT_BYTES_COMPACTION_RETRY_GROWTH_RATIO)),
+  );
+}
+
+function shouldSuppressTranscriptBytesCompactionRetry(params: {
+  entry: SessionEntry;
+  activeTranscriptBytes?: number;
+  maxActiveTranscriptBytes?: number;
+  activeTranscriptSessionFile?: string;
+}): boolean {
+  const previousBytes = params.entry.transcriptBytesCompactionBytes;
+  const previousThreshold = params.entry.transcriptBytesCompactionThreshold;
+  if (
+    typeof params.activeTranscriptBytes !== "number" ||
+    !Number.isFinite(params.activeTranscriptBytes) ||
+    typeof params.maxActiveTranscriptBytes !== "number" ||
+    !Number.isFinite(params.maxActiveTranscriptBytes) ||
+    typeof previousBytes !== "number" ||
+    !Number.isFinite(previousBytes) ||
+    typeof previousThreshold !== "number" ||
+    !Number.isFinite(previousThreshold) ||
+    previousThreshold !== params.maxActiveTranscriptBytes
+  ) {
+    return false;
+  }
+
+  const previousSessionFile = normalizeOptionalString(
+    params.entry.transcriptBytesCompactionSessionFile,
+  );
+  const currentSessionFile = normalizeOptionalString(params.activeTranscriptSessionFile);
+  if (!previousSessionFile || !currentSessionFile || previousSessionFile !== currentSessionFile) {
+    return false;
+  }
+
+  return (
+    params.activeTranscriptBytes < resolveTranscriptBytesCompactionRetryAfterBytes(previousBytes)
+  );
+}
+
+async function statTranscriptByteSize(filePath?: string): Promise<number | undefined> {
+  const normalized = normalizeOptionalString(filePath);
+  if (!normalized) {
+    return undefined;
+  }
+  try {
+    const stat = await fs.promises.stat(normalized);
+    return stat.isFile() && Number.isFinite(stat.size) && stat.size >= 0 ? stat.size : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function deriveTranscriptUsageSnapshot(
@@ -951,10 +1013,26 @@ export async function runPreflightCompactionIfNeeded(params: {
       : undefined;
   const activeTranscriptBytes =
     transcriptUsageTokens?.transcriptByteSize ?? transcriptSizeSnapshot?.byteSize;
-  const shouldCompactByTranscriptBytes =
+  const activeTranscriptSessionFile = shouldCheckActiveTranscriptBytes
+    ? (memoryDeps.resolveSessionLogPath(entry.sessionId, entry, compactionSessionKey, {
+        agentId: compactionAgentId,
+        storePath: compactionStorePath,
+      }) ?? normalizeOptionalString(compactionSessionKey))
+    : undefined;
+  const rawShouldCompactByTranscriptBytes =
     typeof activeTranscriptBytes === "number" &&
     typeof maxActiveTranscriptBytes === "number" &&
     activeTranscriptBytes >= maxActiveTranscriptBytes;
+  const suppressTranscriptBytesCompaction =
+    rawShouldCompactByTranscriptBytes &&
+    shouldSuppressTranscriptBytesCompactionRetry({
+      entry,
+      activeTranscriptBytes,
+      maxActiveTranscriptBytes,
+      activeTranscriptSessionFile,
+    });
+  const shouldCompactByTranscriptBytes =
+    rawShouldCompactByTranscriptBytes && !suppressTranscriptBytesCompaction;
   if (isCodexRuntime && !shouldCompactByTranscriptBytes) {
     // Codex owns native-thread token pressure; OpenClaw owns the host transcript byte fuse
     // that bounds fresh-thread bootstrap seeds.
@@ -1009,7 +1087,8 @@ export async function runPreflightCompactionIfNeeded(params: {
       `promptTokensEst=${promptTokenEstimate ?? "undefined"} ` +
       `activeTranscriptBytes=${activeTranscriptBytes ?? "undefined"} ` +
       `maxActiveTranscriptBytes=${maxActiveTranscriptBytes ?? "undefined"} ` +
-      `sizeTrigger=${shouldCompactByTranscriptBytes}`,
+      `sizeTrigger=${shouldCompactByTranscriptBytes} ` +
+      `sizeRetrySuppressed=${suppressTranscriptBytesCompaction}`,
   );
 
   const shouldCompactByTokens = shouldRunPreflightCompaction({
@@ -1021,6 +1100,15 @@ export async function runPreflightCompactionIfNeeded(params: {
     minimumThresholdTokens: serverCompactionThreshold,
   });
   const shouldCompact = shouldCompactByTokens || shouldCompactByTranscriptBytes;
+  if (suppressTranscriptBytesCompaction) {
+    logVerbose(
+      `preflightCompaction byte trigger suppressed: sessionKey=${params.sessionKey} ` +
+        `activeTranscriptBytes=${activeTranscriptBytes ?? "undefined"} ` +
+        `maxActiveTranscriptBytes=${maxActiveTranscriptBytes ?? "undefined"} ` +
+        `previousActiveTranscriptBytes=${entry.transcriptBytesCompactionBytes ?? "undefined"} ` +
+        `sessionFile=${activeTranscriptSessionFile ?? "undefined"}`,
+    );
+  }
   if (!shouldCompact) {
     return entry ?? params.sessionEntry;
   }
@@ -1055,10 +1143,12 @@ export async function runPreflightCompactionIfNeeded(params: {
   try {
     await notifyStartCompaction();
     const sessionFile =
+      activeTranscriptSessionFile ??
       memoryDeps.resolveSessionLogPath(entry.sessionId, entry, compactionSessionKey, {
         agentId: compactionAgentId,
         storePath: compactionStorePath,
-      }) ?? normalizeOptionalString(compactionSessionKey);
+      }) ??
+      normalizeOptionalString(compactionSessionKey);
     if (!sessionFile) {
       await notifyTerminalCompaction("skipped");
       return entry ?? params.sessionEntry;
@@ -1139,6 +1229,17 @@ export async function runPreflightCompactionIfNeeded(params: {
       throw new Error(`Preflight compaction required but failed: ${reason}`);
     }
 
+    const postCompactionSessionFile =
+      compactionTrigger === "transcript_bytes"
+        ? (normalizeOptionalString(result.result?.sessionFile) ??
+          activeTranscriptSessionFile ??
+          normalizeOptionalString(compactionSessionKey))
+        : undefined;
+    const postCompactionTranscriptBytes =
+      compactionTrigger === "transcript_bytes"
+        ? ((await statTranscriptByteSize(postCompactionSessionFile)) ?? activeTranscriptBytes)
+        : undefined;
+
     await deps.incrementCompactionCount({
       agentId: compactionAgentId,
       cfg: params.cfg,
@@ -1148,7 +1249,22 @@ export async function runPreflightCompactionIfNeeded(params: {
       storePath: compactionStorePath,
       tokensAfter: result.result?.tokensAfter,
       newSessionId: result.result?.sessionId,
+      transcriptBytesCompactionBytes: postCompactionTranscriptBytes,
+      transcriptBytesCompactionThreshold:
+        compactionTrigger === "transcript_bytes" ? maxActiveTranscriptBytes : undefined,
+      transcriptBytesCompactionSessionFile: postCompactionSessionFile,
+      transcriptBytesCompactionAt:
+        compactionTrigger === "transcript_bytes" ? memoryDeps.now() : undefined,
     });
+    if (compactionTrigger === "transcript_bytes") {
+      logVerbose(
+        `preflightCompaction transcript byte result: sessionKey=${params.sessionKey} ` +
+          `activeTranscriptBytesBefore=${activeTranscriptBytes ?? "undefined"} ` +
+          `activeTranscriptBytesAfter=${postCompactionTranscriptBytes ?? "undefined"} ` +
+          `maxActiveTranscriptBytes=${maxActiveTranscriptBytes ?? "undefined"} ` +
+          `sessionFile=${postCompactionSessionFile ?? "undefined"}`,
+      );
+    }
     await appendPostCompactionRefreshPrompt({
       cfg: params.cfg,
       followupRun: params.followupRun,

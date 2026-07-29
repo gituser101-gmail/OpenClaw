@@ -339,6 +339,11 @@ export const sessionDeleteHandlers: GatewayRequestHandlers = {
             legacyKey,
             canonicalKey,
             reason: "session-delete",
+            // A consumed admission handoff proves the delete was initiated from a
+            // chat turn on this session (e.g. /close). That turn's reply run must
+            // survive the cleanup so it can deliver the close confirmation; any
+            // competing runs were already aborted and drained above.
+            preserveActiveReplyRun: adoptedAdmissionLease !== undefined,
           });
           if (mutationCleanupError) {
             respond(false, undefined, mutationCleanupError);

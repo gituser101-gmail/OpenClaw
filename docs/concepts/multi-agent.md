@@ -208,7 +208,7 @@ Direct chats collapse to the agent's main session key by default, so true isolat
 ```json5
 {
   agents: {
-    list: [
+    entries: [
       { id: "alex", workspace: "~/.openclaw/workspace-alex" },
       { id: "mia", workspace: "~/.openclaw/workspace-mia" },
     ],
@@ -315,7 +315,7 @@ Channels supporting multiple accounts: `discord`, `feishu`, `googlechat`, `imess
     ```json5
     {
       agents: {
-        list: [
+        entries: [
           { id: "main", workspace: "~/.openclaw/workspace-main" },
           { id: "alerts", workspace: "~/.openclaw/workspace-alerts" },
         ],
@@ -364,7 +364,7 @@ Channels supporting multiple accounts: `discord`, `feishu`, `googlechat`, `imess
     ```js
     {
       agents: {
-        list: [
+        entries: [
           {
             id: "home",
             default: true,
@@ -465,7 +465,7 @@ Channels supporting multiple accounts: `discord`, `feishu`, `googlechat`, `imess
     ```json5
     {
       agents: {
-        list: [
+        entries: [
           {
             id: "chat",
             name: "Everyday",

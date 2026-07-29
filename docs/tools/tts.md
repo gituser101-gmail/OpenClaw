@@ -509,7 +509,7 @@ voice, model, persona, or auto-TTS mode. The agent block deep-merges over
     },
   },
   agents: {
-    list: [
+    entries: [
       {
         id: "reader",
         tts: {

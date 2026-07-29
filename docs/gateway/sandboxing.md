@@ -255,7 +255,7 @@ This example gives the `research` agent a writable primary workspace, read-only 
         scope: "agent",
       },
     },
-    list: [
+    entries: [
       {
         id: "research",
         workspace: "/srv/openclaw/research-workspace",

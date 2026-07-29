@@ -2,6 +2,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import type { AgentHarnessResetParams } from "../../agents/harness/types.js";
 import type { OpenClawConfig } from "../../config/config.js";
 import type { SessionEntry } from "../../config/sessions.js";
 import { replaceSessionEntry } from "../../config/sessions/session-accessor.js";
@@ -29,7 +30,7 @@ const hookRunnerMocks = vi.hoisted(() => ({
 }));
 const sessionCleanupMocks = vi.hoisted(() => ({
   closeTrackedBrowserTabsForSessions: vi.fn(async () => 0),
-  resetRegisteredAgentHarnessSessions: vi.fn(async () => undefined),
+  resetRegisteredAgentHarnessSessions: vi.fn(async (_params: AgentHarnessResetParams) => undefined),
   retireSessionMcpRuntime: vi.fn(async () => false),
 }));
 
@@ -255,6 +256,10 @@ describe("session hook context wiring", () => {
       sessionKey,
       reason: "new",
     });
+    const resetParams = sessionCleanupMocks.resetRegisteredAgentHarnessSessions.mock.calls[0]?.[0];
+    expect(event?.resetToken).toBeTypeOf("string");
+    expect(event?.resetToken).not.toBe("");
+    expect(resetParams?.resetToken).toBe(event?.resetToken);
     expectFields(context, { sessionKey, agentId: "main", sessionId: event?.sessionId });
 
     const [startEvent, startContext] = requireHookCall(
@@ -410,6 +415,10 @@ describe("session hook context wiring", () => {
       expectFields(event, {
         reason: "daily",
       });
+      const resetParams =
+        sessionCleanupMocks.resetRegisteredAgentHarnessSessions.mock.calls[0]?.[0];
+      expect(event?.resetToken).toBeTypeOf("string");
+      expect(resetParams?.resetToken).toBe(event?.resetToken);
       expect(event?.nextSessionId).toBe(startEvent?.sessionId);
       expect(startEvent?.sessionId).toBe("daily-session");
     } finally {
@@ -436,6 +445,10 @@ describe("session hook context wiring", () => {
 
       const [event] = requireHookCall(hookRunnerMocks.runSessionEnd, "session_end");
       expectFields(event, { reason: "idle" });
+      const resetParams =
+        sessionCleanupMocks.resetRegisteredAgentHarnessSessions.mock.calls[0]?.[0];
+      expect(event?.resetToken).toBeTypeOf("string");
+      expect(resetParams?.resetToken).toBe(event?.resetToken);
     } finally {
       vi.useRealTimers();
     }

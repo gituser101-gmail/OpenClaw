@@ -1188,14 +1188,21 @@ export async function handleOpenAiHttpRequest(
   let finalizeRequested = false;
   let finalizeFinishReason: "stop" | "tool_calls" = "stop";
   let resultResolved = false;
+  let lifecycleFailed = false;
   let closed = false;
   let stopWatchingDisconnect = () => {};
 
   const maybeFinalize = () => {
-    if (closed || !finalizeRequested) {
+    if (closed || !finalizeRequested || !resultResolved) {
       return;
     }
-    if (!resultResolved) {
+    if (lifecycleFailed) {
+      closed = true;
+      stopWatchingDisconnect();
+      unsubscribe();
+      writeSse(res, { error: { message: "internal error", type: "api_error" } });
+      writeDone(res);
+      res.end();
       return;
     }
     if (streamIncludeUsage && !finalUsage) {
@@ -1275,6 +1282,8 @@ export async function handleOpenAiHttpRequest(
     if (evt.stream === "lifecycle") {
       const phase = evt.data?.phase;
       if (phase === "end" || phase === "error") {
+        // A resolved agent run can report its failure only through lifecycle.
+        lifecycleFailed ||= phase === "error";
         requestFinalize();
       }
     }
@@ -1302,6 +1311,11 @@ export async function handleOpenAiHttpRequest(
       }
 
       finalUsage = resolveChatCompletionUsage(result);
+      if (lifecycleFailed) {
+        maybeFinalize();
+        return;
+      }
+
       const meta = (result as { meta?: unknown } | null)?.meta;
       const { stopReason, pendingToolCalls } = resolveStopReasonAndPendingToolCalls(meta);
 

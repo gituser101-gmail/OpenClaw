@@ -1072,6 +1072,83 @@ describe("OpenResponses HTTP API (e2e)", () => {
     expect(agentCommand).toHaveBeenCalledTimes(1);
   });
 
+  it.each([
+    { label: "without an assistant delta", phases: ["error"], streamedText: undefined },
+    { label: "after an assistant delta", phases: ["error"], streamedText: "partial answer" },
+    { label: "after an end lifecycle", phases: ["end", "error"], streamedText: "partial answer" },
+    { label: "before an end lifecycle", phases: ["error", "end"], streamedText: "partial answer" },
+  ] as const)(
+    "emits a failed terminal when a resolved run reports an error $label",
+    async ({ phases, streamedText }) => {
+      const idleRootCount = getActiveGatewayRootWorkCount();
+      agentCommand.mockClear();
+      agentCommand.mockImplementationOnce((async (opts: unknown) => {
+        const runId = (opts as { runId?: string }).runId;
+        if (!runId) {
+          throw new Error("expected a streaming response run ID");
+        }
+        if (streamedText) {
+          emitAgentEvent({
+            runId,
+            stream: "assistant",
+            data: { delta: streamedText },
+          });
+        }
+        for (const phase of phases) {
+          emitAgentEvent({
+            runId,
+            stream: "lifecycle",
+            data: { phase, ...(phase === "error" ? { error: "provider stream failed" } : {}) },
+          });
+        }
+        return {
+          payloads: [{ text: "provider fallback that must not be published" }],
+          meta: { agentMeta: { usage: { input: 11, output: 7, total: 18 } } },
+        };
+      }) as never);
+
+      const response = await postResponses(
+        enabledPort,
+        { stream: true, model: "openclaw", input: "hi" },
+        undefined,
+        AbortSignal.timeout(5_000),
+      );
+      expect(response.status).toBe(200);
+
+      const events = parseSseEvents(await response.text());
+      expect(events.filter((event) => event.event === "response.failed")).toHaveLength(1);
+      expect(events.filter((event) => event.event === "response.completed")).toHaveLength(0);
+      expect(events.filter((event) => event.event === "response.output_text.done")).toHaveLength(0);
+      expect(events.filter((event) => event.event === "response.content_part.done")).toHaveLength(
+        0,
+      );
+      expect(events.filter((event) => event.event === "response.output_item.done")).toHaveLength(0);
+      expect(events.filter((event) => event.data === "[DONE]")).toHaveLength(1);
+      expect(events.at(-1)?.data).toBe("[DONE]");
+
+      const failedResponse = (
+        parseSseData(findSseEvent(events, "response.failed")) as {
+          response?: {
+            status?: string;
+            output?: unknown[];
+            error?: { code?: string; message?: string };
+            usage?: { input_tokens?: number; output_tokens?: number; total_tokens?: number };
+          };
+        }
+      ).response;
+      expect(failedResponse?.status).toBe("failed");
+      expect(failedResponse?.output).toEqual([]);
+      expect(failedResponse?.error).toEqual({ code: "server_error", message: "internal error" });
+      expect(failedResponse?.usage).toEqual({
+        input_tokens: 11,
+        output_tokens: 7,
+        total_tokens: 18,
+      });
+      expect(agentCommand).toHaveBeenCalledTimes(1);
+      await vi.waitFor(() => expect(getActiveGatewayRootWorkCount()).toBe(idleRootCount));
+    },
+  );
+
   it.each(
     STREAM_FAILURE_CASES.flatMap((failure) =>
       [false, true].map((emitErrorLifecycle) => ({

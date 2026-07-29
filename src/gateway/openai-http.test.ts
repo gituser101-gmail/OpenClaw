@@ -2264,6 +2264,90 @@ describe("OpenAI-compatible HTTP API (e2e)", () => {
     }
   });
 
+  it.each(
+    [
+      { label: "without an assistant delta", phases: ["error"], streamedText: undefined },
+      { label: "after an assistant delta", phases: ["error"], streamedText: "partial answer" },
+      { label: "after an end lifecycle", phases: ["end", "error"], streamedText: "partial answer" },
+      {
+        label: "before an end lifecycle",
+        phases: ["error", "end"],
+        streamedText: "partial answer",
+      },
+    ].flatMap((testCase) =>
+      [false, true].map((includeUsage) => ({
+        label: testCase.label,
+        phases: testCase.phases,
+        streamedText: testCase.streamedText,
+        includeUsage,
+      })),
+    ),
+  )(
+    "emits a protocol error when a resolved run reports an error $label (include_usage=$includeUsage)",
+    async ({ phases, streamedText, includeUsage }) => {
+      const idleRootCount = getActiveGatewayRootWorkCount();
+      agentCommand.mockClear();
+      agentCommand.mockImplementationOnce((async (opts: unknown) => {
+        const runId = (opts as { runId?: string }).runId;
+        if (!runId) {
+          throw new Error("expected a streaming chat completion run ID");
+        }
+        if (streamedText) {
+          emitAgentEvent({
+            runId,
+            stream: "assistant",
+            data: { delta: streamedText },
+          });
+        }
+        for (const phase of phases) {
+          emitAgentEvent({
+            runId,
+            stream: "lifecycle",
+            data: { phase, ...(phase === "error" ? { error: "provider stream failed" } : {}) },
+          });
+        }
+        return {
+          payloads: [{ text: "provider fallback that must not be published" }],
+          meta: { agentMeta: { usage: { input: 11, output: 7, total: 18 } } },
+        };
+      }) as never);
+
+      const response = await postChatCompletions(enabledPort, {
+        stream: true,
+        ...(includeUsage ? { stream_options: { include_usage: true } } : {}),
+        model: "openclaw",
+        messages: [{ role: "user", content: "hi" }],
+      });
+      expect(response.status).toBe(200);
+
+      const data = parseSseDataLines(await response.text());
+      expect(data.filter((value) => value === "[DONE]")).toHaveLength(1);
+      expect(data.at(-1)).toBe("[DONE]");
+
+      const chunks = data
+        .filter((value) => value !== "[DONE]")
+        .map((value) => JSON.parse(value) as Record<string, unknown>);
+      const errorChunks = chunks.filter((chunk) => "error" in chunk);
+      expect(errorChunks).toHaveLength(1);
+      expect(errorChunks[0]?.error).toEqual({ message: "internal error", type: "api_error" });
+      expect(chunks.some((chunk) => "usage" in chunk)).toBe(false);
+      expect(
+        chunks
+          .flatMap((chunk) => (chunk.choices as Array<Record<string, unknown>> | undefined) ?? [])
+          .some((choice) => choice.finish_reason !== null && choice.finish_reason !== undefined),
+      ).toBe(false);
+      const publishedText = chunks
+        .flatMap((chunk) => (chunk.choices as Array<Record<string, unknown>> | undefined) ?? [])
+        .map((choice) => (choice.delta as { content?: unknown } | undefined)?.content)
+        .filter((content): content is string => typeof content === "string")
+        .join("");
+      expect(publishedText).toBe(streamedText ?? "");
+      expect(publishedText).not.toContain("provider fallback");
+      expect(agentCommand).toHaveBeenCalledTimes(1);
+      await vi.waitFor(() => expect(getActiveGatewayRootWorkCount()).toBe(idleRootCount));
+    },
+  );
+
   it(
     "sends an initial SSE chunk before a streaming agent run settles",
     { timeout: 15_000 },

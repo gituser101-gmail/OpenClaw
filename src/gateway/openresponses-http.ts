@@ -926,76 +926,9 @@ export async function handleOpenResponsesHttpRequest(
   let unsubscribe = () => {};
   let stopWatchingDisconnect = () => {};
   let finalUsage: Usage | undefined;
-  let finalizeStatus: ResponseResource["status"] | null = null;
-  let finalizeRequested: { status: ResponseResource["status"]; text: string } | null = null;
-
-  const maybeFinalize = () => {
-    if (closed) {
-      return;
-    }
-    if (!finalizeRequested) {
-      return;
-    }
-    if (!finalUsage) {
-      return;
-    }
-    const usage = finalUsage;
-
-    closed = true;
-    stopWatchingDisconnect();
-    unsubscribe();
-
-    writeSseEvent(res, {
-      type: "response.output_text.done",
-      item_id: outputItemId,
-      output_index: 0,
-      content_index: 0,
-      text: finalizeRequested.text,
-    });
-
-    writeSseEvent(res, {
-      type: "response.content_part.done",
-      item_id: outputItemId,
-      output_index: 0,
-      content_index: 0,
-      part: { type: "output_text", text: finalizeRequested.text },
-    });
-
-    const completedItem = createAssistantOutputItem({
-      id: outputItemId,
-      text: finalizeRequested.text,
-      phase: finalizeRequested.status === "completed" ? "final_answer" : "commentary",
-      status: "completed",
-    });
-
-    writeSseEvent(res, {
-      type: "response.output_item.done",
-      output_index: 0,
-      item: completedItem,
-    });
-
-    const finalResponse = createResponseResource({
-      id: responseId,
-      model,
-      status: finalizeRequested.status,
-      output: [completedItem],
-      usage,
-    });
-
-    rememberResponseSession();
-    writeSseEvent(res, { type: "response.completed", response: finalResponse });
-    writeDone(res);
-    res.end();
-  };
-
-  const requestFinalize = (status: ResponseResource["status"], text: string) => {
-    if (finalizeRequested) {
-      return;
-    }
-    finalizeStatus = status;
-    finalizeRequested = { status, text };
-    maybeFinalize();
-  };
+  const finalization: {
+    requested: { status: ResponseResource["status"]; text: string } | null;
+  } = { requested: null };
 
   const finalizeFailedResponse = (response: ResponseResource) => {
     if (closed) {
@@ -1008,6 +941,92 @@ export async function handleOpenResponsesHttpRequest(
     writeSseEvent(res, { type: "response.failed", response });
     writeDone(res);
     res.end();
+  };
+
+  const maybeFinalize = () => {
+    if (closed) {
+      return;
+    }
+    const requested = finalization.requested;
+    if (!requested) {
+      return;
+    }
+    if (!finalUsage) {
+      return;
+    }
+    const usage = finalUsage;
+
+    if (requested.status === "failed") {
+      const failedResponse = createResponseResource({
+        id: responseId,
+        model,
+        status: "failed",
+        output: [],
+        error: { code: "server_error", message: "internal error" },
+        usage,
+      });
+      rememberResponseSession();
+      finalizeFailedResponse(failedResponse);
+      return;
+    }
+
+    closed = true;
+    stopWatchingDisconnect();
+    unsubscribe();
+
+    writeSseEvent(res, {
+      type: "response.output_text.done",
+      item_id: outputItemId,
+      output_index: 0,
+      content_index: 0,
+      text: requested.text,
+    });
+
+    writeSseEvent(res, {
+      type: "response.content_part.done",
+      item_id: outputItemId,
+      output_index: 0,
+      content_index: 0,
+      part: { type: "output_text", text: requested.text },
+    });
+
+    const completedItem = createAssistantOutputItem({
+      id: outputItemId,
+      text: requested.text,
+      phase: requested.status === "completed" ? "final_answer" : "commentary",
+      status: "completed",
+    });
+
+    writeSseEvent(res, {
+      type: "response.output_item.done",
+      output_index: 0,
+      item: completedItem,
+    });
+
+    const finalResponse = createResponseResource({
+      id: responseId,
+      model,
+      status: requested.status,
+      output: [completedItem],
+      usage,
+    });
+
+    rememberResponseSession();
+    writeSseEvent(res, { type: "response.completed", response: finalResponse });
+    writeDone(res);
+    res.end();
+  };
+
+  const requestFinalize = (status: ResponseResource["status"], text: string) => {
+    // A later failure supersedes an end observed before the resolved result and usage.
+    if (
+      finalization.requested &&
+      (finalization.requested.status === "failed" || status !== "failed")
+    ) {
+      return;
+    }
+    finalization.requested = { status, text };
+    maybeFinalize();
   };
 
   // Send initial events
@@ -1149,6 +1168,11 @@ export async function handleOpenResponsesHttpRequest(
       });
 
       finalUsage = extractUsageFromResult(result);
+
+      if (finalization.requested?.status === "failed") {
+        maybeFinalize();
+        return;
+      }
 
       // Check for pending client tool calls BEFORE maybeFinalize() because the
       // lifecycle:end event may already have requested finalization.
@@ -1300,8 +1324,8 @@ export async function handleOpenResponsesHttpRequest(
 
         accumulatedText = content;
         sawAssistantDelta = true;
-        if (finalizeStatus !== null) {
-          finalizeRequested = { status: finalizeStatus, text: content };
+        if (finalization.requested) {
+          finalization.requested = { ...finalization.requested, text: content };
         }
 
         writeSseEvent(res, {

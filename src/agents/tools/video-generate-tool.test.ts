@@ -1,7 +1,7 @@
 // video_generate tool tests cover provider/model selection, plugin metadata,
 // background task handling, input media, and saved video output.
 import { MAX_VIDEO_BYTES } from "@openclaw/media-core/constants";
-import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../../config/config.js";
 import * as mediaStore from "../../media/store.js";
 import * as webMedia from "../../media/web-media.js";
@@ -335,15 +335,6 @@ function resetVideoGenerateMocks() {
 }
 
 describe("createVideoGenerateTool", () => {
-  let emptyConfigTool: ReturnType<typeof createVideoGenerateTool>;
-
-  beforeAll(() => {
-    resetVideoGenerateMocks();
-    emptyConfigTool = createVideoGenerateTool({ config: asConfig({}) });
-    vi.restoreAllMocks();
-    vi.unstubAllEnvs();
-  });
-
   beforeEach(() => {
     resetVideoGenerateMocks();
     for (const envVar of GENERATION_PROVIDER_ENV_VARS) {
@@ -356,46 +347,17 @@ describe("createVideoGenerateTool", () => {
     vi.unstubAllEnvs();
   });
 
-  it("returns null when no video-generation config or auth-backed provider is available", () => {
-    vi.spyOn(videoGenerationRuntime, "listRuntimeVideoGenerationProviders").mockReturnValue([]);
+  it("constructs the definition without applying availability policy", () => {
+    const listProviders = vi
+      .spyOn(videoGenerationRuntime, "listRuntimeVideoGenerationProviders")
+      .mockReturnValue([]);
 
-    expect(emptyConfigTool).toBeNull();
-  });
+    const tool = createVideoGenerateTool({
+      config: asConfig({ plugins: { enabled: false } }),
+    });
 
-  it("treats legacy OpenAI-Codex auth profiles as canonical OpenAI video auth", () => {
-    vi.spyOn(videoGenerationRuntime, "listRuntimeVideoGenerationProviders").mockReturnValue([]);
-
-    expectVideoGenerateTool(
-      createVideoGenerateTool({
-        config: asConfig({}),
-        authProfileStore: createAuthStore(["openai"]),
-      }),
-    );
-  });
-
-  it("skips registration availability checks when the caller already resolved them", () => {
-    vi.spyOn(videoGenerationRuntime, "listRuntimeVideoGenerationProviders").mockReturnValue([]);
-
-    expect(
-      createVideoGenerateTool({
-        config: asConfig({}),
-        availabilityResolved: true,
-      })?.name,
-    ).toBe("video_generate");
-  });
-
-  it("registers when video-generation config is present", () => {
-    expectVideoGenerateTool(
-      createVideoGenerateTool({
-        config: asConfig({
-          agents: {
-            defaults: {
-              mediaModels: { video: { primary: "qwen/wan2.6-t2v" } },
-            },
-          },
-        }),
-      }),
-    );
+    expect(tool.name).toBe("video_generate");
+    expect(listProviders).not.toHaveBeenCalled();
   });
 
   it("does not load runtime providers while registering an explicitly configured tool", () => {

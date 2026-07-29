@@ -328,7 +328,6 @@ export function createOpenClawTools(
     sandbox,
     fsPolicy: options?.fsPolicy,
     onAsyncTaskStarted: mediaGenerationAsyncStartCallback,
-    availabilityResolved: true,
   };
   const imageGenerateTool = optionalMediaTools.imageGenerate
     ? createImageGenerateTool(mediaGenerationToolOptions)

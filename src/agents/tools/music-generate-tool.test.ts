@@ -251,36 +251,17 @@ describe("createMusicGenerateTool", () => {
     vi.unstubAllEnvs();
   });
 
-  it("returns null when generation tools are disabled", () => {
-    vi.spyOn(musicGenerationRuntime, "listRuntimeMusicGenerationProviders").mockReturnValue([]);
-    expect(
-      createMusicGenerateTool({ config: asConfig({ plugins: { enabled: false } }) }),
-    ).toBeNull();
-  });
+  it("constructs the definition without applying availability policy", () => {
+    const listProviders = vi
+      .spyOn(musicGenerationRuntime, "listRuntimeMusicGenerationProviders")
+      .mockReturnValue([]);
 
-  it("skips registration availability checks when the caller already resolved them", () => {
-    vi.spyOn(musicGenerationRuntime, "listRuntimeMusicGenerationProviders").mockReturnValue([]);
+    const tool = createMusicGenerateTool({
+      config: asConfig({ plugins: { enabled: false } }),
+    });
 
-    expect(
-      createMusicGenerateTool({
-        config: asConfig({}),
-        availabilityResolved: true,
-      })?.name,
-    ).toBe("music_generate");
-  });
-
-  it("registers when music-generation config is present", () => {
-    expectMusicGenerateTool(
-      createMusicGenerateTool({
-        config: asConfig({
-          agents: {
-            defaults: {
-              musicGenerationModel: { primary: "google/lyria-3-clip-preview" },
-            },
-          },
-        }),
-      }),
-    );
+    expect(tool.name).toBe("music_generate");
+    expect(listProviders).not.toHaveBeenCalled();
   });
 
   it("tells song requests to generate audio instead of only lyrics", () => {

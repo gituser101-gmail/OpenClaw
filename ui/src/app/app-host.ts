@@ -1730,9 +1730,11 @@ class OpenClawShell extends OpenClawLightDomElement {
   }
 
   private enabledRouteIds(): readonly RouteId[] {
-    return isWorkboardEnabledInConfigSnapshot(this.context?.runtimeConfig.state.configSnapshot)
+    const routeIds = isWorkboardEnabledInConfigSnapshot(this.context?.runtimeConfig.state.configSnapshot)
       ? APP_ROUTE_IDS
       : ROUTE_IDS_WITHOUT_WORKBOARD;
+    const hostPolicy = this.context?.hostPolicy;
+    return hostPolicy ? routeIds.filter((routeId) => hostPolicy.isRouteEnabled(routeId)) : routeIds;
   }
 
   /** Sidebar draft-row hint while the new-session page is open, keyed off its ?agent param. */
@@ -2012,6 +2014,7 @@ class OpenClawShell extends OpenClawLightDomElement {
           onUpdate: () => void context.overlays.runUpdate(),
           searchQuery: this.settingsSearchQuery,
           searchBlockMatches: settingsSearchBlocks,
+          enabledRouteIds: this.enabledRouteIds(),
           onExit: () => this.exitSettings(),
           onRetryConnect: () => context.gateway.connect(),
           onNavigate: (routeId, options) => this.navigate(routeId, options),

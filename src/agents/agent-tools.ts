@@ -26,7 +26,10 @@ import { resolveMemoryFlushPlan } from "../plugins/memory-state.js";
 import { appendRuntimePluginToolGrant } from "../plugins/tool-grant-allowlist.js";
 import { getPluginToolMeta } from "../plugins/tools.js";
 import { GATEWAY_OWNER_ONLY_CORE_TOOLS } from "../security/dangerous-tools.js";
-import type { InputProvenance } from "../sessions/input-provenance.js";
+import {
+  type InputProvenance,
+  isAgentToAgentSendInputProvenance,
+} from "../sessions/input-provenance.js";
 import { createLazyImportLoader } from "../shared/lazy-promise.js";
 import type { SkillSnapshot, SkillUsagePath } from "../skills/types.js";
 import type { SkillWorkshopRunOptions } from "../skills/workshop/types.js";
@@ -423,6 +426,13 @@ type OpenClawCodingToolsOptions = {
   /** Action sink available for model-proposed follow-up tasks. */
   taskSuggestionDeliveryMode?: TaskSuggestionDeliveryMode;
   inboundEventKind?: InboundEventKind;
+  /**
+   * True when this run is processing a sessions_send agent-to-agent message. The
+   * target's reply already returns through the sessions_send tool result, so the
+   * routed turn omits sessions_send to stop the target reverse-calling the
+   * requester and duplicating content (issue #39476).
+   */
+  interAgentSendTurn?: boolean;
   /** If true, omit the message tool from the tool list. */
   disableMessageTool?: boolean;
   /** Collector runs never open operator approval flows. */
@@ -1023,6 +1033,9 @@ function createOpenClawCodingToolsInternal(options?: OpenClawCodingToolsOptions)
             sourceReplyDeliveryMode: options?.sourceReplyDeliveryMode,
             taskSuggestionDeliveryMode: options?.taskSuggestionDeliveryMode,
             inboundEventKind: options?.inboundEventKind,
+            interAgentSendTurn:
+              options?.interAgentSendTurn === true ||
+              isAgentToAgentSendInputProvenance(options?.inputProvenance),
             disableMessageTool: options?.disableMessageTool || options?.swarmCollector,
             swarmCollector: options?.swarmCollector,
             swarmOutputSchema: options?.swarmOutputSchema,

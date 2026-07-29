@@ -176,4 +176,17 @@ describe("McpLoopbackToolCache", () => {
     cache.resolve(scopeParams({ cfg, toolsAllow: ["memory_search"] }));
     expect(resolveGatewayScopedTools).toHaveBeenCalledTimes(3);
   });
+
+  it("does not share cache rows across ordinary and sessions_send target turns", () => {
+    const cache = new McpLoopbackToolCache();
+    const cfg = {} as OpenClawConfig;
+
+    cache.resolve(scopeParams({ cfg }));
+    cache.resolve(scopeParams({ cfg, interAgentSendTurn: true }));
+
+    expect(resolveGatewayScopedTools).toHaveBeenCalledTimes(2);
+    expect(resolveGatewayScopedTools).toHaveBeenLastCalledWith(
+      expect.objectContaining({ interAgentSendTurn: true }),
+    );
+  });
 });

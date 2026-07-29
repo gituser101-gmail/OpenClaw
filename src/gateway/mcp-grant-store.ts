@@ -30,6 +30,8 @@ export type McpLoopbackRequestContext = {
   inboundEventKind?: InboundEventKind;
   sourceReplyDeliveryMode?: SourceReplyDeliveryMode;
   taskSuggestionDeliveryMode?: TaskSuggestionDeliveryMode;
+  /** Omit sessions_send while the CLI processes a sessions_send target turn. */
+  interAgentSendTurn?: boolean;
   requireExplicitMessageTarget?: boolean;
   /**
    * Per-run allowlist of gateway tool names for this grant. When set, the

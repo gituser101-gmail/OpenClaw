@@ -131,6 +131,45 @@ const LOCAL_TEST_TIMEOUT_MS = 150_000;
 const SUBMISSION_SETTLE_MS = 150;
 const SESSION_ROLLOVER_BUSY_MESSAGE = "abort the current run before /new";
 
+type GatewaySettlementClient = Pick<GatewayChatClient, "listSessions" | "loadHistory">;
+
+async function waitForGatewaySessionSettlement(params: {
+  client: GatewaySettlementClient;
+  sessionKey: string;
+  timeoutMs?: number;
+}): Promise<void> {
+  const deadline = Date.now() + (params.timeoutMs ?? LOCAL_OUTPUT_TIMEOUT_MS);
+  for (;;) {
+    const result = await params.client.listSessions({
+      includeUnknown: true,
+      limit: 10,
+      search: params.sessionKey,
+    });
+    const row = (
+      result.sessions as Array<{
+        activeRunIds?: string[];
+        hasActiveRun?: boolean;
+        key: string;
+      }>
+    ).find((candidate) => candidate.key === params.sessionKey);
+    const activeRunIds = row?.activeRunIds ?? [];
+    if (row?.hasActiveRun !== true && activeRunIds.length === 0) {
+      if (row) {
+        // Active-run retirement is the ownership barrier; history then proves the
+        // transcript projection is readable before another shared-fixture turn starts.
+        await params.client.loadHistory({ sessionKey: params.sessionKey, limit: 1 });
+      }
+      return;
+    }
+    if (Date.now() >= deadline) {
+      throw new Error(
+        `Gateway session did not settle: ${params.sessionKey} (${activeRunIds.join(", ") || "active"})`,
+      );
+    }
+    await sleep(25);
+  }
+}
+
 function isRetryableGatewayUnavailable(error: unknown): error is Error & {
   retryAfterMs?: number;
 } {
@@ -815,6 +854,11 @@ async function startGatewayModeTui(
     for (const key of sessionKeys) {
       await shared.controlClient.abortChat({ sessionKey: key });
     }
+    await Promise.all(
+      [...sessionKeys].map((key) =>
+        waitForGatewaySessionSettlement({ client: shared.controlClient, sessionKey: key }),
+      ),
+    );
   });
   registerCleanup(cleanup);
   return {
@@ -828,6 +872,11 @@ async function startGatewayModeTui(
     agentId: scenario.agentId,
     sessionKey,
     trackSessionKey: (key: string) => sessionKeys.add(key),
+    waitForSettlement: async () =>
+      await waitForGatewaySessionSettlement({
+        client: shared.controlClient,
+        sessionKey,
+      }),
     cleanup,
   };
 }
@@ -884,6 +933,42 @@ describe("TUI PTY real backends", () => {
         clearTimeout(acceptanceTimer);
       }
     }
+  });
+
+  it("waits for Gateway run ownership to retire before reading durable history", async () => {
+    let listCalls = 0;
+    let historyCalls = 0;
+    const client = {
+      listSessions: async () => {
+        listCalls += 1;
+        return {
+          ts: Date.now(),
+          path: "",
+          count: 1,
+          sessions: [
+            {
+              key: "agent:main:settlement-test",
+              ...(listCalls === 1
+                ? { hasActiveRun: true, activeRunIds: ["run-in-flight"] }
+                : { hasActiveRun: false }),
+            },
+          ],
+        };
+      },
+      loadHistory: async () => {
+        historyCalls += 1;
+        return {};
+      },
+    } as GatewaySettlementClient;
+
+    await waitForGatewaySessionSettlement({
+      client,
+      sessionKey: "agent:main:settlement-test",
+      timeoutMs: 1_000,
+    });
+
+    expect(listCalls).toBe(2);
+    expect(historyCalls).toBe(1);
   });
 
   it(
@@ -1443,6 +1528,7 @@ describe("TUI PTY real backends", () => {
         expect(fixture.mockModel.requests()).toHaveLength(1);
         expect(fixture.run.visibleOutput()).not.toContain("[[reply_to_current]]");
 
+        await fixture.waitForSettlement();
         await fixture.run.write("turn after empty reply\r");
         await waitFor({
           timeoutMs: LOCAL_OUTPUT_TIMEOUT_MS,

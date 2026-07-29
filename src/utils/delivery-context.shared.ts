@@ -4,6 +4,7 @@ import type {
   SessionOrigin,
 } from "../config/sessions/types.js";
 // Shared delivery context helpers expose route normalization shared by modules.
+import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import {
   channelRouteCompactKey,
   channelRouteThreadId,
@@ -36,7 +37,7 @@ export function normalizeDeliveryContext(context?: DeliveryContext): DeliveryCon
   const route = normalizeChannelRouteTarget({
     channel:
       typeof context.channel === "string"
-        ? (normalizeMessageChannel(context.channel) ?? context.channel.trim())
+        ? (normalizeMessageChannel(context.channel) ?? normalizeOptionalString(context.channel))
         : undefined,
     to: context.to,
     accountId: context.accountId,

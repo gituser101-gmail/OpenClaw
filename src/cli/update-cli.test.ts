@@ -542,6 +542,20 @@ describe("update-cli", () => {
     });
   };
 
+  const primeNpmChannelTag = (tag: string, version: string | null): void => {
+    vi.mocked(resolveNpmChannelTag).mockResolvedValue({ tag, version });
+  };
+
+  const primeServiceCommand = (
+    programArguments: Array<string | undefined>,
+    environment?: NodeJS.ProcessEnv,
+  ): void => {
+    serviceReadCommand.mockResolvedValue({
+      programArguments,
+      ...(environment === undefined ? {} : { environment }),
+    });
+  };
+
   const expectUpdateCallChannel = (channel: string) => {
     const call = vi.mocked(runGatewayUpdate).mock.calls[0]?.[0];
     expect(call?.channel).toBe(channel);
@@ -795,9 +809,7 @@ describe("update-cli", () => {
 
   const mockOwnedGitService = () => {
     const serviceEntrypoint = path.join(process.cwd(), "dist", "index.js");
-    serviceReadCommand.mockResolvedValue({
-      programArguments: ["node", serviceEntrypoint, "gateway", "run"],
-    });
+    primeServiceCommand(["node", serviceEntrypoint, "gateway", "run"]);
     pathExists.mockImplementation(
       async (candidate: string) => candidate === path.join(process.cwd(), "package.json"),
     );
@@ -836,10 +848,7 @@ describe("update-cli", () => {
     readPackageVersion.mockResolvedValue("2.0.0");
 
     mockPackageInstallStatus(tempDir);
-    vi.mocked(resolveNpmChannelTag).mockResolvedValue({
-      tag: "latest",
-      version: "0.0.1",
-    });
+    primeNpmChannelTag("latest", "0.0.1");
     vi.mocked(runGatewayUpdate).mockResolvedValue({
       status: "ok",
       mode: "npm",
@@ -890,9 +899,7 @@ describe("update-cli", () => {
       });
     }
     serviceLoaded.mockResolvedValue(true);
-    serviceReadCommand.mockResolvedValue({
-      programArguments: ["node", entrypoints[0], "gateway", "run"],
-    });
+    primeServiceCommand(["node", entrypoints[0], "gateway", "run"]);
     return { root, entrypoints };
   };
 
@@ -1235,10 +1242,7 @@ describe("update-cli", () => {
       version: "2026.6.33",
       packageSpec: "openclaw@2026.6.33",
     });
-    vi.mocked(resolveNpmChannelTag).mockResolvedValue({
-      tag: "latest",
-      version: "9999.0.0",
-    });
+    primeNpmChannelTag("latest", "9999.0.0");
     nodeVersionSatisfiesEngine.mockReturnValue(true);
     vi.mocked(checkUpdateStatus).mockResolvedValue({
       root: "/test/path",
@@ -1789,10 +1793,7 @@ describe("update-cli", () => {
         }),
     });
     readPackageVersion.mockResolvedValue("2026.4.14");
-    vi.mocked(resolveNpmChannelTag).mockResolvedValue({
-      tag: "latest",
-      version: "2026.4.10",
-    });
+    primeNpmChannelTag("latest", "2026.4.10");
     mockCurrentProcessFreshDoctor();
     mockGatewayProbe("2026.4.10", "downgraded-gateway");
 
@@ -1818,7 +1819,7 @@ describe("update-cli", () => {
         }),
     });
     readPackageVersion.mockResolvedValue("2026.4.14");
-    vi.mocked(resolveNpmChannelTag).mockResolvedValue({ tag: "latest", version: "2026.4.10" });
+    primeNpmChannelTag("latest", "2026.4.10");
     mockCurrentProcessFreshDoctor();
 
     await updateCommand({ yes: true, tag: "2026.4.10", restart: false });
@@ -1846,7 +1847,7 @@ describe("update-cli", () => {
     readPackageVersion.mockImplementation(async (pkgRoot: string) =>
       pkgRoot === downgradedRoot ? "2026.4.10" : "2026.4.14",
     );
-    vi.mocked(resolveNpmChannelTag).mockResolvedValue({ tag: "latest", version: "2026.4.10" });
+    primeNpmChannelTag("latest", "2026.4.10");
 
     delete process.env.OPENCLAW_COMPATIBILITY_HOST_VERSION;
     let hostVersionDuringPluginUpdate: string | undefined = "unset";
@@ -3062,9 +3063,8 @@ describe("update-cli", () => {
   it("refuses a package target that changes after the service stops", async () => {
     mockPackageInstallStatus(process.cwd());
     mockOwnedGitService();
-    serviceReadCommand.mockResolvedValue({
-      programArguments: ["node", path.join(process.cwd(), "dist", "index.js"), "gateway", "run"],
-      environment: { OPENCLAW_STATE_DIR: "/managed/state" },
+    primeServiceCommand(["node", path.join(process.cwd(), "dist", "index.js"), "gateway", "run"], {
+      OPENCLAW_STATE_DIR: "/managed/state",
     });
     serviceLoaded.mockResolvedValue(true);
     vi.mocked(fetchNpmPackageTargetStatus).mockResolvedValue({
@@ -3302,10 +3302,7 @@ describe("update-cli", () => {
       ...baseSnapshot,
       config: { update: { channel: "beta" } } as OpenClawConfig,
     });
-    vi.mocked(resolveNpmChannelTag).mockResolvedValue({
-      tag: "latest",
-      version: "1.2.3-1",
-    });
+    primeNpmChannelTag("latest", "1.2.3-1");
     await updateCommand({});
 
     expectPackageInstallSpec("openclaw@1.2.3-1");
@@ -3485,10 +3482,7 @@ describe("update-cli", () => {
     const tempDir = createCaseDir("openclaw-update");
     mockPackageInstallStatus(tempDir);
     readPackageVersion.mockResolvedValue("2026.4.22");
-    vi.mocked(resolveNpmChannelTag).mockResolvedValue({
-      tag: "latest",
-      version: "2026.4.22",
-    });
+    primeNpmChannelTag("latest", "2026.4.22");
 
     await updateCommand({ yes: true });
 
@@ -3508,10 +3502,7 @@ describe("update-cli", () => {
     setTty(false);
     mockPackageInstallStatus(tempDir);
     readPackageVersion.mockResolvedValue("2026.4.22");
-    vi.mocked(resolveNpmChannelTag).mockResolvedValue({
-      tag: "latest",
-      version: null,
-    });
+    primeNpmChannelTag("latest", null);
     mockCurrentProcessFreshDoctor();
 
     await updateCommand({});
@@ -3590,12 +3581,9 @@ describe("update-cli", () => {
 
   it("refuses package updates from inherited gateway service env when --no-restart leaves the gateway running", async () => {
     mockPackageInstallStatus(createCaseDir("openclaw-update"));
-    serviceReadCommand.mockResolvedValue({
-      programArguments: ["openclaw", "gateway", "run"],
-      environment: {
-        OPENCLAW_SERVICE_MARKER: "openclaw",
-        OPENCLAW_SERVICE_KIND: "gateway",
-      },
+    primeServiceCommand(["openclaw", "gateway", "run"], {
+      OPENCLAW_SERVICE_MARKER: "openclaw",
+      OPENCLAW_SERVICE_KIND: "gateway",
     });
     serviceLoaded.mockResolvedValue(true);
 
@@ -3627,12 +3615,9 @@ describe("update-cli", () => {
     "refuses package updates from inherited gateway service env when $name",
     async ({ setupRuntime }) => {
       mockPackageInstallStatus(createCaseDir("openclaw-update"));
-      serviceReadCommand.mockResolvedValue({
-        programArguments: ["openclaw", "gateway", "run"],
-        environment: {
-          OPENCLAW_SERVICE_MARKER: "openclaw",
-          OPENCLAW_SERVICE_KIND: "gateway",
-        },
+      primeServiceCommand(["openclaw", "gateway", "run"], {
+        OPENCLAW_SERVICE_MARKER: "openclaw",
+        OPENCLAW_SERVICE_KIND: "gateway",
       });
       setupRuntime();
 
@@ -3715,10 +3700,7 @@ describe("update-cli", () => {
 
   it("blocks package updates when the target requires a newer Node runtime", async () => {
     mockPackageInstallStatus(createCaseDir("openclaw-update"));
-    vi.mocked(resolveNpmChannelTag).mockResolvedValue({
-      tag: "latest",
-      version: "2026.3.23-2",
-    });
+    primeNpmChannelTag("latest", "2026.3.23-2");
     vi.mocked(fetchNpmPackageTargetStatus).mockResolvedValue({
       target: "latest",
       version: "2026.3.23-2",
@@ -3859,10 +3841,7 @@ describe("update-cli", () => {
     const nodeModules = path.join(prefix, "lib", "node_modules");
     const { pkgRoot } = await setupInstalledPackageAtNodeModules(nodeModules, "2026.4.20");
     readPackageVersion.mockResolvedValue("2026.4.20");
-    vi.mocked(resolveNpmChannelTag).mockResolvedValue({
-      tag: "latest",
-      version: "2026.4.25",
-    });
+    primeNpmChannelTag("latest", "2026.4.25");
     vi.mocked(runCommandWithTimeout).mockImplementation(async (argv) => {
       if (Array.isArray(argv) && argv[0] === "npm" && argv[1] === "root" && argv[2] === "-g") {
         return commandResult({ stdout: `${nodeModules}\n` });
@@ -3911,18 +3890,13 @@ describe("update-cli", () => {
   it("runs old package doctors without fix mode when service ownership is unknown", async () => {
     const tempDir = await createTrackedTempDir("openclaw-update-package-");
     const { nodeModules, pkgRoot, entryPath } = await setupInstalledPackageRoot(tempDir);
-    serviceReadCommand.mockResolvedValue({
-      programArguments: ["openclaw-wrapper", "gateway", "run"],
-    });
+    primeServiceCommand(["openclaw-wrapper", "gateway", "run"]);
     serviceLoaded.mockResolvedValue(true);
     serviceReadRuntime.mockResolvedValue({ status: "stopped", state: "stopped" });
     readPackageVersion.mockImplementation(async (packageRoot: string) =>
       packageRoot === pkgRoot ? "2026.4.21" : "1.0.0",
     );
-    vi.mocked(resolveNpmChannelTag).mockResolvedValue({
-      tag: "latest",
-      version: "2026.4.21",
-    });
+    primeNpmChannelTag("latest", "2026.4.21");
     mockFileBackedPathExists();
     mockNpmGlobalRoot(nodeModules);
 
@@ -3960,10 +3934,7 @@ describe("update-cli", () => {
   it("continues package post-core work for explicit post-update doctor advisories", async () => {
     const tempDir = await createTrackedTempDir("openclaw-update-package-doctor-warning-");
     const { nodeModules, entryPath } = await setupInstalledPackageRoot(tempDir);
-    vi.mocked(resolveNpmChannelTag).mockResolvedValue({
-      tag: "latest",
-      version: "2026.4.21",
-    });
+    primeNpmChannelTag("latest", "2026.4.21");
     mockFileBackedPathExists();
     vi.mocked(runCommandWithTimeout).mockImplementation(async (argv, options) => {
       if (Array.isArray(argv) && argv[0] === "npm" && argv[1] === "root" && argv[2] === "-g") {
@@ -4029,10 +4000,7 @@ describe("update-cli", () => {
   it("fails package updates when the post-update doctor is killed after verification", async () => {
     const tempDir = await createTrackedTempDir("openclaw-update-package-doctor-timeout-");
     const { nodeModules, entryPath } = await setupInstalledPackageRoot(tempDir);
-    vi.mocked(resolveNpmChannelTag).mockResolvedValue({
-      tag: "latest",
-      version: "2026.4.21",
-    });
+    primeNpmChannelTag("latest", "2026.4.21");
     mockFileBackedPathExists();
     vi.mocked(runCommandWithTimeout).mockImplementation(async (argv) => {
       if (Array.isArray(argv) && argv[0] === "npm" && argv[1] === "root" && argv[2] === "-g") {
@@ -4072,10 +4040,7 @@ describe("update-cli", () => {
     const { nodeModules, pkgRoot, entryPath } = await setupInstalledPackageAtNodeModules(
       path.join(tempDir, "lib", "node_modules"),
     );
-    vi.mocked(resolveNpmChannelTag).mockResolvedValue({
-      tag: "latest",
-      version: "2026.5.14",
-    });
+    primeNpmChannelTag("latest", "2026.5.14");
     mockFileBackedPathExists();
     vi.mocked(runCommandWithTimeout).mockImplementation(async (argv) => {
       if (!Array.isArray(argv)) {
@@ -4227,12 +4192,9 @@ describe("update-cli", () => {
   it("preserves both the update and Scheduled Task recovery failures", async () => {
     const platformSpy = vi.spyOn(process, "platform", "get").mockReturnValue("win32");
     mockPackageInstallStatus(createCaseDir("openclaw-update-recovery-failure"));
-    serviceReadCommand.mockResolvedValue({
-      programArguments: ["openclaw", "gateway", "run"],
-      environment: {
-        OPENCLAW_SERVICE_MARKER: "openclaw",
-        OPENCLAW_SERVICE_KIND: "gateway",
-      },
+    primeServiceCommand(["openclaw", "gateway", "run"], {
+      OPENCLAW_SERVICE_MARKER: "openclaw",
+      OPENCLAW_SERVICE_KIND: "gateway",
     });
     serviceReadRuntime.mockResolvedValue({ status: "stopped", state: "stopped" });
     suspendScheduledTaskAutoStartForUpdate.mockResolvedValue(true);
@@ -4275,12 +4237,9 @@ describe("update-cli", () => {
       );
       resumeScheduledTaskAutoStartAfterUpdate.mockResolvedValue(true);
       mockPackageInstallStatus(createCaseDir("openclaw-update-suspension-signal"));
-      serviceReadCommand.mockResolvedValue({
-        programArguments: ["openclaw", "gateway", "run"],
-        environment: {
-          OPENCLAW_SERVICE_MARKER: "openclaw",
-          OPENCLAW_SERVICE_KIND: "gateway",
-        },
+      primeServiceCommand(["openclaw", "gateway", "run"], {
+        OPENCLAW_SERVICE_MARKER: "openclaw",
+        OPENCLAW_SERVICE_KIND: "gateway",
       });
       serviceReadRuntime.mockResolvedValue({ status: "stopped", state: "stopped" });
 
@@ -4315,12 +4274,9 @@ describe("update-cli", () => {
     async (runtimeStatus) => {
       const platformSpy = vi.spyOn(process, "platform", "get").mockReturnValue("win32");
       mockPackageInstallStatus(createCaseDir("openclaw-update-stopped-task"));
-      serviceReadCommand.mockResolvedValue({
-        programArguments: ["openclaw", "gateway", "run"],
-        environment: {
-          OPENCLAW_SERVICE_MARKER: "openclaw",
-          OPENCLAW_SERVICE_KIND: "gateway",
-        },
+      primeServiceCommand(["openclaw", "gateway", "run"], {
+        OPENCLAW_SERVICE_MARKER: "openclaw",
+        OPENCLAW_SERVICE_KIND: "gateway",
       });
       serviceReadRuntime.mockResolvedValue(
         runtimeStatus === "running"
@@ -4406,12 +4362,9 @@ describe("update-cli", () => {
 
   it("fails managed git restart when the gateway responds but the service stays stopped", async () => {
     const serviceEntrypoint = path.join(process.cwd(), "dist", "index.js");
-    serviceReadCommand.mockResolvedValue({
-      programArguments: ["node", serviceEntrypoint, "gateway", "run"],
-      environment: {
-        OPENCLAW_SERVICE_MARKER: "openclaw",
-        OPENCLAW_SERVICE_KIND: "gateway",
-      },
+    primeServiceCommand(["node", serviceEntrypoint, "gateway", "run"], {
+      OPENCLAW_SERVICE_MARKER: "openclaw",
+      OPENCLAW_SERVICE_KIND: "gateway",
     });
     serviceLoaded.mockResolvedValue(false);
     serviceLoaded.mockResolvedValueOnce(true);
@@ -4455,12 +4408,9 @@ describe("update-cli", () => {
 
   it("fails managed git restart when the stopped service cannot be restarted", async () => {
     const serviceEntrypoint = path.join(process.cwd(), "dist", "index.js");
-    serviceReadCommand.mockResolvedValue({
-      programArguments: ["node", serviceEntrypoint, "gateway", "run"],
-      environment: {
-        OPENCLAW_SERVICE_MARKER: "openclaw",
-        OPENCLAW_SERVICE_KIND: "gateway",
-      },
+    primeServiceCommand(["node", serviceEntrypoint, "gateway", "run"], {
+      OPENCLAW_SERVICE_MARKER: "openclaw",
+      OPENCLAW_SERVICE_KIND: "gateway",
     });
     serviceLoaded.mockResolvedValue(false);
     serviceLoaded.mockResolvedValueOnce(true);
@@ -4670,10 +4620,7 @@ describe("update-cli", () => {
       "2026.4.23",
     );
     readPackageVersion.mockResolvedValue("2026.4.23");
-    vi.mocked(resolveNpmChannelTag).mockResolvedValue({
-      tag: "latest",
-      version: "2026.4.23",
-    });
+    primeNpmChannelTag("latest", "2026.4.23");
     for (const relativePath of TEST_BUNDLED_RUNTIME_SIDECAR_PATHS) {
       const absolutePath = path.join(pkgRoot, relativePath);
       await fs.mkdir(path.dirname(absolutePath), { recursive: true });
@@ -4959,9 +4906,7 @@ describe("update-cli", () => {
       "utf-8",
     );
     mockPackageInstallStatus(shellRoot);
-    serviceReadCommand.mockResolvedValue({
-      programArguments: [serviceNode, path.join(serviceRoot, "dist", "index.js"), "gateway"],
-    });
+    primeServiceCommand([serviceNode, path.join(serviceRoot, "dist", "index.js"), "gateway"]);
 
     await updateCommand({ dryRun: true });
 
@@ -4987,10 +4932,8 @@ describe("update-cli", () => {
       "utf-8",
     );
     mockPackageInstallStatus(shellRoot);
-    serviceReadCommand.mockResolvedValue({
-      programArguments: [serviceNode, path.join(serviceRoot, "dist", "index.js"), "gateway"],
-    });
-    vi.mocked(resolveNpmChannelTag).mockResolvedValue({ tag: "latest", version: "2026.5.20" });
+    primeServiceCommand([serviceNode, path.join(serviceRoot, "dist", "index.js"), "gateway"]);
+    primeNpmChannelTag("latest", "2026.5.20");
     vi.mocked(fetchNpmPackageTargetStatus).mockResolvedValue({
       target: "latest",
       version: "2026.5.20",
@@ -5035,14 +4978,9 @@ describe("update-cli", () => {
     await fs.writeFile(entrypoint, "", "utf-8");
     await writePackageDistInventory(serviceRoot);
     mockPackageInstallStatus(shellRoot);
-    serviceReadCommand.mockResolvedValue({
-      programArguments: [serviceNode, entrypoint, "gateway"],
-    });
+    primeServiceCommand([serviceNode, entrypoint, "gateway"]);
     serviceLoaded.mockResolvedValue(true);
-    vi.mocked(resolveNpmChannelTag).mockResolvedValue({
-      tag: "latest",
-      version: "2026.5.20",
-    });
+    primeNpmChannelTag("latest", "2026.5.20");
     mockFileBackedPathExists();
     vi.mocked(runCommandWithTimeout).mockImplementation(async (argv) => {
       if (Array.isArray(argv) && argv[0] === serviceNode && argv[1] === "--version") {
@@ -5096,9 +5034,7 @@ describe("update-cli", () => {
     const serviceNode = "/opt/other-node/bin/node";
     const entrypoint = path.join(root, "dist", "index.js");
     mockPackageInstallStatus(root);
-    serviceReadCommand.mockResolvedValue({
-      programArguments: [serviceNode, entrypoint, "gateway"],
-    });
+    primeServiceCommand([serviceNode, entrypoint, "gateway"]);
 
     await updateCommand({ dryRun: true });
 
@@ -5134,11 +5070,9 @@ describe("update-cli", () => {
     await writePackageDistInventory(root);
     // Same package root for both shell and service.
     mockPackageInstallStatus(root);
-    serviceReadCommand.mockResolvedValue({
-      programArguments: [serviceNode, entrypoint, "gateway"],
-    });
+    primeServiceCommand([serviceNode, entrypoint, "gateway"]);
     serviceLoaded.mockResolvedValue(true);
-    vi.mocked(resolveNpmChannelTag).mockResolvedValue({ tag: "latest", version: "2026.7.1" });
+    primeNpmChannelTag("latest", "2026.7.1");
     vi.mocked(fetchNpmPackageTargetStatus).mockResolvedValue({
       target: "latest",
       version: "2026.7.1",
@@ -5214,14 +5148,9 @@ describe("update-cli", () => {
     await fs.writeFile(entrypoint, "", "utf-8");
     await writePackageDistInventory(root);
     mockPackageInstallStatus(root);
-    serviceReadCommand.mockResolvedValue({
-      programArguments: [serviceNode, entrypoint, "gateway"],
-    });
+    primeServiceCommand([serviceNode, entrypoint, "gateway"]);
     serviceLoaded.mockResolvedValue(true);
-    vi.mocked(resolveNpmChannelTag).mockResolvedValue({
-      tag: "latest",
-      version: "2026.5.20",
-    });
+    primeNpmChannelTag("latest", "2026.5.20");
     mockFileBackedPathExists();
     // The PATH npm returns a DIFFERENT global root (simulates Node-B's npm).
     const nodeBGlobalRoot = path.join(
@@ -6254,9 +6183,7 @@ describe("update-cli", () => {
   it("tries the updated install restart when package service refresh fails", async () => {
     const { updatedRoot, updatedEntrypoint } = setupNpmUpdatedRootRefresh();
     serviceLoaded.mockResolvedValue(true);
-    serviceReadCommand.mockResolvedValue({
-      programArguments: ["node", updatedEntrypoint, "gateway", "run"],
-    });
+    primeServiceCommand(["node", updatedEntrypoint, "gateway", "run"]);
     mockGatewayInstallFailure(updatedEntrypoint);
     mockGatewayProbe("2026.4.24", "updated-gateway");
 
@@ -6296,9 +6223,7 @@ describe("update-cli", () => {
         candidate === updatedEntrypoint || candidate === updatedPackageJson,
     );
     serviceLoaded.mockResolvedValue(true);
-    serviceReadCommand.mockResolvedValue({
-      programArguments: ["node", updatedEntrypoint, "gateway", "run"],
-    });
+    primeServiceCommand(["node", updatedEntrypoint, "gateway", "run"]);
     mockGatewayInstallFailure(updatedEntrypoint);
     mockGatewayProbe("2026.4.24", "matching-old-gateway");
 
@@ -6347,9 +6272,7 @@ describe("update-cli", () => {
       [oldEntrypoint, updatedEntrypoint, oldPackageJson, updatedPackageJson].includes(candidate),
     );
     serviceLoaded.mockResolvedValue(true);
-    serviceReadCommand.mockResolvedValue({
-      programArguments: ["node", oldEntrypoint, "gateway", "run"],
-    });
+    primeServiceCommand(["node", oldEntrypoint, "gateway", "run"]);
     mockGatewayInstallFailure(updatedEntrypoint);
     mockGatewayProbe("2026.4.24", "matching-old-service");
 

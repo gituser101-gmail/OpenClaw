@@ -1,4 +1,6 @@
 import type { RetryConfig } from "openclaw/plugin-sdk/retry-runtime";
+import { logVerbose } from "openclaw/plugin-sdk/runtime-env";
+import { recordTelegramPollRegistryEntry } from "./poll-registry.js";
 import {
   resolveTelegramApiContext,
   withTelegramApiContextLease,
@@ -155,14 +157,36 @@ async function sendPollTelegramWithContext(
       api.sendPoll(prepared.chatId, normalizedPoll.question, normalizedPoll.options, pollParams),
     "poll",
   );
+  const finalized = await finalizeTelegramOutbound({
+    context,
+    prepared,
+    result,
+    resultContext: "poll send",
+  });
   const pollId = result?.poll?.id;
+  // Public poll answers omit chat/thread routing metadata. Record the origin at
+  // the central send boundary so every caller gets the same inbound route.
+  // This is best-effort because the poll already exists and retrying could duplicate it.
+  if (pollId && opts.isAnonymous === false) {
+    try {
+      await recordTelegramPollRegistryEntry({
+        accountId: context.account.accountId,
+        pollId,
+        chatId: finalized.chatId,
+        messageThreadId: prepared.threadParams.message_thread_id,
+        question: normalizedPoll.question,
+        options: normalizedPoll.options,
+      });
+    } catch (err) {
+      logVerbose(
+        `telegram: failed to record poll registry entry for poll ${pollId}: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
+  }
   return {
-    ...(await finalizeTelegramOutbound({
-      context,
-      prepared,
-      result,
-      resultContext: "poll send",
-    })),
+    ...finalized,
     pollId,
   };
 }

@@ -759,6 +759,54 @@ describe("wrapStreamFnTrimToolCallNames", () => {
     expect(finalToolCall.name).toBe("exec");
   });
 
+  it("strips provider-leaked XML fragments from allowed tool names", async () => {
+    const partialToolCall = {
+      type: "toolCall",
+      name: 'read" parameter="path" string="true',
+    };
+    const messageToolCall = {
+      type: "toolCall",
+      name: "exec' parameter='command' string='true",
+    };
+    const finalToolCall = {
+      type: "toolCall",
+      name: "write<parameter=path",
+    };
+    const unknownToolCall = {
+      type: "toolCall",
+      name: 'unknown" parameter="value" string="true',
+    };
+    const event = {
+      type: "toolcall_delta",
+      partial: { role: "assistant", content: [partialToolCall] },
+      message: { role: "assistant", content: [messageToolCall] },
+    };
+    const finalMessage = {
+      role: "assistant",
+      content: [finalToolCall, unknownToolCall],
+    };
+    const baseFn = vi.fn(() =>
+      createFakeStream({
+        events: [event],
+        resultMessage: finalMessage,
+      }),
+    );
+
+    const stream = await invokeWrappedStream(baseFn, new Set(["read", "write", "exec"]));
+
+    for await (const item of stream) {
+      void item;
+      // drain
+    }
+    const result = await stream.result();
+
+    expect(partialToolCall.name).toBe("read");
+    expect(messageToolCall.name).toBe("exec");
+    expect(finalToolCall.name).toBe("write");
+    expect(unknownToolCall.name).toBe('unknown" parameter="value" string="true');
+    expect(result).toBe(finalMessage);
+  });
+
   it("normalizes toolUse and functionCall names before dispatch", async () => {
     const partialToolCall = { type: "toolUse", name: " functions.read " };
     const messageToolCall = { type: "functionCall", name: " functions.exec " };

@@ -452,22 +452,23 @@ final class OpenClawSnapshotUITests: XCTestCase {
             initialDestination: "chat",
             name: "chat-composer-growth"))
 
-        let textField = try XCTUnwrap(app?.textFields["chat-message-input"])
+        let app = try XCTUnwrap(self.app)
+        let textField = self.chatMessageInput(in: app)
         XCTAssertTrue(textField.waitForExistence(timeout: 8))
-        let talkButton = try XCTUnwrap(app?.buttons["chat-realtime-control"])
+        let talkButton = app.buttons["chat-realtime-control"]
         XCTAssertTrue(talkButton.waitForExistence(timeout: 5))
-        let attachmentButton = try XCTUnwrap(app?.buttons["chat-attachment-picker"])
+        let attachmentButton = app.buttons["chat-attachment-picker"]
         XCTAssertTrue(attachmentButton.waitForExistence(timeout: 5))
-        let dictationButton = try XCTUnwrap(app?.buttons["chat-dictation-control"])
+        let dictationButton = app.buttons["chat-dictation-control"]
         XCTAssertTrue(dictationButton.waitForExistence(timeout: 5))
-        let composerSurface = try XCTUnwrap(app?.otherElements["chat-composer-surface"])
+        let composerSurface = app.otherElements["chat-composer-surface"]
         XCTAssertTrue(composerSurface.waitForExistence(timeout: 5))
-        let agentIdentity = try XCTUnwrap(app?.otherElements["chat-agent-identity"])
+        let agentIdentity = app.otherElements["chat-agent-identity"]
         XCTAssertTrue(agentIdentity.waitForExistence(timeout: 5))
         XCTAssertEqual(agentIdentity.value as? String, "Collapsed")
         agentIdentity.tap()
         self.waitForValue("Expanded", of: agentIdentity)
-        let sendButton = try XCTUnwrap(app?.buttons["chat-send-message"])
+        let sendButton = app.buttons["chat-send-message"]
         XCTAssertFalse(sendButton.exists)
         XCTAssertLessThanOrEqual(agentIdentity.frame.maxY, composerSurface.frame.minY)
         XCTAssertGreaterThanOrEqual(attachmentButton.frame.minX, composerSurface.frame.minX)
@@ -506,6 +507,24 @@ final class OpenClawSnapshotUITests: XCTestCase {
         XCTAssertTrue(self.app?.keyboards.firstMatch.waitForNonExistence(timeout: 3) == true)
     }
 
+    func testChatComposerReturnInsertsNewlineWithoutSending() throws {
+        self.launchApp(for: ScreenshotTarget(
+            initialTab: "chat",
+            initialDestination: "chat",
+            name: "chat-composer-return"))
+
+        let app = try XCTUnwrap(self.app)
+        let input = self.chatMessageInput(in: app)
+        XCTAssertTrue(input.waitForExistence(timeout: 8))
+        input.tap()
+        input.typeText("first line\nsecond line")
+
+        XCTAssertEqual(input.value as? String, "first line\nsecond line")
+        XCTAssertTrue(app.buttons["chat-send-message"].waitForExistence(timeout: 3))
+        XCTAssertFalse(app.staticTexts["first line\nsecond line"].exists)
+        self.attachScreenshot(named: "chat-composer-return")
+    }
+
     func testVoiceNoteDraftKeepsStopAvailableDuringActiveResponse() throws {
         try XCTSkipIf(UIDevice.current.userInterfaceIdiom != .phone, "Phone voice-note composer proof only")
         self.launchApp(
@@ -516,7 +535,7 @@ final class OpenClawSnapshotUITests: XCTestCase {
             additionalArguments: ["--openclaw-hold-initial-chat-run"])
 
         let app = try XCTUnwrap(self.app)
-        let input = app.textFields["chat-message-input"]
+        let input = self.chatMessageInput(in: app)
         XCTAssertTrue(input.waitForExistence(timeout: 8))
         input.tap()
         input.typeText("Keep this response running while I record a voice note.")
@@ -569,7 +588,7 @@ final class OpenClawSnapshotUITests: XCTestCase {
             name: "keyboard-follow"))
         let app = try XCTUnwrap(self.app)
 
-        let input = app.textFields["chat-message-input"]
+        let input = self.chatMessageInput(in: app)
         XCTAssertTrue(input.waitForExistence(timeout: 8))
         input.tap()
         input.typeText(
@@ -1314,7 +1333,7 @@ extension OpenClawSnapshotUITests {
         expecting replyMarker: String,
         in app: XCUIApplication)
     {
-        let input = app.textFields["chat-message-input"]
+        let input = self.chatMessageInput(in: app)
         XCTAssertTrue(input.waitForExistence(timeout: 8))
         input.tap()
         input.typeText(text)
@@ -1460,7 +1479,7 @@ extension OpenClawSnapshotUITests {
             XCTFail("Fixture app is unavailable")
             return
         }
-        let input = app.textFields["chat-message-input"]
+        let input = self.chatMessageInput(in: app)
         XCTAssertTrue(input.waitForExistence(timeout: 8))
         input.tap()
         input.typeText(text)
@@ -1483,6 +1502,10 @@ extension OpenClawSnapshotUITests {
         attachment.name = name
         attachment.lifetime = .keepAlways
         add(attachment)
+    }
+
+    private func chatMessageInput(in app: XCUIApplication) -> XCUIElement {
+        app.descendants(matching: .any)["chat-message-input"]
     }
 
     private func attachFullScreenScreenshot(named name: String) {

@@ -97,7 +97,7 @@ export interface AuthRateLimiter {
 // Defaults
 // ---------------------------------------------------------------------------
 
-const DEFAULT_MAX_ATTEMPTS = 10;
+export const DEFAULT_MAX_ATTEMPTS = 10;
 const DEFAULT_WINDOW_MS = 60_000; // 1 minute
 const DEFAULT_LOCKOUT_MS = 300_000; // 5 minutes
 const PRUNE_INTERVAL_MS = 60_000; // prune stale entries every minute
@@ -138,7 +138,7 @@ function resolvePruneIntervalMs(value: number | undefined): number {
 }
 
 export function createAuthRateLimiter(config?: RateLimitConfig): AuthRateLimiter {
-  const maxAttempts = config?.maxAttempts ?? DEFAULT_MAX_ATTEMPTS;
+  const maxAttempts = resolveIntegerOption(config?.maxAttempts, DEFAULT_MAX_ATTEMPTS, { min: 1 });
   const windowMs = resolveTimerTimeoutMs(config?.windowMs, DEFAULT_WINDOW_MS, 0);
   const lockoutMs = resolveTimerTimeoutMs(config?.lockoutMs, DEFAULT_LOCKOUT_MS, 0);
   const exemptLoopback = config?.exemptLoopback ?? true;

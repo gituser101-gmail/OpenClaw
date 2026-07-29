@@ -71,6 +71,21 @@ describe("resolveClickClackGroupPolicy", () => {
     expect(result).toEqual({ requireMention: true, mentionPatterns: ["@channel"] });
   });
 
+  it("inherits unspecified exact fields from the wildcard policy", () => {
+    const result = resolveClickClackGroupPolicy({
+      account: {
+        requireMention: false,
+        mentionPatterns: ["@account"],
+        groups: {
+          "*": { requireMention: true, mentionPatterns: ["@wildcard"] },
+          chn_exact: { mentionPatterns: ["@channel"] },
+        },
+      },
+      channelId: "chn_exact",
+    });
+    expect(result).toEqual({ requireMention: true, mentionPatterns: ["@channel"] });
+  });
+
   it("picks mentionPatterns from wildcard rule", () => {
     const result = resolveClickClackGroupPolicy({
       account: {

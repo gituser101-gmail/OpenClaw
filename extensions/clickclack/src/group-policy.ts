@@ -38,12 +38,13 @@ export function resolveClickClackGroupPolicy(params: {
   const exact = channelKey
     ? Object.entries(account.groups ?? {}).find(([key]) => key.trim() === channelKey)?.[1]
     : undefined;
-  const override = exact ?? wildcard;
-
-  // Channel rules are partial overrides. This lets a channel replace only its
-  // mention patterns while inheriting the account-level gate, or vice versa.
+  // Channel rules are partial overrides. Resolve each field independently so
+  // an exact channel rule can inherit unspecified fields from the wildcard
+  // rule before falling back to the account-level policy.
   return {
-    requireMention: override?.requireMention ?? accountPolicy.requireMention,
-    mentionPatterns: override?.mentionPatterns ?? accountPolicy.mentionPatterns,
+    requireMention:
+      exact?.requireMention ?? wildcard?.requireMention ?? accountPolicy.requireMention,
+    mentionPatterns:
+      exact?.mentionPatterns ?? wildcard?.mentionPatterns ?? accountPolicy.mentionPatterns,
   };
 }

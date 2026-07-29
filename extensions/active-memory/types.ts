@@ -120,6 +120,31 @@ const TIMEOUT_BOILERPLATE_PATTERNS = [
   /^(?:error:\s*)?active-memory timeout after \d+ms\b/i,
 ];
 
+const CHITCHAT_PATTERNS = [
+  // Chinese greetings and help offers
+  /^您?好[！?]?[\s,，]*(?:请问|有什么|如果|请随时)/u,
+  /^您好！/u,
+  /^你好！/u,
+  /^嗨[！?]/u,
+  // Chinese "your message was cut off" variants
+  /(?:看起来|似乎).{0,6}(?:消息|信息).{0,6}(?:没有|未|被截|不完整)/u,
+  /(?:请|能否).{0,4}(?:提供|补充|再说).{0,4}(?:更多|详细|具体)/u,
+  // Chinese time/date announcements followed by help offers
+  /^(?:当前|今天的?).{0,6}(?:日期|时间|时间是).{0,30}(?:帮助|请|如果)/u,
+  // English greetings with help offers
+  /^(?:hello|hi|hey|greetings)[!.,]?\s+(?:how|what|can|i|let|is)/i,
+  /^(?:hello|hi|hey|greetings)[!.,]?\s*$/i,
+  // English "your message got cut off" variants
+  /(?:it\s+)?(?:seems?\s+)?(?:like\s+)?(?:your\s+)?(?:message|text|input|query).{0,10}(?:cut\s+off|incomplete|didn'?t\s+come|missing)/i,
+  /(?:could|can|would|please).{0,10}(?:you\s+)?(?:provide|share|give|clarify|elaborate|repeat).{0,10}(?:more|details|information|context)/i,
+  // Generic help offers without factual content
+  /^(?:please\s+)?(?:let\s+me\s+know|tell\s+me|feel\s+free|i'?m\s+here).{0,30}(?:help|assist|support|question|need)/i,
+  // "I can help" / "here to help" boilerplate
+  /^(?:i(?:'?m|\s+am)?\s+)?(?:here\s+to\s+|ready\s+to\s+|happy\s+to\s+|glad\s+to\s+)?help/i,
+  // Restating visible model metadata as assistant output
+  /(?:当前模型|current model).{0,80}(?:帮助|请|如果|help|please)/iu,
+];
+
 const RECALLED_CONTEXT_LINE_PATTERNS = [
   /^🧩\s*active memory:/i,
   /^🔎\s*active memory debug:/i,
@@ -355,6 +380,7 @@ export {
   ACTIVE_MEMORY_STATUS_PREFIX,
   ACTIVE_MEMORY_CONTEXT_HEADER,
   CACHE_SWEEP_INTERVAL_MS,
+  CHITCHAT_PATTERNS,
   DEFAULT_ACTIVE_MEMORY_TOOLS_ALLOW,
   DEFAULT_ACTIVE_MEMORY_MODE,
   DEFAULT_AGENT_ID,

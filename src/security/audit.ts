@@ -33,6 +33,7 @@ import {
   resolveMergedSafeBinProfileFixtures,
 } from "../infra/exec-safe-bin-runtime-policy.js";
 import { listRiskyConfiguredSafeBins } from "../infra/exec-safe-bin-semantics.js";
+import type { PluginRegistry } from "../plugins/registry.js";
 import { createLazyRuntimeModule } from "../shared/lazy-runtime.js";
 import { readControlUiDeviceAuthMigrationState } from "../state/control-ui-device-auth-migration.js";
 import { resolveUserPath } from "../utils.js";
@@ -80,6 +81,7 @@ type AgentSkillMcpBoundaryScope = {
 type AgentSkillMcpBoundaryCandidate =
   | { kind: "defaults"; id: "agents.defaults"; skillSource: string }
   | { kind: "agent"; id: string; skillSource: string; agentId: string };
+type PluginSecurityAuditCollectorRegistration = PluginRegistry["securityAuditCollectors"][number];
 
 export type { SecurityAuditReport } from "./audit.types.js";
 
@@ -508,8 +510,27 @@ async function collectPluginSecurityAuditFindings(
   if (!context.loadPluginSecurityCollectors) {
     return [];
   }
-  const { getActivePluginRegistry } = await loadPluginRuntimeModule();
-  let collectors = getActivePluginRegistry()?.securityAuditCollectors ?? [];
+  const { collectLivePluginRegistries } = await loadPluginRuntimeModule();
+  let collectors: PluginSecurityAuditCollectorRegistration[] = [];
+  const seenCollectorOwner = new Map<string, PluginRegistry>();
+  for (const registry of collectLivePluginRegistries()) {
+    for (const entry of registry.securityAuditCollectors) {
+      const pluginId = entry.pluginId.trim();
+      const source = entry.source.trim();
+      if (!pluginId || !source) {
+        continue;
+      }
+      const dedupeKey = `${pluginId}\0${source}`;
+      const owner = seenCollectorOwner.get(dedupeKey);
+      if (owner && owner !== registry) {
+        continue;
+      }
+      if (!owner) {
+        seenCollectorOwner.set(dedupeKey, registry);
+      }
+      collectors.push(entry);
+    }
+  }
   if (collectors.length === 0) {
     const { applyPluginAutoEnable } = await loadPluginAutoEnableModule();
     const autoEnabled = applyPluginAutoEnable({

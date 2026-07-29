@@ -216,18 +216,25 @@ async function cancelResponseBody(res: Response): Promise<void> {
 }
 
 function parseContentLength(raw: string | null, errorPrefix: string): number | undefined {
-  const trimmed = raw?.trim();
-  if (!trimmed) {
+  if (raw === null) {
     return undefined;
   }
-  if (!/^\d+$/.test(trimmed)) {
+  const values = raw.split(",").map((value) => value.replace(/^[\t ]+|[\t ]+$/g, ""));
+  const parsedValues = values.map((value) => {
+    if (!/^\d+$/.test(value)) {
+      throw new Error(`${errorPrefix}: invalid content-length header: ${raw}`);
+    }
+    const size = Number(value);
+    if (!Number.isSafeInteger(size)) {
+      throw new Error(`${errorPrefix}: invalid content-length header: ${raw}`);
+    }
+    return size;
+  });
+  const size = parsedValues[0];
+  if (size === undefined || parsedValues.some((candidate) => candidate !== size)) {
     throw new Error(`${errorPrefix}: invalid content-length header: ${raw}`);
   }
-  const value = Number(trimmed);
-  if (!Number.isSafeInteger(value)) {
-    throw new Error(`${errorPrefix}: invalid content-length header: ${raw}`);
-  }
-  return value;
+  return size;
 }
 
 function responseTooLarge(errorPrefix: string, size: number, maxBytes: number): Error {

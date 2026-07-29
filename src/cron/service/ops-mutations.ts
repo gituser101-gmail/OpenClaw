@@ -4,9 +4,14 @@ import {
   AgentDeletionAuthorityRollbackError,
   AgentDeletionCommitUncertainError,
 } from "../../agents/agent-lifecycle-registry.js";
-import { isCronJobActive, noteActiveCronJobScheduleMutation } from "../active-jobs.js";
+import {
+  isCronJobActive,
+  noteActiveCronJobRemoval,
+  noteActiveCronJobScheduleMutation,
+} from "../active-jobs.js";
 import { cronSchedulingInputsEqual } from "../schedule-identity.js";
 import { deleteCronJobScratch } from "../scratch-store.js";
+import { removeStaleCronJobFamilyRows } from "../store.js";
 import { createCronStreamSourceIdentity, cronStreamScheduleKey } from "../stream-schedule.js";
 import { normalizeCronTaskRunJobId } from "../task-run-history.js";
 import type { CronJob, CronJobCreate, CronJobPatch } from "../types.js";
@@ -291,6 +296,17 @@ export async function add(state: CronServiceState, input: CronJobCreate, opts?: 
   });
 }
 
+/** Prunes an owned job family from obsolete store partitions after active-store convergence. */
+export async function removeStaleJobFamily(
+  state: CronServiceState,
+  family: { declarationKey: string; name: string; ownerPluginTag: string },
+): Promise<number> {
+  return await locked(state, async () => {
+    await ensureLoaded(state, { skipRecompute: true });
+    return removeStaleCronJobFamilyRows(state.deps.storePath, family);
+  });
+}
+
 export async function updateLoadedJob(params: {
   state: CronServiceState;
   id: string;
@@ -407,6 +423,7 @@ export async function remove(
       suppressScheduledJobId: id,
     });
     if (removed) {
+      noteActiveCronJobRemoval(id);
       try {
         deleteCronJobScratch(state.deps.storePath, id);
       } catch (error) {
@@ -456,6 +473,7 @@ export async function removeAgentJobsTransactional<T>(
       if (error instanceof AgentDeletionCommitUncertainError) {
         armTimer(state);
         for (const job of removedJobs) {
+          noteActiveCronJobRemoval(job.id);
           emit(state, { jobId: job.id, action: "removed", job });
         }
         throw error;
@@ -477,6 +495,7 @@ export async function removeAgentJobsTransactional<T>(
       throw error;
     }
     for (const job of removedJobs) {
+      noteActiveCronJobRemoval(job.id);
       try {
         deleteCronJobScratch(state.deps.storePath, job.id);
       } catch (error) {

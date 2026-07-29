@@ -163,6 +163,7 @@ export function readPluginSdkSurfaceBudgets(env = process.env) {
       "OPENCLAW_PLUGIN_SDK_MAX_PUBLIC_EXPORTS",
       // +4: session discussion state, info, provider, and registration contracts.
       // +2: structured media placeholder formatter and its text-fact contract.
+      // +1: resetSessionEntryLifecycle.
       // +2: narrow settled-turn finalization result and safe full-attempt projector.
       // +1: channel-owned setup contract factory.
       // +18: generic schema primitives needed by plugin-owned channel config schemas.
@@ -186,6 +187,7 @@ export function readPluginSdkSurfaceBudgets(env = process.env) {
       // +1: native approval messaging target resolver.
       // +1: shared plugin SecretRef setup plan helper.
       // +1: shared multi-claim ingress lifecycle fan-in.
+      // +1: resetSessionEntryLifecycle.
       // +3: channel prompt-context entry/compat types and channel metadata builder.
       // +4: focused CLI root-option constants and parsers.
       // +6: model-picker action/capability and authoritative session-apply contracts.
@@ -197,13 +199,15 @@ export function readPluginSdkSurfaceBudgets(env = process.env) {
       // +5: pinned secret create/read functions and their options contract.
       // +1: canonical Gateway browser-origin acceptance for browser-facing plugin routes.
       // +1: watched-sessions prompt block for plugin-owned harness runtimes.
-      4757,
+      // +1: resetSessionEntryLifecycle.
+      4758,
       env,
     ),
     publicFunctionExports: readPluginSdkSurfaceBudgetEnv(
       "OPENCLAW_PLUGIN_SDK_MAX_PUBLIC_FUNCTION_EXPORTS",
       // +1: session discussion provider registration.
       // +1: structured media placeholder formatter for text-only channel carriers.
+      // +1: resetSessionEntryLifecycle.
       // +1: settled-turn full-attempt projector.
       // +1: channel-owned setup contract factory.
       // +4: generic channel schema shape builders.
@@ -226,13 +230,15 @@ export function readPluginSdkSurfaceBudgets(env = process.env) {
       // +3: focused CLI root-option parsers.
       // +1: authoritative model-picker session-apply operation.
       // +1: logger file-transport flush for graceful shutdown drains.
+      // +1: resetSessionEntryLifecycle.
       // +1: loopback-only host classifier for plugin local-machine boundaries.
       // +2: bounded archive extraction and single-entry reads.
       // +1: root-bounded directory walk iterator.
       // +4: pinned secret create and synchronous/asynchronous reads.
       // +1: canonical Gateway browser-origin acceptance for browser-facing plugin routes.
       // +1: watched-sessions prompt block for plugin-owned harness runtimes.
-      2878,
+      // +1: resetSessionEntryLifecycle.
+      2879,
       env,
     ),
     publicDeprecatedExports: readPluginSdkSurfaceBudgetEnv(

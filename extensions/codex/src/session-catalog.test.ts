@@ -515,7 +515,7 @@ describe("Codex supervision catalog", () => {
     );
   });
 
-  it("keeps omitted home scope user-scoped across normalized live config reloads", async () => {
+  it("keeps omitted local home scope user-scoped across normalized live config reloads", async () => {
     let pluginConfig: unknown = await normalizeCodexManifestConfig({
       appServer: { command: "codex-catalog-a" },
     });
@@ -547,16 +547,30 @@ describe("Codex supervision catalog", () => {
     });
 
     pluginConfig = await normalizeCodexManifestConfig({
-      appServer: { command: "codex-catalog-c", homeScope: "agent" },
+      appServer: {
+        transport: "unix",
+        url: "unix:///tmp/codex-catalog.sock",
+      },
     });
     runtimeConfig = {
       agents: { defaults: { workspace: "/workspace/c" } },
+    } as OpenClawConfig;
+    expect((pluginConfig as { appServer: object }).appServer).not.toHaveProperty("homeScope");
+    await expect(control.listPage({ limit: 1, forceRefresh: true })).resolves.toEqual({
+      sessions: [],
+    });
+
+    pluginConfig = await normalizeCodexManifestConfig({
+      appServer: { command: "codex-catalog-d", homeScope: "agent" },
+    });
+    runtimeConfig = {
+      agents: { defaults: { workspace: "/workspace/d" } },
     } as OpenClawConfig;
     await expect(control.listPage({ limit: 1, forceRefresh: true })).resolves.toEqual({
       sessions: [],
     });
 
-    expect(commandRpcMocks.codexControlRequest).toHaveBeenCalledTimes(3);
+    expect(commandRpcMocks.codexControlRequest).toHaveBeenCalledTimes(4);
     expect(commandRpcMocks.codexControlRequest.mock.calls[0]?.[3]).toMatchObject({
       config: { agents: { defaults: { workspace: "/workspace/a" } } },
       startOptions: {
@@ -576,7 +590,15 @@ describe("Codex supervision catalog", () => {
     expect(commandRpcMocks.codexControlRequest.mock.calls[2]?.[3]).toMatchObject({
       config: { agents: { defaults: { workspace: "/workspace/c" } } },
       startOptions: {
-        command: "codex-catalog-c",
+        transport: "unix",
+        homeScope: "user",
+        url: "unix:///tmp/codex-catalog.sock",
+      },
+    });
+    expect(commandRpcMocks.codexControlRequest.mock.calls[3]?.[3]).toMatchObject({
+      config: { agents: { defaults: { workspace: "/workspace/d" } } },
+      startOptions: {
+        command: "codex-catalog-d",
         transport: "stdio",
         homeScope: "agent",
       },

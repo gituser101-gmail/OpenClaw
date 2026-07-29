@@ -7,6 +7,8 @@ import {
   type StableChannelIngressIdentityParams,
 } from "openclaw/plugin-sdk/channel-ingress-runtime";
 import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
+import { resolveClickClackGroupPolicy } from "./group-policy.js";
+import { resolveClickClackMentionFacts } from "./mention-facts.js";
 import { getClickClackRuntime } from "./runtime.js";
 import type { ClickClackMessage, CoreConfig, ResolvedClickClackAccount } from "./types.js";
 
@@ -37,6 +39,11 @@ const clickClackIngressIdentity = {
 export type ClickClackInboundAccess = {
   shouldDispatch: boolean;
   commandAuthorized: boolean;
+  mentionFacts: {
+    canDetectMention: boolean;
+    wasMentioned: boolean;
+    hasAnyMention?: boolean;
+  };
 };
 
 /**
@@ -55,6 +62,19 @@ export async function resolveClickClackInboundAccess(params: {
     params.message.body,
     cfg,
   );
+
+  // Resolve group policy and mention facts for the channel.
+  const effectiveGroupPolicy = resolveClickClackGroupPolicy({
+    account: params.account,
+    channelId: params.message.channel_id,
+  });
+  const mentionFacts = resolveClickClackMentionFacts({
+    isDirect,
+    body: params.message.body,
+    mentionPatterns: effectiveGroupPolicy.mentionPatterns,
+    botUserId: params.account.botUserId,
+  });
+
   const resolved = await resolveStableChannelMessageIngress({
     channelId: CHANNEL_ID,
     accountId: params.account.accountId,
@@ -70,6 +90,13 @@ export async function resolveClickClackInboundAccess(params: {
     allowFrom: params.account.allowFrom,
     dmPolicy: "allowlist",
     groupPolicy: "allowlist",
+    mentionFacts,
+    policy: {
+      activation: {
+        requireMention: effectiveGroupPolicy.requireMention,
+        allowTextCommands: true,
+      },
+    },
     command: shouldCheckCommand
       ? {
           cfg,
@@ -83,5 +110,10 @@ export async function resolveClickClackInboundAccess(params: {
     commandAuthorized: resolved.commandAccess.requested
       ? resolved.commandAccess.authorized
       : resolved.senderAccess.allowed,
+    mentionFacts: mentionFacts as {
+      canDetectMention: boolean;
+      wasMentioned: boolean;
+      hasAnyMention?: boolean;
+    },
   };
 }

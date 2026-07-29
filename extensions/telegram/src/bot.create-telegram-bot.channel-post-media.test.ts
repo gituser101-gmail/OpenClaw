@@ -658,6 +658,103 @@ describe("createTelegramBot channel_post media", () => {
     }
   });
 
+  it.each([
+    {
+      name: "a native username mention",
+      firstCaption: "Before",
+      caption: "@openclaw_bot after",
+      entities: [{ type: "mention" as const, offset: 0, length: 13 }],
+      messageOffset: 0,
+      addressed: true,
+    },
+    {
+      name: "an anchored configured mention",
+      firstCaption: "Before",
+      caption: "hey bot after",
+      entities: [],
+      messageOffset: 2,
+      addressed: true,
+    },
+    {
+      name: "an anchored configured mention on the primary image",
+      firstCaption: "hey bot before",
+      caption: "After",
+      entities: [],
+      messageOffset: 4,
+      addressed: true,
+    },
+    {
+      name: "a bot username hidden in a link target",
+      firstCaption: "Before",
+      caption: "Read more",
+      entities: [
+        {
+          type: "text_link" as const,
+          offset: 0,
+          length: 9,
+          url: "https://example.test/@openclaw_bot",
+        },
+      ],
+      messageOffset: 6,
+      addressed: false,
+    },
+  ])(
+    "checks original album captions for $name",
+    async ({ firstCaption, caption, entities, messageOffset, addressed }) => {
+      loadConfig.mockReturnValue({
+        messages: { groupChat: { mentionPatterns: ["^hey bot"] } },
+        channels: {
+          telegram: {
+            groupPolicy: "open",
+            groups: { "*": { requireMention: true } },
+          },
+        },
+      });
+      const fetchSpy = createImageFetchSpy();
+      const setTimeoutSpy = vi.spyOn(globalThis, "setTimeout");
+
+      try {
+        createTelegramBot({ token: "tok", testTimings: TELEGRAM_TEST_TIMINGS });
+        const handler = getOnHandler("message") as (ctx: Record<string, unknown>) => Promise<void>;
+
+        await Promise.all(
+          [firstCaption, caption].map((albumCaption, index) =>
+            handler({
+              message: {
+                chat: { id: -100456, type: "supergroup", title: "Ops Chat" },
+                from: { id: 55, is_bot: false, first_name: "Ada" },
+                message_id: 110690 + messageOffset + index,
+                date: 1736380800 + index,
+                caption: albumCaption,
+                ...(index === 1 ? { caption_entities: entities } : {}),
+                media_group_id: `mentioned-caption-album-${messageOffset}`,
+                photo: [{ file_id: `mentioned-album-photo-${index + 1}` }],
+              },
+              me: { id: 999, username: "openclaw_bot" },
+              getFile: async () => ({
+                file_path: `photos/mentioned-album-photo-${index + 1}.jpg`,
+              }),
+            }),
+          ),
+        );
+
+        await flushChannelPostMediaGroup(setTimeoutSpy);
+        if (addressed) {
+          await waitForMockCalls(replySpy, 1);
+          expect(replySpy).toHaveBeenCalledOnce();
+          expect(replyPayload().Body).toContain(`Media 1: ${firstCaption}\nMedia 2: ${caption}`);
+        } else {
+          expect(replySpy).not.toHaveBeenCalled();
+          expect(fetchSpy).not.toHaveBeenCalled();
+        }
+        expect(saveRemoteMedia).toHaveBeenCalledTimes(addressed ? 2 : 0);
+      } finally {
+        setTimeoutSpy.mockRestore();
+        fetchSpy.mockRestore();
+      }
+    },
+  );
+
   it("notifies mentioned requireMention groups when media download fails", async () => {
     loadConfig.mockReturnValue({
       channels: {

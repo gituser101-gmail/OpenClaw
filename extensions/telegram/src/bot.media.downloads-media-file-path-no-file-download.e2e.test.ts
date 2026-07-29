@@ -436,6 +436,17 @@ describe("telegram media groups", () => {
   it(
     "handles same-group buffering and separate-group independence",
     async () => {
+      const originalLoadConfig = telegramBotDepsForTest.getRuntimeConfig;
+      telegramBotDepsForTest.getRuntimeConfig = (() => ({
+        channels: {
+          telegram: {
+            dmPolicy: "open",
+            allowFrom: ["*"],
+            groupPolicy: "open",
+            groups: { "*": { requireMention: false } },
+          },
+        },
+      })) as typeof telegramBotDepsForTest.getRuntimeConfig;
       const runtimeError = vi.fn();
       const { handler, replySpy } = await createBotHandlerWithOptions({ runtimeError });
       const fetchSpy = mockTelegramPngDownload();
@@ -449,6 +460,44 @@ describe("telegram media groups", () => {
 
       try {
         for (const scenario of [
+          {
+            messages: [
+              {
+                chat: { id: -100456, type: "supergroup" as const, title: "Ops Chat" },
+                from: { id: 777, is_bot: false, first_name: "Ada" },
+                message_id: 141,
+                caption: "Before",
+                date: 1736380800,
+                media_group_id: "album-hidden-mention",
+                photo: [{ file_id: "hidden-mention-photo1" }],
+                filePath: "photos/hidden-mention-photo1.jpg",
+              },
+              {
+                chat: { id: -100456, type: "supergroup" as const, title: "Ops Chat" },
+                from: { id: 777, is_bot: false, first_name: "Ada" },
+                message_id: 142,
+                caption: "Read more",
+                caption_entities: [
+                  {
+                    type: "text_link" as const,
+                    offset: 0,
+                    length: 9,
+                    url: "https://example.test/@openclaw_bot",
+                  },
+                ],
+                date: 1736380801,
+                media_group_id: "album-hidden-mention",
+                photo: [{ file_id: "hidden-mention-photo2" }],
+                filePath: "photos/hidden-mention-photo2.jpg",
+              },
+            ],
+            expectedReplyCount: 1,
+            assert: (replySpyLocal: ReturnType<typeof vi.fn>) => {
+              const payload = replyPayload(replySpyLocal);
+              expect(payload.Body).toContain("[Read more](https://example.test/@openclaw_bot)");
+              expect(payload.WasMentioned).toBe(false);
+            },
+          },
           {
             messages: [
               {
@@ -475,7 +524,93 @@ describe("telegram media groups", () => {
             assert: (replySpyLocal: ReturnType<typeof vi.fn>) => {
               const payload = replyPayload(replySpyLocal);
               expect(payload?.Body).toContain("Here are my photos");
+              expect(payload?.Body).not.toContain("Media 1:");
               expect(payload?.MediaPaths).toHaveLength(2);
+            },
+          },
+          {
+            messages: [
+              {
+                chat: { id: 42, type: "private" as const },
+                from: { id: 777, is_bot: false, first_name: "Ada" },
+                message_id: 121,
+                caption: "Before",
+                date: 1736380800,
+                media_group_id: "album-sparse-captions",
+                photo: [{ file_id: "sparse-photo1" }],
+                filePath: "photos/sparse-photo1.jpg",
+              },
+              {
+                chat: { id: 42, type: "private" as const },
+                from: { id: 777, is_bot: false, first_name: "Ada" },
+                message_id: 122,
+                date: 1736380801,
+                media_group_id: "album-sparse-captions",
+                photo: [{ file_id: "sparse-photo2" }],
+                filePath: "photos/sparse-photo2.jpg",
+              },
+              {
+                chat: { id: 42, type: "private" as const },
+                from: { id: 777, is_bot: false, first_name: "Ada" },
+                message_id: 123,
+                caption: "After",
+                date: 1736380802,
+                media_group_id: "album-sparse-captions",
+                photo: [{ file_id: "sparse-photo3" }],
+                filePath: "photos/sparse-photo3.jpg",
+              },
+            ],
+            expectedReplyCount: 1,
+            assert: (replySpyLocal: ReturnType<typeof vi.fn>) => {
+              const payload = replyPayload(replySpyLocal);
+              expect(payload.Body).toContain("Media 1: Before");
+              expect(payload.Body).toContain("Media 3: After");
+              expect(payload.Body).not.toContain("Media 2:");
+              expect(payload.MediaPaths).toHaveLength(3);
+            },
+          },
+          {
+            messages: [
+              {
+                chat: { id: 42, type: "private" as const },
+                from: { id: 777, is_bot: false, first_name: "Ada" },
+                message_id: 131,
+                date: 1736380800,
+                media_group_id: "album-control-command",
+                photo: [{ file_id: "command-photo1" }],
+                filePath: "photos/command-photo1.jpg",
+              },
+              {
+                chat: { id: 42, type: "private" as const },
+                from: { id: 777, is_bot: false, first_name: "Ada" },
+                message_id: 132,
+                caption: "/status\nRead more",
+                caption_entities: [
+                  { type: "bold" as const, offset: 0, length: 7 },
+                  { type: "text_link" as const, offset: 8, length: 9, url: "https://e.test/s" },
+                ],
+                date: 1736380801,
+                media_group_id: "album-control-command",
+                photo: [{ file_id: "command-photo2" }],
+                filePath: "photos/command-photo2.jpg",
+              },
+              {
+                chat: { id: 42, type: "private" as const },
+                from: { id: 777, is_bot: false, first_name: "Ada" },
+                message_id: 133,
+                caption: "Details",
+                date: 1736380802,
+                media_group_id: "album-control-command",
+                photo: [{ file_id: "command-photo3" }],
+                filePath: "photos/command-photo3.jpg",
+              },
+            ],
+            expectedReplyCount: 1,
+            assert: (replySpyLocal: ReturnType<typeof vi.fn>) => {
+              const payload = replyPayload(replySpyLocal);
+              expect(payload.Body).toContain(
+                "/status\n[Read more](https://e.test/s)\nMedia 3: Details",
+              );
             },
           },
           {
@@ -535,6 +670,7 @@ describe("telegram media groups", () => {
           scenario.assert(replySpy);
         }
       } finally {
+        telegramBotDepsForTest.getRuntimeConfig = originalLoadConfig;
         setTimeoutSpy.mockRestore();
         clearTimeoutSpy.mockRestore();
         fetchSpy.mockRestore();
@@ -585,6 +721,8 @@ describe("telegram media groups", () => {
               chat: { id: 42, type: "private" as const },
               from: { id: 777, is_bot: false, first_name: "Ada" },
               message_id: 302,
+              caption: "Before: kitchen",
+              caption_entities: [{ type: "bold" as const, offset: 8, length: 7 }],
               date: 1736380801,
               media_group_id: "album-context",
               photo: [{ file_id: "album-photo-2" }],
@@ -596,6 +734,8 @@ describe("telegram media groups", () => {
               chat: { id: 42, type: "private" as const },
               from: { id: 777, is_bot: false, first_name: "Ada" },
               message_id: 303,
+              caption: "After: kitchen",
+              caption_entities: [{ type: "italic" as const, offset: 7, length: 7 }],
               date: 1736380802,
               media_group_id: "album-context",
               photo: [{ file_id: "album-photo-3" }],
@@ -620,7 +760,11 @@ describe("telegram media groups", () => {
 
         expect(runtimeError).not.toHaveBeenCalled();
         const payload = replyPayload(replySpy);
-        expect(payload.Body).toContain("Here is the complete album");
+        expect(payload.Body).toContain("Media 1: Here is the complete album");
+        expect(payload.Body).toContain("Media 2: Before: **kitchen**");
+        expect(payload.Body).toContain("Media 3: After: _kitchen_");
+        expect(payload.Body.indexOf("Media 1:")).toBeLessThan(payload.Body.indexOf("Media 2:"));
+        expect(payload.Body.indexOf("Media 2:")).toBeLessThan(payload.Body.indexOf("Media 3:"));
         expect(payload.MediaPaths).toEqual(savedPaths);
         const messagesById = conversationMessages(payload);
         expect(messagesById.get("302")?.media_path).toBe("media://inbound/album-context-2.png");

@@ -23,6 +23,7 @@ import type { TelegramAmbientTranscriptWatermark } from "./bot-message-context.t
 import type { RegisterTelegramHandlerParams } from "./bot-native-commands.js";
 import type { TelegramSpooledReplayDeferredParticipant } from "./bot-processing-outcome.js";
 import { MEDIA_GROUP_TIMEOUT_MS, type MediaGroupEntry } from "./bot-updates.js";
+import { renderTelegramTextEntities } from "./bot/body-helpers.js";
 import { resolveMedia } from "./bot/delivery.resolve-media.js";
 import { getTelegramTextParts, hasBotMention, resolveTelegramPrimaryMedia } from "./bot/helpers.js";
 import type { TelegramContext } from "./bot/types.js";
@@ -94,6 +95,8 @@ export function createTelegramInboundMediaGroupRuntime(
     createSpooledReplayParticipantForBufferedWork,
     spooledReplayOptions,
     resolveTelegramSessionState,
+    buildSyntheticTextMessage,
+    buildSyntheticContext,
     processMessageWithReplyChain,
   } = messageRuntime;
   const timeoutMs =
@@ -221,11 +224,103 @@ export function createTelegramInboundMediaGroupRuntime(
         settleSpooledReplayParticipants(entry.spooledReplayParticipants, { kind: "skipped" });
         return;
       }
-      if (await shouldSkipMediaDownloadForUnaddressedMentionGroup({ ...entry, ...primary })) {
+      // Gate on original captions: album labels and rendered links must not
+      // change anchored mentions or turn private link targets into mentions.
+      let shouldSkipMediaGroup = true;
+      for (const item of entry.messages) {
+        if (!(await shouldSkipMediaDownloadForUnaddressedMentionGroup({ ...entry, ...item }))) {
+          shouldSkipMediaGroup = false;
+          break;
+        }
+      }
+      if (shouldSkipMediaGroup) {
         releaseDispatchDedupeClaims(entry.dispatchDedupeClaims);
         settleSpooledReplayParticipants(entry.spooledReplayParticipants, { kind: "skipped" });
         return;
       }
+      const albumCaptions = entry.messages.flatMap(({ msg }, index) => {
+        const { text, entities } = getTelegramTextParts(msg);
+        const caption = renderTelegramTextEntities(text, entities).trim();
+        return caption ? [{ index, caption }] : [];
+      });
+      const primaryTextParts = getTelegramTextParts(primary.msg);
+      const primaryText = primaryTextParts.text;
+      const preservePrimaryControlCommand = hasControlCommand(primaryText, entry.authorizationCfg, {
+        botUsername: primary.ctx.me?.username,
+      });
+      const primaryCommandLength = primaryText.match(/^\/\S+/u)?.[0].length;
+      // Keep command parsing anchored at byte zero without dropping rich
+      // entities that begin after or span the original command prefix.
+      const primaryCommandCaption =
+        preservePrimaryControlCommand && primaryCommandLength !== undefined
+          ? `${primaryText.slice(0, primaryCommandLength)}${renderTelegramTextEntities(
+              primaryText.slice(primaryCommandLength),
+              primaryTextParts.entities.flatMap((entity) => {
+                const start = Math.max(entity.offset, primaryCommandLength);
+                const end = entity.offset + entity.length;
+                return end > start
+                  ? [
+                      {
+                        ...entity,
+                        offset: start - primaryCommandLength,
+                        length: end - start,
+                      },
+                    ]
+                  : [];
+              }),
+            )}`
+          : primaryText;
+      // The primary is the first text-bearing item, so its control command
+      // stays at byte zero even when earlier album items have no caption.
+      // Single-caption turns remain byte-for-byte stable.
+      const dispatchMessage =
+        albumCaptions.length > 1
+          ? buildSyntheticTextMessage({
+              base: primary.msg,
+              text: albumCaptions
+                .map(({ index, caption }) =>
+                  preservePrimaryControlCommand && entry.messages[index]?.msg === primary.msg
+                    ? primaryCommandCaption
+                    : `Media ${index + 1}: ${caption}`,
+                )
+                .join("\n"),
+            })
+          : primary.msg;
+      const dispatchContext =
+        dispatchMessage === primary.msg
+          ? primary.ctx
+          : buildSyntheticContext(primary.ctx, dispatchMessage);
+      const botUsername = primary.ctx.me?.username?.trim().toLowerCase();
+      const albumMentionRegexes =
+        entry.isGroup && dispatchMessage !== primary.msg
+          ? buildMentionRegexes(
+              entry.authorizationCfg,
+              resolveTelegramSessionState({
+                chatId: entry.chatId,
+                isGroup: entry.isGroup,
+                isForum: entry.isForum,
+                resolvedThreadId: entry.resolvedThreadId,
+                messageThreadId: entry.resolvedThreadId ?? entry.dmThreadId,
+                senderId: entry.senderId,
+                runtimeCfg: entry.authorizationCfg,
+              }).agentId,
+            )
+          : [];
+      const preserveAlbumMention =
+        entry.isGroup &&
+        dispatchMessage !== primary.msg &&
+        entry.messages.some(({ msg }) => {
+          const { text, entities } = getTelegramTextParts(msg);
+          return matchesMentionWithExplicit({
+            text,
+            mentionRegexes: albumMentionRegexes,
+            explicit: {
+              hasAnyMention: entities.some((entity) => entity.type === "mention"),
+              isExplicitlyMentioned: botUsername ? hasBotMention(msg, botUsername) : false,
+              canResolveExplicit: Boolean(botUsername),
+            },
+          });
+        });
       const allMedia: TelegramMediaRef[] = [];
       const selection = new Map<string, "include" | "exclude">();
       let materializedCount = 0;
@@ -287,12 +382,17 @@ export function createTelegramInboundMediaGroupRuntime(
         }).catch(() => {});
       }
       const result = await processMessageWithReplyChain({
-        ctx: primary.ctx,
-        msg: primary.msg,
+        ctx: dispatchContext,
+        msg: dispatchMessage,
         allMedia,
         promptContextMessageSelection: selection,
         storeAllowFrom: entry.storeAllowFrom,
         options: {
+          // Rendered link targets can expose an @username that was not visible
+          // in the original caption; preserve both true and false group facts.
+          ...(entry.isGroup && dispatchMessage !== primary.msg
+            ? { forceWasMentioned: preserveAlbumMention }
+            : {}),
           ...promptContextBoundaryOptions(
             entry.promptContextMinTimestampMs,
             entry.promptContextAmbientWatermark,

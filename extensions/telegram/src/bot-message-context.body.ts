@@ -323,7 +323,7 @@ export async function resolveTelegramInboundBody(params: {
     },
     transcript: preflightTranscript,
   });
-  const wasMentioned = options?.forceWasMentioned === true ? true : computedWasMentioned;
+  const wasMentioned = options?.forceWasMentioned ?? computedWasMentioned;
 
   if (isGroup && commandGate.shouldBlockControlCommand) {
     logInboundDrop({

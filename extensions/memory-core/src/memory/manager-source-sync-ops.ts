@@ -16,6 +16,7 @@ import {
   MEMORY_INDEX_FTS_TABLE,
   runWithConcurrency,
 } from "openclaw/plugin-sdk/memory-core-host-engine-storage";
+import { buildCorpusSessionEntryOptions } from "../session-corpus-entry-options.js";
 import { MemoryManagerSessionSyncOps } from "./manager-session-sync-ops.js";
 import { resolveMemorySessionSyncPlan } from "./manager-session-sync-state.js";
 import {
@@ -337,7 +338,7 @@ export abstract class MemoryManagerSourceSyncOps extends MemoryManagerSessionSyn
                 const corpusEntry = corpusEntryByPath.get(absPath);
                 const entry = await buildSessionEntry(
                   absPath,
-                  corpusEntry ? this.buildSessionEntryOptions(corpusEntry) : undefined,
+                  corpusEntry ? buildCorpusSessionEntryOptions(corpusEntry) : undefined,
                 );
                 if (!entry) {
                   if (params.progress) {
@@ -412,7 +413,7 @@ export abstract class MemoryManagerSourceSyncOps extends MemoryManagerSessionSyn
         const corpusEntry = corpusEntryByPath.get(absPath);
         const entry = await buildSessionEntry(
           absPath,
-          corpusEntry ? this.buildSessionEntryOptions(corpusEntry) : undefined,
+          corpusEntry ? buildCorpusSessionEntryOptions(corpusEntry) : undefined,
         );
         if (!entry) {
           if (params.progress) {

@@ -1049,6 +1049,24 @@ compatibility fallback when the shared
     </Note>
 
     <Note>
+    <Note>
+    OpenAI Realtime Talk auth is not shared with Azure AI Foundry or Azure
+    OpenAI model providers. Configured direct-OpenAI Realtime credentials must
+    be OpenAI Platform API keys; OpenAI-compatible proxy keys are not valid
+    for the `api.openai.com` Realtime client-secret flow. Azure Realtime
+    voice uses the backend `gateway-relay` path with `azureEndpoint` and
+    `azureDeployment`. Endpoint-only `azureEndpoint` configs remain available
+    for custom OpenAI-compatible Realtime proxies.
+    Only positively identified Azure model keys and OpenAI-compatible proxy
+    key formats are rejected locally; unknown direct-key formats are passed
+    through to OpenAI and surface the sanitized provider 401 diagnostic when
+    invalid. If a direct OpenAI Platform key is still matched by those
+    patterns, `OPENCLAW_OPENAI_REALTIME_ALLOW_UNVALIDATED_KEY=1` bypasses the
+    local key shape check; prefer fixing the configured auth path instead of
+    leaving that override enabled.
+    </Note>
+
+    <Note>
     Control UI Talk uses OpenAI browser WebRTC sessions. GA
     `gpt-realtime-*` models use a Gateway-minted ephemeral client secret and a
     direct browser SDP exchange when Platform credentials are available.

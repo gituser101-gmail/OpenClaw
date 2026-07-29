@@ -82,6 +82,7 @@ Installed third-party plugins may declare additional credential variables in the
 | `OPENCLAW_ALLOW_INSECURE_PRIVATE_WS` | Allow trusted private-DNS `ws://` connections as a break-glass override.     |
 | `OPENCLAW_ALLOW_MULTI_GATEWAY`       | Allow multiple Gateway processes while preserving per-state ownership locks. |
 | `OPENCLAW_SKIP_CHANNELS`             | Start the Gateway without channel transports for troubleshooting.            |
+| `OPENCLAW_OPENAI_REALTIME_ALLOW_UNVALIDATED_KEY` | Bypass the local OpenAI Realtime key shape check as a recovery override. |
 | `OPENCLAW_THEME`                     | Force the TUI palette to `light` or `dark`.                                  |
 
 ## Provider credentials and workspace `.env`

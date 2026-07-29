@@ -154,7 +154,6 @@ export type ImageDescriptionRequest = {
   fileName: string;
   mime?: string;
   prompt?: string;
-  maxTokens?: number;
   timeoutMs: number;
   signal?: AbortSignal;
   profile?: string;
@@ -180,7 +179,6 @@ export type ImagesDescriptionRequest = {
   model: string;
   provider: string;
   prompt?: string;
-  maxTokens?: number;
   timeoutMs: number;
   signal?: AbortSignal;
   profile?: string;

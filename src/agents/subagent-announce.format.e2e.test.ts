@@ -8,6 +8,7 @@ import {
   type OpenClawConfig,
 } from "../config/config.js";
 import * as configSessions from "../config/sessions.js";
+import * as sessionAccessor from "../config/sessions/session-accessor.js";
 import type { SessionEntry } from "../config/sessions/types.js";
 import * as gatewayCall from "../gateway/call.js";
 import {
@@ -131,6 +132,8 @@ function expectAgentCallFields(
 const agentSpy = vi.fn(async (_req: AgentCallRequest) => visibleAgentResponse());
 const sendSpy = vi.fn(async (_req: AgentCallRequest) => ({ runId: "send-main", status: "ok" }));
 const sessionsDeleteSpy = vi.fn((_req: AgentCallRequest) => undefined);
+const loadSessionEntrySpy = vi.spyOn(sessionAccessor, "loadSessionEntry");
+const loadSessionEntryReadOnlySpy = vi.spyOn(sessionAccessor, "loadSessionEntryReadOnly");
 const resolveAgentIdFromSessionKeySpy = vi.spyOn(configSessions, "resolveAgentIdFromSessionKey");
 const resolveStorePathSpy = vi.spyOn(configSessions, "resolveStorePath");
 const resolveMainSessionKeySpy = vi.spyOn(configSessions, "resolveMainSessionKey");
@@ -426,6 +429,12 @@ describe("subagent announce formatting", () => {
       resolveAgentIdFromSessionKey: () => "main",
       resolveStorePath: () => "/tmp/sessions.json",
     });
+    loadSessionEntrySpy
+      .mockReset()
+      .mockImplementation((scope) => loadSessionStoreFixture()[scope.sessionKey]);
+    loadSessionEntryReadOnlySpy
+      .mockReset()
+      .mockImplementation((scope) => loadSessionStoreFixture()[scope.sessionKey]);
     resolveAgentIdFromSessionKeySpy.mockReset().mockImplementation(() => "main");
     resolveStorePathSpy.mockReset().mockImplementation(() => "/tmp/sessions.json");
     resolveMainSessionKeySpy.mockReset().mockImplementation(() => "agent:main:main");
@@ -2759,12 +2768,16 @@ describe("subagent announce formatting", () => {
     expect(message).toContain("All pending descendants for that run have now settled");
     expect(message).toContain("result from child a");
     expect(message).toContain("result from child b");
-    expect(subagentRegistryMock.replaceSubagentRunAfterSteer).toHaveBeenCalledWith({
-      previousRunId: "run-parent-phase-1",
-      nextRunId: "run-parent-phase-2",
-      preserveFrozenResultFallback: true,
-      task: expect.stringContaining("All pending descendants for that run have now settled"),
-    });
+    expect(subagentRegistryMock.replaceSubagentRunAfterSteer).toHaveBeenCalledWith(
+      expect.objectContaining({
+        previousRunId: "run-parent-phase-1",
+        nextRunId: "run-parent-phase-2",
+        preserveFrozenResultFallback: true,
+        pendingRequesterConsumedDescendantRunIds: ["run-child-a", "run-child-b"],
+        pendingRequesterConsumedRunStartedAt: 10,
+        task: expect.stringContaining("All pending descendants for that run have now settled"),
+      }),
+    );
   });
 
   it("does not re-wake an already woken run id", async () => {

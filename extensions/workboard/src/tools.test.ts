@@ -1,11 +1,17 @@
 // Workboard tests cover tools plugin behavior.
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { expectDefined } from "@openclaw/normalization-core";
 import { describe, expect, it, vi } from "vitest";
 import type { OpenClawPluginApi } from "../api.js";
 import type { PersistedWorkboardCard, WorkboardKeyedStore } from "./persistence-types.js";
+import { createWorkboardSqliteStores } from "./sqlite-store.js";
 import { WorkboardStore } from "./store.js";
 import { createWorkboardTools } from "./tools.js";
 import { guardWorkboardToolsForWorkspaceAccess } from "./workspace-access.js";
+
+const EMBEDDED_PROOF_BYTES = 24 * 1024;
 
 function createMemoryStore<T = PersistedWorkboardCard>(): WorkboardKeyedStore<T> {
   const entries = new Map<string, T>();
@@ -235,6 +241,144 @@ describe("workboard tools", () => {
     expect(archivedList.cards).toEqual(
       expect.arrayContaining([expect.objectContaining({ id: "archived-1", archivedAt: 2 })]),
     );
+  });
+
+  it("defaults model reads to a hard-bounded proof window while mutations stay canonical", async () => {
+    const store = new WorkboardStore(createMemoryStore());
+    const proof = Array.from({ length: 100 }, (_, index) => ({
+      id: `proof-${index}`,
+      status: "passed" as const,
+      createdAt: index + 1,
+      label: `Proof ${index}`,
+      note: "🧪".repeat(1000),
+    }));
+    const card = await store.create({ title: "Tool projection", metadata: { proof } });
+    const tools = new Map(
+      createWorkboardTools({
+        api: { runtime: {} } as unknown as OpenClawPluginApi,
+        store,
+        context: { agentId: "main" } as never,
+      }).map((tool) => [tool.name, tool]),
+    );
+
+    const readParameters = tools.get("workboard_read")?.parameters as
+      | { properties?: Record<string, unknown> }
+      | undefined;
+    expect(readParameters?.properties).toHaveProperty("proofView");
+
+    const read = readPayload(await tools.get("workboard_read")?.execute("read", { id: card.id }));
+    const embeddedProof =
+      (read.card as { metadata?: { proof?: Array<{ id: string }> } }).metadata?.proof ?? [];
+    expect(embeddedProof.length).toBeGreaterThan(0);
+    expect(embeddedProof.length).toBeLessThan(40);
+    expect(embeddedProof.at(-1)?.id).toBe("proof-99");
+    expect(Buffer.byteLength(JSON.stringify(embeddedProof), "utf8")).toBeLessThanOrEqual(
+      EMBEDDED_PROOF_BYTES,
+    );
+    expect(read.card).toMatchObject({
+      proofPage: {
+        total: 100,
+        hasMore: true,
+        nextCursor: expect.any(String),
+      },
+    });
+    const explicitBoundedRead = readPayload(
+      await tools
+        .get("workboard_read")
+        ?.execute("read-explicit-bounded", { id: card.id, proofView: "bounded" }),
+    );
+    expect(explicitBoundedRead.card).toMatchObject({
+      proofPage: { total: 100, hasMore: true },
+    });
+    const olderCursor = (read.card as { proofPage: { nextCursor?: string } }).proofPage.nextCursor;
+    const oldestEmbeddedId = expectDefined(embeddedProof[0], "oldest embedded Workboard proof").id;
+
+    const commented = readPayload(
+      await tools.get("workboard_comment")?.execute("comment", {
+        id: card.id,
+        body: "Keep proof canonical.",
+      }),
+    );
+    expect(commented).not.toHaveProperty("proofPage");
+    expect((commented.metadata as { proof?: unknown[] }).proof).toHaveLength(100);
+
+    const added = readPayload(
+      await tools.get("workboard_proof")?.execute("proof", {
+        id: card.id,
+        status: "passed",
+        label: "Proof 100",
+      }),
+    );
+    expect(added.proofId).toEqual(expect.any(String));
+    expect(added.card).not.toHaveProperty("proofPage");
+    expect(
+      ((added.card as { metadata?: { proof?: unknown[] } }).metadata?.proof ?? []).length,
+    ).toBe(101);
+
+    const older = readPayload(
+      await tools.get("workboard_proof_list")?.execute("proof-list-older", {
+        id: card.id,
+        limit: 40,
+        cursor: olderCursor,
+      }),
+    );
+    const olderProof = older.proof as Array<{ id: string }>;
+    expect(older).toMatchObject({ total: 101, hasMore: true });
+    expect(olderProof).toHaveLength(40);
+    expect(olderProof).not.toContainEqual(expect.objectContaining({ id: oldestEmbeddedId }));
+    const newestOlderId = expectDefined(olderProof.at(-1), "newest older Workboard proof").id;
+    expect(Number(newestOlderId.split("-")[1])).toBe(Number(oldestEmbeddedId.split("-")[1]) - 1);
+
+    const canonical = await store.get(card.id);
+    expect(canonical?.metadata?.proof).toHaveLength(101);
+    expect(canonical).not.toHaveProperty("proofPage");
+  });
+
+  it("keeps default sqlite tool reads off canonical proof hydration", async () => {
+    // openclaw-temp-dir: allow extension tests cannot import repo-only test helpers
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-workboard-tool-bounded-"));
+    const stores = createWorkboardSqliteStores({ dbPath: path.join(dir, "workboard.sqlite") });
+    try {
+      const store = new WorkboardStore(stores.cards, {
+        boards: stores.boards,
+        subscriptions: stores.subscriptions,
+        attachments: stores.attachments,
+      });
+      const card = await store.create({
+        title: "Bounded SQLite tool",
+        metadata: {
+          proof: Array.from({ length: 100 }, (_, index) => ({
+            id: `proof-${index}`,
+            status: "passed" as const,
+            createdAt: index + 1,
+            label: `Proof ${index}`,
+          })),
+        },
+      });
+      const tools = new Map(
+        createWorkboardTools({
+          api: { runtime: {} } as unknown as OpenClawPluginApi,
+          store,
+          context: { agentId: "main" } as never,
+        }).map((tool) => [tool.name, tool]),
+      );
+
+      stores.cards.lookup = async () => {
+        throw new Error("canonical lookup must not back bounded tool reads");
+      };
+      stores.cards.entries = async () => {
+        throw new Error("canonical entries must not back bounded tool reads");
+      };
+
+      const result = readPayload(
+        await tools.get("workboard_read")?.execute("sqlite-bounded", { id: card.id }),
+      );
+      expect(result.card).toMatchObject({ proofPage: { total: 100, hasMore: true } });
+      expect(result.workerContext).toContain("Proof 99");
+    } finally {
+      stores.close();
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("can share one store across tool instances for claim coordination", async () => {

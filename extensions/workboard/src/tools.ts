@@ -171,6 +171,20 @@ const CardIdSchema = Type.Object(
   { additionalProperties: false },
 );
 
+const ReadCardSchema = Type.Object(
+  {
+    id: cardIdField(),
+    token: claimTokenField(),
+    proofView: Type.Optional(
+      Type.Literal("bounded", {
+        description:
+          "Request the newest proof window with proofPage metadata. Omitted reads use the same bounded view.",
+      }),
+    ),
+  },
+  { additionalProperties: false },
+);
+
 export function createWorkboardTools(params: {
   api: OpenClawPluginApi;
   context?: OpenClawPluginToolContext;
@@ -328,17 +342,16 @@ export function createWorkboardTools(params: {
       name: "workboard_read",
       label: "Workboard Read",
       description:
-        "Read one Workboard card and return bounded worker context with notes, attempts, comments, proof, links, and diagnostics.",
-      parameters: CardIdSchema,
+        "Read one Workboard card with the newest bounded proof window and proofPage metadata. Use workboard_proof_list for older proof. Worker context remains bounded.",
+      parameters: ReadCardSchema,
       execute: async (_toolCallId, rawParams) => {
-        const record = rawParams as Record<string, unknown>;
-        const id = readStringParam(record, "id", { required: true });
-        const card = await store.get(id);
+        const id = readStringParam(rawParams as Record<string, unknown>, "id", { required: true });
+        const card = await store.getBounded(id);
         if (!card) {
           throw new Error(`card not found: ${id}`);
         }
         return jsonResult({
-          card: redactClaimToken(card),
+          card,
           workerContext: await store.buildWorkerContext(id),
         });
       },
@@ -470,6 +483,34 @@ export function createWorkboardTools(params: {
             )
           : await store.addProof(id, record, scope);
         return redactedProofResult(card);
+      },
+    },
+    {
+      name: "workboard_proof_list",
+      label: "Workboard Proof List",
+      description:
+        "Read one bounded page of durable Workboard proof history, starting with the newest records.",
+      parameters: Type.Object(
+        {
+          id: cardIdField(),
+          cursor: Type.Optional(
+            Type.String({ description: "Opaque cursor returned by the previous proof page." }),
+          ),
+          limit: Type.Optional(
+            Type.Number({ description: "Maximum proof records. Default and maximum 40." }),
+          ),
+        },
+        { additionalProperties: false },
+      ),
+      execute: async (_toolCallId, rawParams) => {
+        const record = rawParams as Record<string, unknown>;
+        const id = readStringParam(record, "id", { required: true });
+        return jsonResult(
+          await store.listProof(id, {
+            cursor: record.cursor,
+            limit: record.limit,
+          }),
+        );
       },
     },
     {

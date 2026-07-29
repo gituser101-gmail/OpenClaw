@@ -2240,6 +2240,7 @@ describe("renderWorkboard", () => {
     state.cards = [
       createWorkboardCard({
         title: "Metadata rich",
+        proofPage: { total: 100, hasMore: true, nextCursor: "proof-1" },
         metadata: {
           templateId: "plugin",
           attempts: [{ id: "run-1", status: "blocked", startedAt: 1, endedAt: 2 }],
@@ -2288,9 +2289,12 @@ describe("renderWorkboard", () => {
     expect(container.textContent).toContain("Plugin");
     expect(container.textContent).toContain("1 failed");
     expect(container.textContent).toContain("1 comments");
-    expect(container.textContent).toContain("7 proof");
+    expect(container.textContent).toContain("100 proof");
     expect(container.textContent).toContain("stale");
     expect(container.textContent).not.toContain("Archived task");
+    const search = container.querySelector<HTMLInputElement>('input[type="search"]');
+    expect(search?.placeholder).toBe("Search cards and loaded proof");
+    expect(search?.title).toBe("Proof search covers only the recent records loaded in this view.");
 
     container
       .querySelector<HTMLButtonElement>(".workboard-archive-toggle")
@@ -2305,7 +2309,10 @@ describe("renderWorkboard", () => {
     render(renderWorkboard(createWorkboardRenderProps(host)), container);
     expect(container.querySelector(".workboard-detail")?.textContent).toContain("1 attempts");
     expect(container.querySelector(".workboard-detail")?.textContent).toContain("1 links");
-    expect(container.querySelector(".workboard-detail")?.textContent).not.toContain("pnpm test 1");
+    expect(container.querySelector(".workboard-detail")?.textContent).toContain(
+      "Latest 7 of 100 proof records",
+    );
+    expect(container.querySelector(".workboard-detail")?.textContent).toContain("pnpm test 1");
     expect(container.querySelector(".workboard-detail")?.textContent).toContain("pnpm test 7");
     expect(container.querySelector(".workboard-detail")?.textContent).toContain(
       "https://example.com/proof-7",

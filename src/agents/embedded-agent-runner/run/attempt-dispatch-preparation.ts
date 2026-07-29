@@ -247,7 +247,9 @@ export async function prepareAndDispatchEmbeddedRunAttempt(input: {
       onToolOutcome: input.observeToolOutcome,
       isTurnTainted: input.isTurnTainted,
       allocateToolOutcomeOrdinal: input.allocateToolOutcomeOrdinal,
-      onToolStreamBoundary: maybeAnnounceFastModeAutoOff,
+      onToolStreamBoundary: () => {
+        void maybeAnnounceFastModeAutoOff();
+      },
       onRunProgress: notifyRunProgress,
       onToolResult: notifyToolResult,
       onAgentEvent: notifyAgentEvent,

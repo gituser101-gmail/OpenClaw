@@ -221,7 +221,7 @@ export async function recoverEmbeddedRunAttempt(input: {
     assistantOverflowCandidate,
     attemptCompactionCount,
     prepareCurrentTranscriptRetry: sessionPromptState.continueFromCurrentTranscript,
-    prepareCompactedTranscriptRetry: sessionPromptState.prepareCompactedTranscriptRetry,
+    prepareCompactedTranscriptRetry: () => sessionPromptState.prepareCompactedTranscriptRetry(),
   });
   if (overflowRecovery.action === "retry") {
     return retry();
@@ -353,13 +353,16 @@ export async function recoverEmbeddedRunAttempt(input: {
       externalAbort,
       pluginHarnessOwnsTransport: runtime.pluginHarnessOwnsTransport,
       timedOutByRunBudget,
-      resolveAuthProfileFailureReason: failoverRetryController.resolveAuthProfileFailureReason,
-      maybeEscalateRateLimitProfileFallback:
-        failoverRetryController.maybeEscalateRateLimitProfileFallback,
+      resolveAuthProfileFailureReason: (reason, options) =>
+        failoverRetryController.resolveAuthProfileFailureReason(reason, options),
+      maybeEscalateRateLimitProfileFallback: (failoverParams) => {
+        failoverRetryController.maybeEscalateRateLimitProfileFallback(failoverParams);
+      },
       advanceAttemptAuthProfile: preparedRuntime.advanceAttemptAuthProfile,
-      maybeMarkAuthProfileFailure: failoverRetryController.maybeMarkAuthProfileFailure,
-      maybeBackoffBeforeOverloadFailover:
-        failoverRetryController.maybeBackoffBeforeOverloadFailover,
+      maybeMarkAuthProfileFailure: (failure) =>
+        failoverRetryController.maybeMarkAuthProfileFailure(failure),
+      maybeBackoffBeforeOverloadFailover: (reason) =>
+        failoverRetryController.maybeBackoffBeforeOverloadFailover(reason),
       attemptedThinking: preparedRuntime.attemptedThinking,
       thinkLevel: runtime.thinkLevel,
       getThinkLevel: () => preparedRuntime.snapshot().thinkLevel,

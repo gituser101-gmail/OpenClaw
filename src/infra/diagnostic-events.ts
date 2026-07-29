@@ -327,6 +327,12 @@ export type DiagnosticSessionRecoveryCompletedEvent = DiagnosticSessionRecoveryB
   stale?: boolean;
 };
 
+export type DiagnosticSessionMaintenancePrunedEvent = DiagnosticBaseEvent & {
+  type: "session.maintenance.pruned";
+  pruned: number;
+  retentionMs: number;
+};
+
 export type DiagnosticSessionTurnCreatedEvent = DiagnosticBaseEvent & {
   type: "session.turn.created";
   runId: string;
@@ -796,6 +802,7 @@ export type DiagnosticEventPayload =
   | DiagnosticSessionStuckEvent
   | DiagnosticSessionRecoveryRequestedEvent
   | DiagnosticSessionRecoveryCompletedEvent
+  | DiagnosticSessionMaintenancePrunedEvent
   | DiagnosticSessionTurnCreatedEvent
   | DiagnosticLaneEnqueueEvent
   | DiagnosticLaneDequeueEvent

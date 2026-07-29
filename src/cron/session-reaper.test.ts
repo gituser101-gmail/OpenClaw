@@ -10,6 +10,12 @@ import {
 } from "../config/sessions/targets.js";
 import type { SessionEntry } from "../config/sessions/types.js";
 import type { OpenClawConfig } from "../config/types.js";
+import {
+  onInternalDiagnosticEvent,
+  resetDiagnosticEventsForTest,
+  type DiagnosticEventMetadata,
+  type DiagnosticEventPayload,
+} from "../infra/diagnostic-events.js";
 import { isCronRunSessionKey } from "../sessions/session-key-utils.js";
 import { beginSessionWorkAdmission } from "../sessions/session-lifecycle-admission.js";
 import {
@@ -47,6 +53,17 @@ function createTestLogger(): Logger {
     warn: () => {},
     error: () => {},
   };
+}
+
+function captureDiagnosticEvents() {
+  const events: Array<{
+    event: DiagnosticEventPayload;
+    metadata: DiagnosticEventMetadata;
+  }> = [];
+  const unsubscribe = onInternalDiagnosticEvent((event, metadata) => {
+    events.push({ event, metadata });
+  });
+  return { events, unsubscribe };
 }
 
 async function seedSessionEntries(
@@ -100,12 +117,14 @@ describe("sweepCronRunSessions", () => {
 
   beforeEach(async () => {
     resetReaperThrottle();
+    resetDiagnosticEventsForTest();
     taskStatusMocks.buildPendingSet.mockReset().mockReturnValue(new Set());
     tmpDir = makeTempDir(tempDirs, "cron-reaper-");
     storePath = path.join(tmpDir, "sessions.json");
   });
 
   afterEach(() => {
+    resetDiagnosticEventsForTest();
     closeOpenClawAgentDatabasesForTest();
     closeOpenClawStateDatabaseForTest();
     cleanupTempDirs(tempDirs);
@@ -141,15 +160,32 @@ describe("sweepCronRunSessions", () => {
     };
     await seedSessionEntries(storePath, store);
 
-    const result = await sweepCronRunSessions({
-      sessionStorePath: storePath,
-      nowMs: now,
-      log,
-      force: true,
-    });
+    const diagnostics = captureDiagnosticEvents();
+    const result = await (async () => {
+      try {
+        return await sweepCronRunSessions({
+          sessionStorePath: storePath,
+          nowMs: now,
+          log,
+          force: true,
+        });
+      } finally {
+        diagnostics.unsubscribe();
+      }
+    })();
 
     expect(result.swept).toBe(true);
     expect(result.pruned).toBe(2);
+    expect(diagnostics.events).toEqual([
+      expect.objectContaining({
+        event: expect.objectContaining({
+          type: "session.maintenance.pruned",
+          pruned: 2,
+          retentionMs: 24 * 3_600_000,
+        }),
+        metadata: expect.objectContaining({ trusted: true }),
+      }),
+    ]);
 
     const updated = readSessionEntries(storePath);
     expect(Object.keys(updated).toSorted()).toEqual([
@@ -174,6 +210,32 @@ describe("sweepCronRunSessions", () => {
       sessionId: "regular-session",
       updatedAt: now - 100 * 3_600_000,
     });
+  });
+
+  it("does not emit pruning diagnostics when no sessions are removed", async () => {
+    const now = Date.now();
+    await seedSessionEntries(storePath, {
+      "agent:main:cron:job1:run:recent-run": {
+        sessionId: "recent-run",
+        updatedAt: now - 1 * 3_600_000,
+      },
+    });
+
+    const diagnostics = captureDiagnosticEvents();
+    try {
+      await expect(
+        sweepCronRunSessions({
+          sessionStorePath: storePath,
+          nowMs: now,
+          log,
+          force: true,
+        }),
+      ).resolves.toEqual({ swept: true, pruned: 0 });
+    } finally {
+      diagnostics.unsubscribe();
+    }
+
+    expect(diagnostics.events).toEqual([]);
   });
 
   it("discovers, accesses, and reaps a logical owner in one shared exact store", async () => {

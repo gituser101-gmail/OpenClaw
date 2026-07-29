@@ -11,6 +11,7 @@ import {
 import {
   buildSlackQaConfig,
   parseSlackQaCredentialPayload,
+  resolveSlackQaReplacePaths,
   resolveSlackQaRuntimeEnv,
 } from "./slack-live.config.js";
 import { assertSlackCodexApprovalModelSupported } from "./slack-live.contracts.js";
@@ -52,6 +53,7 @@ const testing = {
   resolveCodexFileApprovalTargetPath,
   resolveSlackRateLimitDelayMs: adapterTesting.resolveSlackRateLimitDelayMs,
   resolveSlackQaRuntimeEnv,
+  resolveSlackQaReplacePaths,
   runSlackTableInvalidBlocksFallbackScenario,
   waitForSlackNoReply,
   waitForSlackReaction,
@@ -84,6 +86,19 @@ describe("Slack live QA runtime helpers", () => {
     expect(testing.resolveSlackRateLimitDelayMs({ retryAfter: 10 })).toBe(10_000);
     expect(testing.resolveSlackRateLimitDelayMs({ retryAfter: 0 })).toBeUndefined();
     expect(testing.resolveSlackRateLimitDelayMs(new Error("network failed"))).toBeUndefined();
+  });
+
+  it("authorizes replacement of account and channel allowlists", () => {
+    expect(testing.resolveSlackQaReplacePaths("work", "C123")).toEqual([
+      "agents",
+      "approvals",
+      "channels.slack",
+      "channels.slack.accounts.work.allowFrom",
+      "channels.slack.accounts.work.channels.C123.users",
+      "messages",
+      "plugins",
+      "tools",
+    ]);
   });
 
   beforeEach(() => {

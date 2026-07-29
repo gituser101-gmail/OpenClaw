@@ -6,7 +6,7 @@ import {
   patchLiveQaGatewayConfig,
   readLiveQaGatewayConfig,
 } from "../shared/live-gateway-config.runtime.js";
-import { buildSlackQaConfig } from "./slack-live.config.js";
+import { buildSlackQaConfig, resolveSlackQaReplacePaths } from "./slack-live.config.js";
 import type {
   SlackAuthIdentity,
   SlackObservedMessage,

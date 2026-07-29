@@ -51,6 +51,19 @@ export function parseSlackQaCredentialPayload(payload: unknown): SlackQaRuntimeE
   return validateSlackQaRuntimeEnv(runtimeEnv, "Slack credential payload");
 }
 
+export function resolveSlackQaReplacePaths(accountId: string, channelId: string): string[] {
+  return [
+    "agents",
+    "approvals",
+    "channels.slack",
+    `channels.slack.accounts.${accountId}.allowFrom`,
+    `channels.slack.accounts.${accountId}.channels.${channelId}.users`,
+    "messages",
+    "plugins",
+    "tools",
+  ];
+}
+
 export function asPlainRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)

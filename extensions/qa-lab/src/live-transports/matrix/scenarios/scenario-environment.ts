@@ -51,8 +51,15 @@ function readMatrixConfigOverrides(
     : undefined;
 }
 
-function resolveMatrixQaReplacePaths(overrides: MatrixQaConfigOverrides | undefined) {
-  const replacePaths = ["channels.matrix", "messages"];
+function resolveMatrixQaReplacePaths(
+  accountId: string,
+  overrides: MatrixQaConfigOverrides | undefined,
+) {
+  const replacePaths = [
+    "channels.matrix",
+    `channels.matrix.accounts.${accountId}.groupAllowFrom`,
+    "messages",
+  ];
   // Replacing an untouched root drops config.get-omitted runtime policy and can
   // invalidate lifecycle-owned state while the Matrix account is restarting.
   if (overrides?.agentDefaults) {
@@ -219,7 +226,7 @@ export function createMatrixQaScenarioEnvironment(params: MatrixQaScenarioEnviro
     const patchResult = await patchGatewayConfig({
       gateway: input.gateway,
       patch: gatewayConfig as Record<string, unknown>,
-      replacePaths: resolveMatrixQaReplacePaths(configOverrides),
+      replacePaths: resolveMatrixQaReplacePaths(params.accountId, configOverrides),
     });
     if (patchResult.noop !== true) {
       await input.waitForConfigRestartSettle({

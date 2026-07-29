@@ -1,6 +1,7 @@
 import type { MsgContext } from "../../auto-reply/templating.js";
 import { executeSqliteQueryTakeFirstSync } from "../../infra/kysely-sync.js";
 import type { ChannelRouteRef } from "../../plugin-sdk/channel-route.js";
+import { parseAgentSessionKey } from "../../routing/session-key.js";
 import { withOpenClawAgentDatabaseReadOnly } from "../../state/openclaw-agent-db-readonly.js";
 import {
   isIncognitoOpenClawAgentSqlitePath,
@@ -33,6 +34,7 @@ import {
   collectSessionEntryLookupKeys,
   createSqliteSessionIdentitySnapshot,
   deleteLegacySessionEntryRows,
+  readExactSessionEntryRowValidated,
   readSessionEntryRow,
   readSqliteLifecycleTargetSnapshot,
   readSqliteSessionEntrySelectionSnapshot,
@@ -62,13 +64,21 @@ import {
   toDatabaseOptions,
   type ResolvedSqliteScope,
 } from "./session-accessor.sqlite-scope.js";
-import { readSqliteSessionEntriesByStatus } from "./session-accessor.sqlite-status.js";
-import type { SessionEntryListScope } from "./session-accessor.types.js";
+import { setSessionProjectedTitle } from "./session-accessor.sqlite-session-row.js";
+import {
+  querySqliteSessionEntries as querySqliteSessionEntriesFromDatabase,
+  readSqliteSessionEntriesByStatus,
+  type SqliteSessionEntryListQueryResult,
+} from "./session-accessor.sqlite-status.js";
+import type { SessionEntryListQuery, SessionEntryListScope } from "./session-accessor.types.js";
+import {
+  assertCanonicalSessionKeyWrite,
+  assertCanonicalSqliteSessionKeysCurrent,
+} from "./session-canonical-key.js";
 import { preserveSqliteSameKeySessionRolloverLineage } from "./session-entry-lineage.js";
 import { buildSessionCreationStamp } from "./session-entry-provenance.js";
 import { kickSessionHistoryDiskBudgetMaintenance } from "./session-history-eviction.js";
 import { resolveSessionStorePathForScope } from "./session-store-path.js";
-import { resolveSessionEntryCandidates } from "./store-entry.js";
 import type { GroupKeyResolution, SessionEntry } from "./types.js";
 import { mergeSessionEntry, mergeSessionEntryPreserveActivity } from "./types.js";
 
@@ -88,6 +98,19 @@ const childSessionKeysByEntrySnapshot = new WeakMap<
   Map<string, SessionEntry>,
   Map<string, string[]>
 >();
+
+function assertCanonicalSessionWriteScope(scope: SessionAccessScope): void {
+  const sessionKey = scope.sessionKey;
+  const trimmed = sessionKey.trim();
+  const parsed = parseAgentSessionKey(trimmed);
+  if (
+    !trimmed ||
+    sessionKey !== trimmed ||
+    (parsed !== null && !trimmed.startsWith(`agent:${parsed.agentId}:`))
+  ) {
+    assertCanonicalSessionKeyWrite(sessionKey, scope.agentId);
+  }
+}
 
 function getChildSessionKeysByParent(entries: Map<string, SessionEntry>): Map<string, string[]> {
   const cached = childSessionKeysByEntrySnapshot.get(entries);
@@ -124,19 +147,17 @@ export function resolveSqliteSessionEntry(
   const read = (
     database: Pick<OpenClawAgentDatabase, "agentId" | "db" | "path">,
   ): ResolvedSqliteSessionEntry => {
-    const snapshot = readSessionEntrySnapshot(database, resolved, scope.readConsistency);
-    const selected = resolveSessionEntryCandidates({
-      entries: [...snapshot.entries].map(([sessionKey, entry]) => ({ entry, sessionKey })),
-      sessionKey: resolved.sessionKey,
+    const selected = readSessionEntryRow(database, resolved.sessionKey, {
+      hydratePromotedColumns: true,
     });
-    const existing = selected.existing?.entry;
+    const existing = selected?.entry;
     return {
       existing: existing
         ? scope.clone === false
           ? existing
           : cloneSessionEntry(existing)
         : undefined,
-      legacyKeys: selected.legacyKeys,
+      legacyKeys: selected?.legacyKeys ?? [],
       normalizedKey: resolved.sessionKey,
     };
   };
@@ -171,9 +192,9 @@ export function loadExactSqliteSessionEntry(
   }
   const resolved = resolveSqliteScope(scope);
   const database = openOpenClawAgentDatabase(toDatabaseOptions(resolved));
-  const entry = readSessionEntrySnapshot(database, resolved, scope.readConsistency).entries.get(
-    sessionKey,
-  );
+  const entry = readExactSessionEntryRowValidated(database, sessionKey, {
+    hydratePromotedColumns: true,
+  })?.entry;
   return entry
     ? { sessionKey, entry: scope.clone === false ? entry : cloneSessionEntry(entry) }
     : undefined;
@@ -201,7 +222,9 @@ export function loadExactSqliteSessionEntryReadOnly(
   const resolved = resolveSqliteScope(scope);
   const result = withOpenClawAgentDatabaseReadOnly(
     (database) =>
-      readSessionEntrySnapshot(database, resolved, scope.readConsistency).entries.get(sessionKey),
+      readExactSessionEntryRowValidated(database, sessionKey, {
+        hydratePromotedColumns: true,
+      })?.entry,
     toDatabaseOptions(resolved),
   );
   return result.found && result.value
@@ -276,11 +299,40 @@ export function listSqliteSessionEntriesReadOnly(
   return result.found ? result.value : [];
 }
 
+/** Queries a bounded promoted-column list without opening the database writable. */
+export function querySqliteSessionEntriesReadOnly(
+  scope: SessionEntryListScope & { query: SessionEntryListQuery },
+): SqliteSessionEntryListQueryResult {
+  const resolved = resolveSqliteScope({ ...scope, sessionKey: "" });
+  const result = withOpenClawAgentDatabaseReadOnly(
+    (database) =>
+      querySqliteSessionEntriesFromDatabase(database, scope.query, {
+        projection: scope.projection,
+        setProjectedTitle: setSessionProjectedTitle,
+      }),
+    toDatabaseOptions(resolved),
+  );
+  return result.found ? result.value : { creatorActors: [], entries: [], totalCount: 0 };
+}
+
+/** Queries promoted columns through the live writable handle used by process-held stores. */
+export function querySqliteSessionEntries(
+  scope: SessionEntryListScope & { query: SessionEntryListQuery },
+): SqliteSessionEntryListQueryResult {
+  const resolved = resolveSqliteScope({ ...scope, sessionKey: "" });
+  const database = openOpenClawAgentDatabase(toDatabaseOptions(resolved));
+  return querySqliteSessionEntriesFromDatabase(database, scope.query, {
+    projection: scope.projection,
+    setProjectedTitle: setSessionProjectedTitle,
+  });
+}
+
 function listSqliteSessionEntriesFromDatabase(
   database: Pick<OpenClawAgentDatabase, "agentId" | "db" | "path">,
   resolved: ResolvedSqliteScope,
   scope: SessionEntryListScope,
 ): SessionEntrySummary[] {
+  assertCanonicalSqliteSessionKeysCurrent(database);
   const snapshot = readSessionEntrySnapshot(database, resolved, scope.readConsistency);
   const entries = scope.projection === "list" ? snapshot.listEntries : snapshot.entries;
   return snapshot.keys.flatMap((sessionKey) => {
@@ -378,6 +430,7 @@ export function replaceSqliteSessionEntrySync(
   scope: SessionAccessScope,
   entry: SessionEntry,
 ): void {
+  assertCanonicalSessionWriteScope(scope);
   const resolved = resolveSqliteScope(scope);
   let previous = new Map<string, SessionEntry>();
   let current = new Map<string, SessionEntry>();
@@ -399,6 +452,7 @@ export async function patchSqliteSessionEntry(
   ) => Promise<Partial<SessionEntry> | null> | Partial<SessionEntry> | null,
   options: SqliteSessionEntryPatchOptions = {},
 ): Promise<SessionEntry | null> {
+  assertCanonicalSessionWriteScope(scope);
   const resolved = resolveSqliteScope(scope);
   return await patchSqliteSessionEntrySnapshot<
     ReturnType<typeof readSqliteSessionEntrySelectionSnapshot>

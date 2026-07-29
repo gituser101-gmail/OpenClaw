@@ -359,6 +359,8 @@ assert.equal((await runCommand(codexBin, ["--version"])).stdout.trim(), "codex-c
 let userSeeder: NativeSeeder | undefined;
 let agentSeeder: NativeSeeder | undefined;
 let gateway: ChildProcess | undefined;
+let proofOutput: string | undefined;
+let proofFailure: unknown;
 try {
   userSeeder = await startNativeSeeder(userCodexHome);
   agentSeeder = await startNativeSeeder(agentCodexHome);
@@ -443,38 +445,63 @@ try {
 
   const fingerprint = (value: string) =>
     createHash("sha256").update(`isolated-proof:${value}`).digest("hex").slice(0, 16);
-  process.stdout.write(
-    `${JSON.stringify(
-      {
-        exact_head: head,
-        test_runner: "none",
-        gateway_registration: "real",
-        plugin_schema_validation: "real",
-        config_reload: "accepted",
-        catalog_rpc: "sessions.catalog.list",
-        user_sentinel_fingerprint: fingerprint(userThreadId),
-        reload_user_sentinel_fingerprint: fingerprint(reloadedUserThreadId),
-        agent_sentinel_fingerprint: fingerprint(agentThreadId),
-        initial_user_sentinel_visible: true,
-        initial_agent_sentinel_visible: false,
-        pre_reload_cached_new_user_sentinel_visible: false,
-        reloaded_user_sentinel_visible: true,
-        reloaded_new_user_sentinel_visible: true,
-        reloaded_agent_sentinel_visible: false,
-        verdict: "PASS",
-      },
-      null,
-      2,
-    )}\n`,
-  );
-} finally {
-  if (gateway) {
+  proofOutput = `${JSON.stringify(
+    {
+      exact_head: head,
+      test_runner: "none",
+      gateway_registration: "real",
+      plugin_schema_validation: "real",
+      config_reload: "accepted",
+      catalog_rpc: "sessions.catalog.list",
+      user_sentinel_fingerprint: fingerprint(userThreadId),
+      reload_user_sentinel_fingerprint: fingerprint(reloadedUserThreadId),
+      agent_sentinel_fingerprint: fingerprint(agentThreadId),
+      initial_user_sentinel_visible: true,
+      initial_agent_sentinel_visible: false,
+      pre_reload_cached_new_user_sentinel_visible: false,
+      reloaded_user_sentinel_visible: true,
+      reloaded_new_user_sentinel_visible: true,
+      reloaded_agent_sentinel_visible: false,
+      verdict: "PASS",
+    },
+    null,
+    2,
+  )}\n`;
+} catch (error) {
+  proofFailure = error;
+}
+
+let cleanupFailure: unknown;
+if (gateway) {
+  try {
     await stopGateway(gateway);
+  } catch (error) {
+    cleanupFailure = error;
   }
-  await Promise.allSettled([userSeeder?.close(), agentSeeder?.close()]);
-  await fs.rm(configPath, { force: true });
+}
+const cleanupResults = await Promise.allSettled([
+  userSeeder?.close(),
+  agentSeeder?.close(),
+  fs.rm(configPath, { force: true }),
+]);
+for (const result of cleanupResults) {
+  if (result.status === "rejected" && cleanupFailure === undefined) {
+    cleanupFailure = result.reason;
+  }
+}
+try {
   const log = await fs.readFile(gatewayLog, "utf8").catch(() => "");
   if (log.includes(token)) {
     await fs.writeFile(gatewayLog, log.replaceAll(token, "[redacted]"), { mode: 0o600 });
   }
+} catch (error) {
+  cleanupFailure ??= error;
 }
+if (proofFailure !== undefined) {
+  throw proofFailure;
+}
+if (cleanupFailure !== undefined) {
+  throw cleanupFailure;
+}
+assert(proofOutput, "proof completed without a result");
+process.stdout.write(proofOutput);

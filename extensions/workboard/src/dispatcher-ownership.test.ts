@@ -47,7 +47,11 @@ describe("Workboard dispatcher ownership", () => {
     const result = await dispatchAndStartWorkboardCards({
       store,
       subagent: { run },
-      options: { now: 10, maxStarts: 3 },
+      options: {
+        resolveDefaultAgentId: () => "main",
+        now: 10,
+        maxStarts: 3,
+      },
     });
 
     expect(result.started).toEqual([
@@ -56,9 +60,76 @@ describe("Workboard dispatcher ownership", () => {
     expect(run).toHaveBeenCalledOnce();
     await expect(store.get(blankAgent.id)).resolves.toMatchObject({
       status: "running",
-      metadata: { claim: { ownerId: "workboard-dispatcher" } },
+      metadata: { claim: { ownerId: "main" } },
     });
     await expect(store.get(unassigned.id)).resolves.toMatchObject({ status: "ready" });
+  });
+
+  // An unassigned card runs as the default agent, so it must occupy that agent's
+  // worker slot. Accounting it under the generic dispatcher owner would let it run
+  // concurrently with a card explicitly assigned to the same agent and workspace.
+  it("shares one worker slot between unassigned and default-agent cards", async () => {
+    const store = new WorkboardStore(createMemoryStore());
+    const assigned = await store.create({
+      title: "Explicit default-agent worker",
+      status: "ready",
+      priority: "urgent",
+      agentId: "main",
+      workspaceAccess: { unrestricted: true },
+    });
+    const unassigned = await store.create({
+      title: "Unassigned worker",
+      status: "ready",
+      priority: "urgent",
+      workspaceAccess: { unrestricted: true },
+    });
+    const run = vi.fn().mockResolvedValue({ runId: "run-shared-slot" });
+
+    const result = await dispatchAndStartWorkboardCards({
+      store,
+      subagent: { run },
+      options: { resolveDefaultAgentId: () => "main", now: 10, maxStarts: 3 },
+    });
+
+    expect(run).toHaveBeenCalledOnce();
+    expect(result.started).toEqual([
+      expect.objectContaining({ cardId: assigned.id, runId: "run-shared-slot" }),
+    ]);
+    await expect(store.get(unassigned.id)).resolves.toMatchObject({ status: "ready" });
+  });
+
+  it("treats agent-id casing aliases as one worker slot", async () => {
+    const store = new WorkboardStore(createMemoryStore());
+    const upper = await store.create({
+      title: "Uppercase agent worker",
+      status: "ready",
+      priority: "urgent",
+      agentId: "MAIN",
+      workspaceAccess: { unrestricted: true },
+    });
+    const lower = await store.create({
+      title: "Lowercase agent worker",
+      status: "ready",
+      priority: "urgent",
+      agentId: "main",
+      workspaceAccess: { unrestricted: true },
+    });
+    const run = vi.fn().mockResolvedValue({ runId: "run-canonical-owner" });
+
+    const result = await dispatchAndStartWorkboardCards({
+      store,
+      subagent: { run },
+      options: { resolveDefaultAgentId: () => "main", now: 10, maxStarts: 3 },
+    });
+
+    expect(run).toHaveBeenCalledOnce();
+    expect(result.started).toEqual([
+      expect.objectContaining({
+        cardId: upper.id,
+        sessionKey: `agent:main:subagent:workboard-default-${upper.id}`,
+      }),
+    ]);
+    await expect(store.get(lower.id)).resolves.toMatchObject({ status: "ready" });
   });
 
   it("bounds failed worker attempts without draining the ready queue", async () => {
@@ -79,7 +150,11 @@ describe("Workboard dispatcher ownership", () => {
     const result = await dispatchAndStartWorkboardCards({
       store,
       subagent: { run },
-      options: { now: 10, maxStarts: 1 },
+      options: {
+        resolveDefaultAgentId: () => "main",
+        now: 10,
+        maxStarts: 1,
+      },
     });
 
     expect(run).toHaveBeenCalledTimes(2);
@@ -122,7 +197,11 @@ describe("Workboard dispatcher ownership", () => {
     const result = await dispatchAndStartWorkboardCards({
       store,
       subagent: { run },
-      options: { now: 10, maxStarts: 1 },
+      options: {
+        resolveDefaultAgentId: () => "main",
+        now: 10,
+        maxStarts: 1,
+      },
     });
 
     expect(result.startFailures.map((failure) => failure.cardId)).toEqual(
@@ -167,7 +246,11 @@ describe("Workboard dispatcher ownership", () => {
     const result = await dispatchAndStartWorkboardCards({
       store,
       subagent: { run },
-      options: { now: 10, maxStarts: 1 },
+      options: {
+        resolveDefaultAgentId: () => "main",
+        now: 10,
+        maxStarts: 1,
+      },
     });
 
     expect(run).toHaveBeenCalledTimes(2);
@@ -219,7 +302,11 @@ describe("Workboard dispatcher ownership", () => {
     const result = await dispatchAndStartWorkboardCards({
       store,
       subagent: { run },
-      options: { now: 10, maxStarts: 2 },
+      options: {
+        resolveDefaultAgentId: () => "main",
+        now: 10,
+        maxStarts: 2,
+      },
     });
 
     expect(result.started.map((entry) => entry.cardId)).toEqual([urgent.id, high.id]);
@@ -269,6 +356,7 @@ describe("Workboard dispatcher ownership", () => {
         store,
         subagent: { run },
         options: {
+          resolveDefaultAgentId: () => "main",
           now: expiresAt! + CLAIM_RECLAIM_MS,
           maxStarts: 1,
           boardId: "ops",
@@ -287,6 +375,7 @@ describe("Workboard dispatcher ownership", () => {
         store,
         subagent: { run },
         options: {
+          resolveDefaultAgentId: () => "main",
           now: expiresAt! + CLAIM_RECLAIM_MS + 1,
           maxStarts: 1,
           boardId: "ops",
@@ -333,7 +422,10 @@ describe("Workboard dispatcher ownership", () => {
     const result = await dispatchAndStartWorkboardCards({
       store,
       subagent: { run },
-      options: { maxStarts: 1 },
+      options: {
+        resolveDefaultAgentId: () => "main",
+        maxStarts: 1,
+      },
     });
 
     expect(result.started).toEqual([
@@ -377,7 +469,11 @@ describe("Workboard dispatcher ownership", () => {
         const result = await dispatchAndStartWorkboardCards({
           store,
           subagent: { run },
-          options: { now: dispatchNow, maxStarts: 1 },
+          options: {
+            resolveDefaultAgentId: () => "main",
+            now: dispatchNow,
+            maxStarts: 1,
+          },
         });
 
         expect(run).toHaveBeenCalledTimes(expectedStarts);
@@ -417,7 +513,10 @@ describe("Workboard dispatcher ownership", () => {
     const result = await dispatchAndStartWorkboardCards({
       store,
       subagent: { run },
-      options: { maxStarts: 1 },
+      options: {
+        resolveDefaultAgentId: () => "main",
+        maxStarts: 1,
+      },
     });
 
     expect(result.started).toEqual([
@@ -476,12 +575,20 @@ describe("Workboard dispatcher ownership", () => {
       dispatchAndStartWorkboardCards({
         store,
         subagent: { run },
-        options: { boardId: "ops", maxStarts: 1 },
+        options: {
+          resolveDefaultAgentId: () => "main",
+          boardId: "ops",
+          maxStarts: 1,
+        },
       }),
       dispatchAndStartWorkboardCards({
         store,
         subagent: { run },
-        options: { boardId: "product", maxStarts: 1 },
+        options: {
+          resolveDefaultAgentId: () => "main",
+          boardId: "product",
+          maxStarts: 1,
+        },
       }),
     ]);
 
@@ -516,7 +623,11 @@ describe("Workboard dispatcher ownership", () => {
         dispatchAndStartWorkboardCards({
           store,
           subagent: { run },
-          options: { boardId: card.metadata?.automation?.boardId, maxStarts: 1 },
+          options: {
+            resolveDefaultAgentId: () => "main",
+            boardId: card.metadata?.automation?.boardId,
+            maxStarts: 1,
+          },
         }),
       ),
     );
@@ -541,7 +652,10 @@ describe("Workboard dispatcher ownership", () => {
     const result = await dispatchAndStartWorkboardCards({
       store,
       subagent: { run },
-      options: { maxStarts: 1 },
+      options: {
+        resolveDefaultAgentId: () => "main",
+        maxStarts: 1,
+      },
     });
 
     expect(run).toHaveBeenCalledOnce();
@@ -554,19 +668,20 @@ describe("Workboard dispatcher ownership", () => {
     ]);
     await expect(store.get(card.id)).resolves.toMatchObject({
       status: "running",
-      metadata: { claim: { ownerId: "workboard-dispatcher" } },
+      metadata: { claim: { ownerId: "main" } },
     });
-    await expect(
-      store.heartbeat(card.id, { ownerId: "workboard-dispatcher" }),
-    ).resolves.toMatchObject({
+    await expect(store.heartbeat(card.id, { ownerId: "main" })).resolves.toMatchObject({
       status: "running",
-      metadata: { claim: { ownerId: "workboard-dispatcher" } },
+      metadata: { claim: { ownerId: "main" } },
     });
 
     const retry = await dispatchAndStartWorkboardCards({
       store,
       subagent: { run },
-      options: { maxStarts: 1 },
+      options: {
+        resolveDefaultAgentId: () => "main",
+        maxStarts: 1,
+      },
     });
 
     expect(retry.started).toEqual([]);
@@ -587,7 +702,10 @@ describe("Workboard dispatcher ownership", () => {
     const result = await dispatchAndStartWorkboardCards({
       store,
       subagent: { run },
-      options: { maxStarts: 1 },
+      options: {
+        resolveDefaultAgentId: () => "main",
+        maxStarts: 1,
+      },
     });
 
     expect(run).toHaveBeenCalledOnce();
@@ -599,7 +717,7 @@ describe("Workboard dispatcher ownership", () => {
       status: "running",
       runId: "run-without-log",
       execution: { status: "running", runId: "run-without-log" },
-      metadata: { claim: { ownerId: "workboard-dispatcher" } },
+      metadata: { claim: { ownerId: "main" } },
     });
   });
 });

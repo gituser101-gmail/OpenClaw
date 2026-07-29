@@ -32,7 +32,7 @@ type AssistantFailoverOutcome =
       action: "retry";
       overloadProfileRotations: number;
       lastRetryFailoverReason: FailoverReason | null;
-      retryKind: "profile_rotation" | "same_model_idle_timeout" | "same_model_rate_limit";
+      retryKind: "profile_rotation" | "same_model_timeout" | "same_model_rate_limit";
     }
   | {
       action: "throw";
@@ -62,7 +62,7 @@ export function isShortWindowRateLimitMessage(message: string | undefined): bool
 /**
  * Applies an assistant-stage failover decision and returns the next run action.
  * It owns auth-profile rotation, overload/rate-limit escalation, same-model
- * idle-timeout retry, and FailoverError construction for outer model fallback.
+ * timeout retry, and FailoverError construction for outer model fallback.
  */
 export async function handleAssistantFailover(params: {
   initialDecision: AssistantFailoverDecision;
@@ -72,7 +72,7 @@ export async function handleAssistantFailover(params: {
   failoverFailure: boolean;
   failoverReason: FailoverReason | null;
   harnessOwnsTransport: boolean;
-  allowSameModelIdleTimeoutRetry: boolean;
+  allowSameModelTimeoutRetry: boolean;
   allowSameModelRateLimitRetry: boolean;
   assistantProfileFailureReason: AuthProfileFailureReason | null;
   lastProfileId?: string;
@@ -115,14 +115,20 @@ export async function handleAssistantFailover(params: {
   const externalAbort = terminal.externalAbort || params.signalOwnedInterruption;
   let overloadProfileRotations = params.overloadProfileRotations;
   let decision = params.initialDecision;
-  const sameModelIdleTimeoutRetry = (): AssistantFailoverOutcome => {
+  const timeoutFailure = terminal.timedOut;
+  const isOrdinaryTimeoutFailure = (failureReason: AuthProfileFailureReason | null): boolean =>
+    timeoutFailure &&
+    (params.failoverReason == null || params.failoverReason === "timeout") &&
+    (failureReason == null || failureReason === "timeout");
+  const sameModelTimeoutRetry = (): AssistantFailoverOutcome => {
+    const timeoutLabel = terminal.idleTimedOut ? "idle watchdog" : "request timeout";
     params.warn(
-      `[llm-idle-timeout] ${sanitizeForLog(params.provider)}/${sanitizeForLog(params.modelId)} produced no reply before the idle watchdog; retrying same model`,
+      `[llm-timeout] ${sanitizeForLog(params.provider)}/${sanitizeForLog(params.modelId)} hit ${timeoutLabel}; retrying same profile before auth-profile rotation`,
     );
     return {
       action: "retry",
       overloadProfileRotations,
-      retryKind: "same_model_idle_timeout",
+      retryKind: "same_model_timeout",
       lastRetryFailoverReason: mergeRetryFailoverReason({
         previous: params.previousRetryFailoverReason,
         failoverReason: params.failoverReason,
@@ -143,8 +149,10 @@ export async function handleAssistantFailover(params: {
 
   if (decision.action === "rotate_profile") {
     const failedProfileId = params.lastProfileId;
-    const timeoutFailure = terminal.timedOut;
     const failureReason = params.assistantProfileFailureReason;
+    if (params.allowSameModelTimeoutRetry && isOrdinaryTimeoutFailure(failureReason)) {
+      return sameModelTimeoutRetry();
+    }
     const markFailedProfile = async () => {
       if (!failedProfileId || !failureReason) {
         return;
@@ -238,8 +246,8 @@ export async function handleAssistantFailover(params: {
       };
     }
     await markFailedProfilePromise;
-    if (terminal.idleTimedOut && params.allowSameModelIdleTimeoutRetry) {
-      return sameModelIdleTimeoutRetry();
+    if (params.allowSameModelTimeoutRetry && isOrdinaryTimeoutFailure(failureReason)) {
+      return sameModelTimeoutRetry();
     }
 
     decision = resolveRunFailoverDecision({
@@ -284,8 +292,12 @@ export async function handleAssistantFailover(params: {
   }
 
   if (decision.action === "surface_error") {
-    if (!externalAbort && terminal.idleTimedOut && params.allowSameModelIdleTimeoutRetry) {
-      return sameModelIdleTimeoutRetry();
+    if (
+      !externalAbort &&
+      params.allowSameModelTimeoutRetry &&
+      isOrdinaryTimeoutFailure(params.assistantProfileFailureReason)
+    ) {
+      return sameModelTimeoutRetry();
     }
     params.logAssistantFailoverDecision("surface_error");
     // Only current provider failures throw here. External aborts, timeout

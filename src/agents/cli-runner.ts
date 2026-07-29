@@ -34,7 +34,10 @@ import {
 } from "./cli-auth-epoch.js";
 import { resolveCliBackendConfig } from "./cli-backends.js";
 import type { CliOutput } from "./cli-output.js";
-import { shouldUseClaudeLiveSession } from "./cli-runner/claude-live-session.js";
+import {
+  closeClaudeLiveSessionForContext,
+  shouldUseClaudeLiveSession,
+} from "./cli-runner/claude-live-session.js";
 import {
   attachCliMessagingDeliveryEvidence,
   getCliMessagingDeliveryEvidence,
@@ -573,8 +576,6 @@ async function runCliAgentInternal(
   };
   if (params.cleanupCliLiveSessionOnRunEnd === true) {
     try {
-      const { closeClaudeLiveSessionForContext } =
-        await import("./cli-runner/claude-live-session.js");
       await closeClaudeLiveSessionForContext(context);
     } catch (error) {
       recordCleanupError(error);

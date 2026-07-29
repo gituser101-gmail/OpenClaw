@@ -252,6 +252,7 @@ export function resolveSubagentSpawnRequest(
       targetAgentId,
       requestedAgentId: effectiveRequestedAgentId,
       configuredAgentIds,
+      authorizedTargetAgentId: ctx.authorizedTargetAgentId,
     });
   };
   const admission = resolveAdmission();
@@ -280,13 +281,16 @@ export function resolveSubagentSpawnRequest(
   const maxSpawnDepth = admission.maxSpawnDepth ?? childDepth;
   const swarmLaunchReplayKey = normalizeOptionalString(params.swarmLaunchReplayKey);
   // Registry and Gateway identities are global, while host replay keys are requester-scoped.
-  const childIdem = swarmLaunchReplayKey
-    ? `swarm_${crypto
-        .createHash("sha256")
-        .update(JSON.stringify([requesterInternalKey, swarmLaunchReplayKey]))
-        .digest("hex")
-        .slice(0, 32)}`
-    : crypto.randomUUID();
+  const preallocatedRunId = normalizeOptionalString(ctx.preallocatedRunId);
+  const childIdem =
+    preallocatedRunId ??
+    (swarmLaunchReplayKey
+      ? `swarm_${crypto
+          .createHash("sha256")
+          .update(JSON.stringify([requesterInternalKey, swarmLaunchReplayKey]))
+          .digest("hex")
+          .slice(0, 32)}`
+      : crypto.randomUUID());
   let reservationPending = false;
   if (params.collect && swarmGroupId && swarmSchedulerGroupKey) {
     const groupRuns = listSwarmRunsForGroup(swarmGroupId, requesterInternalKey);

@@ -55,6 +55,12 @@ export type SpawnSubagentContext = {
   agentGroupSpace?: string | null;
   agentMemberRoleIds?: string[];
   requesterAgentIdOverride?: string;
+  /** Exact target authorized by a host-validated, active allow lease. */
+  authorizedTargetAgentId?: string;
+  /** Host-preallocated child identity for crash-safe launch coordination. */
+  preallocatedChildSessionKey?: string;
+  /** Host-preallocated run identity for crash-safe launch coordination. */
+  preallocatedRunId?: string;
   /** Explicit workspace directory for subagent to inherit (optional). */
   workspaceDir?: string;
   inheritedToolAllowlist?: string[];

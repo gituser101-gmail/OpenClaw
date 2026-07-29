@@ -66,7 +66,7 @@ describe("listGatewayMethods", () => {
   });
 
   it("appends new methods after model probing without shifting older method indices", () => {
-    expect(listGatewayMethods().slice(-27)).toEqual([
+    expect(listGatewayMethods().slice(-34)).toEqual([
       "models.probe",
       "migrations.memory.plan",
       "migrations.memory.apply",
@@ -88,6 +88,13 @@ describe("listGatewayMethods", () => {
       "session.suggestions.list",
       "session.suggestions.resolve",
       "session.typing",
+      "subagents.allowLease.acquire",
+      "subagents.allowLease.status",
+      "subagents.allowLease.release",
+      "sessions_spawn",
+      "sessions_list",
+      "sessions_status",
+      "sessions_history",
       "sessions.companion.ask",
       "sessions.companion.state",
       "sessions.companion.reset",
@@ -155,7 +162,7 @@ describe("listGatewayMethods", () => {
       "exec.approval.get",
     ]);
     expect(methods).toContain("tts.speak");
-    expect(coreMethods.slice(-34)).toEqual([
+    expect(coreMethods.slice(-41)).toEqual([
       "sessions.catalog.continue",
       "sessions.catalog.archive",
       "approval.get",
@@ -184,6 +191,13 @@ describe("listGatewayMethods", () => {
       "session.suggestions.list",
       "session.suggestions.resolve",
       "session.typing",
+      "subagents.allowLease.acquire",
+      "subagents.allowLease.status",
+      "subagents.allowLease.release",
+      "sessions_spawn",
+      "sessions_list",
+      "sessions_status",
+      "sessions_history",
       "sessions.companion.ask",
       "sessions.companion.state",
       "sessions.companion.reset",

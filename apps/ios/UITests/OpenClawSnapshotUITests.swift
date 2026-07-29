@@ -26,6 +26,7 @@ final class OpenClawSnapshotUITests: XCTestCase {
         initialDestination: "settings",
         name: "04-settings-connected")
     private static let appReadinessAccessibilityIdentifier = "RootTabs.Ready"
+    private static let debugAppBundleIdentifier = "ai.openclawfoundation.app.debug"
 
     private var app: XCUIApplication?
 
@@ -1077,14 +1078,26 @@ extension OpenClawSnapshotUITests {
         file: StaticString = #filePath,
         line: UInt = #line)
     {
-        guard let app = self.app else { return }
-        app.terminate()
-        XCTAssertTrue(
-            app.wait(for: .notRunning, timeout: 5),
-            "OpenClaw did not terminate before the next launch",
-            file: file,
-            line: line)
+        if let app {
+            app.terminate()
+            XCTAssertTrue(
+                self.waitForAppToStop(app, timeout: 5),
+                "OpenClaw did not terminate before the next screenshot launch",
+                file: file,
+                line: line)
+        }
         self.app = nil
+    }
+
+    private func waitForAppToStop(_ app: XCUIApplication, timeout: TimeInterval) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        repeat {
+            if app.state == .notRunning {
+                return true
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        } while Date() < deadline
+        return app.state == .notRunning
     }
 
     private func waitForValue(

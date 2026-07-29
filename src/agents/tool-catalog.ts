@@ -40,6 +40,7 @@ type CoreToolSection = {
     id: string;
     label: string;
     description: string;
+    parameters?: string[];
   }>;
 };
 
@@ -49,6 +50,7 @@ type CoreToolDefinition = {
   description: string;
   sectionId: string;
   profiles: ToolProfileId[];
+  parameters?: string[];
   includeInOpenClawGroup?: boolean;
 };
 
@@ -171,6 +173,18 @@ const CORE_TOOL_DEFINITIONS: CoreToolDefinition[] = [
     description: SESSIONS_LIST_TOOL_DISPLAY_SUMMARY,
     sectionId: "sessions",
     profiles: ["coding", "messaging"],
+    parameters: [
+      "kinds",
+      "limit",
+      "activeMinutes",
+      "messageLimit",
+      "label",
+      "agentId",
+      "search",
+      "archived",
+      "includeDerivedTitles",
+      "includeLastMessage",
+    ],
     includeInOpenClawGroup: true,
   },
   {
@@ -179,6 +193,7 @@ const CORE_TOOL_DEFINITIONS: CoreToolDefinition[] = [
     description: SESSIONS_HISTORY_TOOL_DISPLAY_SUMMARY,
     sectionId: "sessions",
     profiles: ["coding", "messaging"],
+    parameters: ["sessionKey", "limit", "offset", "messageId", "sessionId", "includeTools"],
     includeInOpenClawGroup: true,
   },
   {
@@ -564,6 +579,7 @@ export function listCoreToolSections(params?: { swarmEnabled?: boolean }): CoreT
       id: tool.id,
       label: tool.label,
       description: tool.description,
+      parameters: tool.parameters ? [...tool.parameters] : undefined,
     })),
   })).filter((section) => section.tools.length > 0);
 }

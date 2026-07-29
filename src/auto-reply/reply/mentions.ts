@@ -23,7 +23,17 @@ type ResolvedMentionPatterns = {
   unicode: boolean;
 };
 
-const UNICODE_WORD_CHAR = String.raw`[\p{L}\p{M}\p{N}\p{Pc}\u200C\u200D]`;
+// Word runs carry a name's identity. ZWJ/ZWNJ are word characters for the
+// boundary assertions below but stay out of the token class: mention text is
+// normalized with those characters stripped, so a derived name may never
+// require them.
+const NAME_TOKEN_CHARS = String.raw`\p{L}\p{M}\p{N}\p{Pc}`;
+const UNICODE_WORD_CHAR = String.raw`[${NAME_TOKEN_CHARS}\u200C\u200D]`;
+// Decoration between word runs (emoji, flags, symbols, punctuation) may be
+// typed as shown, replaced by whitespace, or omitted. Only code points the
+// name itself carries are accepted, so matching and stripping never consume
+// unrelated punctuation adjacent to a mention.
+const NAME_TOKEN_SPLIT = new RegExp(`([${NAME_TOKEN_CHARS}]+)`, "gu");
 
 function wrapDerivedMentionPattern(pattern: string): string {
   // JavaScript \b is ASCII-oriented. Derived identity names need Unicode word
@@ -31,13 +41,45 @@ function wrapDerivedMentionPattern(pattern: string): string {
   return `(?:@|(?<!${UNICODE_WORD_CHAR}))${pattern}(?!${UNICODE_WORD_CHAR})`;
 }
 
+function decorationClassBody(gap: string): string {
+  const bodies = new Set<string>();
+  for (const char of gap) {
+    const codePoint = char.codePointAt(0);
+    if (codePoint === undefined || /\s/u.test(char)) {
+      continue;
+    }
+    bodies.add(`\\u{${codePoint.toString(16)}}`);
+  }
+  return [...bodies].join("");
+}
+
+function deriveNamePattern(name: string): string {
+  // Odd indices are captured word tokens; even indices are the gaps around them.
+  const segments = name.split(NAME_TOKEN_SPLIT);
+  const tokens = segments.filter((_, index) => index % 2 === 1);
+  if (tokens.length === 0) {
+    // Decoration-only name (e.g. a bare emoji): match it literally.
+    return escapeRegExp(name);
+  }
+  const leading = decorationClassBody(segments[0] ?? "");
+  const trailing = decorationClassBody(segments[segments.length - 1] ?? "");
+  let pattern = leading ? `[${leading}]*` : "";
+  for (const [index, token] of tokens.entries()) {
+    if (index > 0) {
+      const gap = segments[index * 2] ?? "";
+      // Plain spacing stays required; decorated gaps are optional separators.
+      pattern += /^\s+$/.test(gap) ? String.raw`\s+` : `[\\s${decorationClassBody(gap)}]*`;
+    }
+    pattern += escapeRegExp(token);
+  }
+  return trailing ? `${pattern}[${trailing}]*` : pattern;
+}
+
 function deriveMentionPatterns(identity?: { name?: string; emoji?: string }) {
   const patterns: string[] = [];
   const name = normalizeOptionalString(identity?.name);
   if (name) {
-    const parts = name.split(/\s+/).filter(Boolean).map(escapeRegExp);
-    const re = parts.length ? parts.join(String.raw`\s+`) : escapeRegExp(name);
-    patterns.push(wrapDerivedMentionPattern(re));
+    patterns.push(wrapDerivedMentionPattern(deriveNamePattern(name)));
   }
   const emoji = normalizeOptionalString(identity?.emoji);
   if (emoji) {

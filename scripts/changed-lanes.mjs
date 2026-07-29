@@ -6,6 +6,8 @@ import { isDirectRunUrl } from "./lib/direct-run.mjs";
 import { resolveMergeHeadDiffBase } from "./lib/merge-head-diff-base.mjs";
 
 const GIT_OUTPUT_MAX_BUFFER = 64 * 1024 * 1024;
+// ci: re-trigger
+const GIT_EXEC_TIMEOUT_MS = 30_000;
 const IMPLAUSIBLE_NO_MERGE_BASE_DIFF_PATHS = 200;
 const RAW_SYNC_CHANGED_LANES_ENV = "OPENCLAW_CHANGED_LANES_RAW_SYNC";
 // Source files knip's production scan reads. Any edit to one of these can orphan
@@ -276,6 +278,8 @@ export function detectChangedLanesForPaths(params) {
         base: params.base,
         head: params.head ?? "HEAD",
         maxBuffer: GIT_OUTPUT_MAX_BUFFER,
+        timeout: GIT_EXEC_TIMEOUT_MS,
+        killSignal: "SIGKILL",
         preferFirstParent: params.mergeHeadFirstParent === true,
       });
   const packageJsonChangeKind = params.paths.includes("package.json")
@@ -299,6 +303,8 @@ export function listChangedPathsFromGit(params) {
     head,
     cwd,
     maxBuffer: GIT_OUTPUT_MAX_BUFFER,
+    timeout: GIT_EXEC_TIMEOUT_MS,
+    killSignal: "SIGKILL",
     preferFirstParent: params.mergeHeadFirstParent === true,
   });
   if (!base) {
@@ -346,6 +352,8 @@ function runGitNameOnlyDiff(extraArgs, cwd = process.cwd()) {
     stdio: ["ignore", "pipe", "pipe"],
     encoding: "utf8",
     maxBuffer: GIT_OUTPUT_MAX_BUFFER,
+    timeout: GIT_EXEC_TIMEOUT_MS,
+    killSignal: "SIGKILL",
   });
   return output.split("\n").map(normalizeChangedPath).filter(Boolean);
 }
@@ -367,6 +375,8 @@ function runGitLsFiles(extraArgs, cwd = process.cwd()) {
     stdio: ["ignore", "pipe", "pipe"],
     encoding: "utf8",
     maxBuffer: GIT_OUTPUT_MAX_BUFFER,
+    timeout: GIT_EXEC_TIMEOUT_MS,
+    killSignal: "SIGKILL",
   });
   return output.split("\n").map(normalizeChangedPath).filter(Boolean);
 }
@@ -380,6 +390,8 @@ export function listStagedChangedPaths(cwd = process.cwd()) {
     stdio: ["ignore", "pipe", "pipe"],
     encoding: "utf8",
     maxBuffer: GIT_OUTPUT_MAX_BUFFER,
+    timeout: GIT_EXEC_TIMEOUT_MS,
+    killSignal: "SIGKILL",
   });
   return output.split("\n").map(normalizeChangedPath).filter(Boolean);
 }

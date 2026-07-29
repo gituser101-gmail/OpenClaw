@@ -20,6 +20,7 @@ import {
   logAttachmentFailure,
   parseMessageWithAttachments,
   resolveChatAttachmentMaxBytes,
+  resolveChatAttachmentMaxImageBytes,
   stripImageMediaMarkers,
   UnsupportedAttachmentError,
 } from "../chat-attachments.js";
@@ -224,6 +225,7 @@ export async function prepareChatSendAttachments(params: {
             explicitOriginTargetsPlugin;
           const parsed = await parseMessageWithAttachments(inboundMessage, normalizedAttachments, {
             maxBytes: resolveChatAttachmentMaxBytes(cfg),
+            maxImageBytes: resolveChatAttachmentMaxImageBytes(cfg),
             log: context.logGateway,
             supportsImages,
             acceptNonImage: true,

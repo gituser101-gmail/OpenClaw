@@ -318,6 +318,99 @@ describe("noteSecurityWarnings gateway exposure", () => {
     expect(message).toContain("openclaw approvals get --gateway");
   });
 
+  it("warns on unsafe nested-repetition argPatterns in persisted exec approvals", async () => {
+    await withExecApprovalsFile(
+      {
+        version: 1,
+        agents: {
+          main: {
+            allowlist: [
+              {
+                pattern: "/usr/bin/python3",
+                argPattern: "(a+)+$",
+                source: "allow-always",
+              },
+              {
+                pattern: "/bin/echo",
+                argPattern: "^hello$",
+                source: "allow-always",
+              },
+            ],
+          },
+        },
+      },
+      async () => {
+        await noteSecurityWarnings({} as OpenClawConfig);
+      },
+    );
+
+    const message = lastMessage();
+    expect(message).toContain("persisted exec-approval argPattern");
+    expect(message).toContain("unsafe");
+    expect(message).toContain("agents.main");
+    expect(message).toContain("/usr/bin/python3");
+    expect(message).toContain("unsafe-nested-repetition");
+    expect(message).toContain("does not auto-delete");
+    expect(message).toContain("openclaw doctor");
+    // Safe sibling entry must not appear as a finding line
+    expect(message).not.toContain("/bin/echo");
+  });
+
+  it("does not warn when all persisted argPatterns are safe", async () => {
+    await withExecApprovalsFile(
+      {
+        version: 1,
+        agents: {
+          main: {
+            allowlist: [
+              {
+                pattern: "/usr/bin/python3",
+                argPattern: "^script\\.py$",
+                source: "allow-always",
+              },
+              {
+                pattern: "/bin/echo",
+                // path-only entry (no argPattern)
+                source: "allow-always",
+              },
+            ],
+          },
+        },
+      },
+      async () => {
+        await noteSecurityWarnings({} as OpenClawConfig);
+      },
+    );
+
+    const message = lastMessage();
+    expect(message).not.toContain("persisted exec-approval argPattern");
+  });
+
+  it("warns on invalid regex argPatterns as well as nested repetition", async () => {
+    await withExecApprovalsFile(
+      {
+        version: 1,
+        agents: {
+          worker: {
+            allowlist: [
+              {
+                pattern: "/usr/bin/tool",
+                argPattern: "[unclosed",
+              },
+            ],
+          },
+        },
+      },
+      async () => {
+        await noteSecurityWarnings({} as OpenClawConfig);
+      },
+    );
+
+    const message = lastMessage();
+    expect(message).toContain("agents.worker");
+    expect(message).toContain("invalid-regex");
+  });
+
   it("warns when filesystem tools are disabled but exec remains available", async () => {
     await noteSecurityWarnings({
       tools: {

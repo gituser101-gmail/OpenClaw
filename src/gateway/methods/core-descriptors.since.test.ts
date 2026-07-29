@@ -71,6 +71,7 @@ const CURRENT_TRAIN_METHODS = [
   "cron.scratch.get",
   "cron.scratch.set",
   "memory.search",
+  "memory.list",
 ] as const;
 
 describe("core gateway method release trains", () => {

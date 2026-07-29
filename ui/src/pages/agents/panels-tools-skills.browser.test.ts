@@ -1,12 +1,11 @@
 // Control UI tests cover agents panels tools skills behavior.
 import { render } from "lit";
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import type { SkillStatusEntry } from "../../api/types.ts";
+import { installBrowserHistoryIsolation } from "../../test-helpers/browser-history.ts";
 import { renderAgentSkills, renderAgentTools } from "./panels-tools-skills.ts";
 
-afterEach(() => {
-  window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
-});
+installBrowserHistoryIsolation();
 
 function createBaseParams(overrides: Partial<Parameters<typeof renderAgentTools>[0]> = {}) {
   return {

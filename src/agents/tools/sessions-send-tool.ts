@@ -30,7 +30,7 @@ import {
   INTERNAL_MESSAGE_CHANNEL,
 } from "../../utils/message-channel.js";
 import { resolveDefaultAgentId } from "../agent-scope-config.js";
-import { listAgentIds } from "../agent-scope.js";
+import { listAgentIds, resolveAgentConfig } from "../agent-scope.js";
 import {
   type EmbeddedAgentQueueMessageOptions,
   type EmbeddedAgentQueueMessageOutcome,
@@ -134,6 +134,19 @@ const SessionsSendOutputSchema = Type.Union([
 type GatewayCaller = typeof callGateway;
 const SESSIONS_SEND_REPLY_HISTORY_LIMIT = 50;
 const SESSIONS_SEND_MESSAGE_ALIASES = ["SendMessage", "content", "text"] as const;
+
+function resolveRequesterIdentityName(params: {
+  cfg: OpenClawConfig;
+  requesterSessionKey?: string;
+}): string | undefined {
+  const requesterAgentId = params.requesterSessionKey
+    ? resolveAgentIdFromSessionKey(params.requesterSessionKey, resolveDefaultAgentId(params.cfg))
+    : undefined;
+  const name = requesterAgentId
+    ? resolveAgentConfig(params.cfg, requesterAgentId)?.identity?.name?.trim()
+    : undefined;
+  return name || undefined;
+}
 
 function normalizeSessionsSendArguments(args: unknown): Record<string, unknown> {
   const params =
@@ -660,6 +673,10 @@ export function createSessionsSendTool(opts?: {
           }
 
           const requesterChannel = opts?.agentChannel;
+          const requesterName = resolveRequesterIdentityName({
+            cfg,
+            requesterSessionKey,
+          });
           const sameSessionA2A = requesterSessionKey === resolvedKey;
           const isIsolatedCronRequester = isCronRunSessionKey(requesterSessionKey);
           // Watch registration follows successful dispatch: a failed send must not leave
@@ -717,6 +734,7 @@ export function createSessionsSendTool(opts?: {
               : undefined;
 
           const agentMessageContext = buildAgentToAgentMessageContext({
+            requesterName,
             requesterSessionKey,
             requesterChannel,
             targetSessionKey: displayKey,
@@ -808,6 +826,7 @@ export function createSessionsSendTool(opts?: {
               // Cron runs are isolated jobs; target replies must not become new
               // requester turns, but the target-side announce still runs.
               maxPingPongTurns: isIsolatedCronRequester ? 0 : maxPingPongTurns,
+              requesterName,
               requesterSessionKey,
               requesterChannel,
               baseline: flowBaseline,

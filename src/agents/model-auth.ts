@@ -21,6 +21,7 @@ export {
   canUseProfileAsProviderEntryApiKey,
   getCustomProviderApiKey,
   hasUsableCustomProviderApiKey,
+  isConfigBackedInlineProviderApiKey,
   resolveProviderEntryApiKeyBinding,
   resolveProviderEntryApiKeyProfileReference,
   resolveUsableCustomProviderApiKey,

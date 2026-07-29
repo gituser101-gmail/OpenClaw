@@ -1694,5 +1694,21 @@
   {
     "source": "TOOLS.md retired",
     "target": "TOOLS.md 已弃用"
+  },
+  {
+    "source": "Telnyx",
+    "target": "Telnyx"
+  },
+  {
+    "source": "Telnyx plugin",
+    "target": "Telnyx 插件"
+  },
+  {
+    "source": "telnyx",
+    "target": "telnyx"
+  },
+  {
+    "source": "Telnyx (AI inference)",
+    "target": "Telnyx（AI 推理）"
   }
 ]

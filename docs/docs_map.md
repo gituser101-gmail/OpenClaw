@@ -7404,6 +7404,15 @@ Do not edit it by hand; run `pnpm docs:map:gen`.
   - H2: Surface
   - H2: Related docs
 
+## plugins/reference/telnyx.md
+
+- Route: /plugins/reference/telnyx
+- Headings:
+  - H1: Telnyx plugin
+  - H2: Distribution
+  - H2: Surface
+  - H2: Related docs
+
 ## plugins/reference/tencent.md
 
 - Route: /plugins/reference/tencent
@@ -8698,6 +8707,18 @@ Do not edit it by hand; run `pnpm docs:map:gen`.
   - H2: Getting started
   - H2: Config example
   - H2: Built-in catalog
+  - H2: Related
+
+## providers/telnyx.md
+
+- Route: /providers/telnyx
+- Headings:
+  - H2: Install plugin
+  - H2: Getting started
+  - H2: Default model
+  - H2: Live model discovery
+  - H2: Bundled fallback catalog
+  - H2: Manual config
   - H2: Related
 
 ## providers/tencent.md

@@ -83,6 +83,7 @@ type GatewayProtocolClientOptions<TPlan> = {
   createRequestError?: (error: Partial<ErrorShape>) => GatewayProtocolRequestError;
   createRequestTimeoutError?: (method: string, timeoutMs: number) => Error;
   createRequestAbortError?: (method: string) => Error;
+  validateRequestFrame?: (frame: string, method: string) => void;
   buildConnectPlan: (params: {
     nonce: string | null;
     generation: number;
@@ -258,7 +259,7 @@ export class GatewayProtocolClient<TPlan> {
         onAccepted: options?.onAccepted,
         unbounded: timeoutMs === undefined,
         method,
-        startedAtMs: this.nowMs(),
+        startedAtMs: this.opts.nowMs?.() ?? Date.now(),
       };
       const onAbort = () => {
         this.pending.delete(id);
@@ -300,7 +301,9 @@ export class GatewayProtocolClient<TPlan> {
       options?.signal?.addEventListener("abort", onAbort, { once: true });
       this.pending.set(id, pending);
       try {
-        socket.send(JSON.stringify({ type: "req", id, method, params }));
+        const frame = JSON.stringify({ type: "req", id, method, params });
+        this.opts.validateRequestFrame?.(frame, method);
+        socket.send(frame);
         this.invoke("sent", () => options?.onSent?.());
       } catch (error) {
         this.pending.delete(id);
@@ -331,7 +334,7 @@ export class GatewayProtocolClient<TPlan> {
     plan?: TPlan,
     detail?: unknown,
   ): void {
-    const now = this.nowMs();
+    const now = this.opts.nowMs?.() ?? Date.now();
     const state = this.connectTiming;
     if (!state || state.generation !== generation) {
       return;
@@ -395,7 +398,7 @@ export class GatewayProtocolClient<TPlan> {
     }
     this.generation = generation;
     this.socket = socket;
-    const now = this.nowMs();
+    const now = this.opts.nowMs?.() ?? Date.now();
     this.connectTiming = {
       generation,
       startedAtMs: now,
@@ -669,7 +672,7 @@ export class GatewayProtocolClient<TPlan> {
     ok: boolean,
     errorCode?: string,
   ): void {
-    const endedAtMs = this.nowMs();
+    const endedAtMs = this.opts.nowMs?.() ?? Date.now();
     this.invoke("request timing", () =>
       this.opts.onRequestTiming?.({
         id,
@@ -723,10 +726,6 @@ export class GatewayProtocolClient<TPlan> {
 
   private isActive(socket: GatewayProtocolSocket, generation: number): boolean {
     return !this.stopped && this.socket === socket && this.generation === generation;
-  }
-
-  private nowMs(): number {
-    return this.opts.nowMs?.() ?? Date.now();
   }
 
   private clearHandshakeTimer(): void {

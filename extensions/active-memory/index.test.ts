@@ -12,7 +12,7 @@ import {
 import { parseAgentSessionKey } from "openclaw/plugin-sdk/routing";
 import { parseSqliteSessionFileMarker } from "openclaw/plugin-sdk/session-store-runtime";
 import { appendSessionTranscriptMessageByIdentity } from "openclaw/plugin-sdk/session-transcript-runtime";
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import { applyCliRuntimeRecallTimeoutDefault } from "./config.js";
 import plugin, { testing } from "./index.js";
 import { hasRememberAcrossConversationsAgent } from "./session-policy.js";
@@ -239,8 +239,6 @@ describe("active-memory plugin", () => {
       },
     };
   });
-  let fixtureRoot = "";
-  let pluginStateDir = "";
   let stateDir = "";
   let configFile: Record<string, unknown> = {};
   let pluginConfig: Record<string, unknown> = {
@@ -277,7 +275,7 @@ describe("active-memory plugin", () => {
         ...plugins,
         slots: {
           ...(plugins?.slots as Record<string, unknown> | undefined),
-          memory,
+          "memory.recall": memory,
         },
       },
     };
@@ -359,7 +357,7 @@ describe("active-memory plugin", () => {
         openKeyedStore: (options: OpenKeyedStoreOptions) =>
           createPluginStateKeyedStoreForTests("active-memory", {
             ...options,
-            env: { ...process.env, OPENCLAW_STATE_DIR: pluginStateDir },
+            env: { ...process.env, OPENCLAW_STATE_DIR: stateDir },
           }),
       },
       config: {
@@ -447,7 +445,7 @@ describe("active-memory plugin", () => {
   };
   const makeMemoryToolAllowlistError = (
     reason: string,
-    sources = "runtime toolsAllow: memory_search, memory_get",
+    sources = "runtime toolsAllow: memory_search, memory_get, memory_recall",
   ) =>
     new Error(
       `No callable tools remain after resolving explicit tool allowlist ` +
@@ -582,23 +580,11 @@ describe("active-memory plugin", () => {
     hoisted.sessionStore[sessionKey] = { sessionId, updatedAt };
   };
 
-  beforeAll(async () => {
-    fixtureRoot = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-active-memory-test-"));
-    pluginStateDir = path.join(fixtureRoot, "plugin-state");
-    stateDir = path.join(fixtureRoot, "state");
-  });
-
   beforeEach(async () => {
     vi.clearAllMocks();
-    await fs.rm(stateDir, { recursive: true, force: true });
-    await fs.mkdir(stateDir, { recursive: true });
-    // Keep the SQLite file/schema warm, but clear the plugin's only real namespace.
-    await createPluginStateKeyedStoreForTests("active-memory", {
-      namespace: "session-toggles",
-      maxEntries: 10_000,
-      env: { ...process.env, OPENCLAW_STATE_DIR: pluginStateDir },
-    }).clear();
+    resetPluginStateStoreForTests();
     runEmbeddedAgent.mockReset();
+    stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-active-memory-test-"));
     configFile = {
       session: { dmScope: "per-peer" },
       plugins: {
@@ -701,26 +687,23 @@ describe("active-memory plugin", () => {
     plugin.register(api as unknown as OpenClawPluginApi);
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     vi.useRealTimers();
     vi.restoreAllMocks();
     testing.resetActiveRecallCacheForTests();
-  });
-
-  afterAll(async () => {
-    resetPluginStateStoreForTests();
-    await fs.rm(fixtureRoot, { recursive: true, force: true });
-    fixtureRoot = "";
-    pluginStateDir = "";
-    stateDir = "";
+    if (stateDir) {
+      await fs.rm(stateDir, { recursive: true, force: true });
+      stateDir = "";
+    }
   });
 
   it("registers a before_prompt_build hook", () => {
     const [hookName, handler, options] = firstHookRegistration();
     expect(hookName).toBe("before_prompt_build");
     expect(typeof handler).toBe("function");
-    expect(options).toEqual({ timeoutMs: 153_000 });
+    expect(options).toEqual({ timeoutMs: 153_000, memoryRole: "recall" });
     expect(hookOptions.before_prompt_build?.timeoutMs).toBe(153_000);
+    expect(hookOptions.before_prompt_build?.memoryRole).toBe("recall");
   });
 
   it("does not synthesize a main agent when every configured agent opts out", () => {
@@ -1943,12 +1926,13 @@ describe("active-memory plugin", () => {
     expect(runParams.prompt).toContain(
       "Use the bounded search query with the configured memory tools.",
     );
-    expect(runParams.prompt).toContain("Configured memory tools: memory_search, memory_get.");
+    expect(runParams.prompt).toContain(
+      "Configured memory tools: memory_search, memory_get, memory_recall.",
+    );
     expect(runParams.prompt).toContain(
       "If the available memory tools find nothing useful, reply with NONE.",
     );
-    expect(runParams.prompt).not.toContain("memory_recall");
-    expect(runParams.toolsAllow).toEqual(["memory_search", "memory_get"]);
+    expect(runParams.toolsAllow).toEqual(["memory_search", "memory_get", "memory_recall"]);
     expect(runParams.allowGatewaySubagentBinding).toBe(true);
     expect(runParams.prompt).toContain(
       "When searching for preference or habit recall, use permissive search limits or thresholds before deciding that no useful memory exists.",
@@ -1993,7 +1977,7 @@ describe("active-memory plugin", () => {
     expect(runParams.prompt).not.toContain("If memory_recall is unavailable");
   });
 
-  it("uses memory_recall by default when the memory slot selects LanceDB", async () => {
+  it("uses recall-capable memory tools by default regardless of selected recall plugin id", async () => {
     setMemorySlot("memory-lancedb");
 
     await runPromptBuild({
@@ -2001,11 +1985,13 @@ describe("active-memory plugin", () => {
     });
 
     const runParams = lastEmbeddedRunParams();
-    expect(runParams.toolsAllow).toEqual(["memory_recall"]);
-    expect(runParams.prompt).toContain("Configured memory tools: memory_recall.");
+    expect(runParams.toolsAllow).toEqual(["memory_search", "memory_get", "memory_recall"]);
+    expect(runParams.prompt).toContain(
+      "Configured memory tools: memory_search, memory_get, memory_recall.",
+    );
   });
 
-  it("keeps explicit custom memory tools authoritative when the memory slot selects LanceDB", async () => {
+  it("keeps explicit custom memory tools authoritative when the recall slot selects LanceDB", async () => {
     setMemorySlot("memory-lancedb");
     api.pluginConfig = {
       agents: ["main"],
@@ -2076,11 +2062,13 @@ describe("active-memory plugin", () => {
     });
 
     const runParams = lastEmbeddedRunParams();
-    expect(runParams.toolsAllow).toEqual(["memory_search", "memory_get"]);
-    expect(runParams.prompt).toContain("Configured memory tools: memory_search, memory_get.");
+    expect(runParams.toolsAllow).toEqual(["memory_search", "memory_get", "memory_recall"]);
+    expect(runParams.prompt).toContain(
+      "Configured memory tools: memory_search, memory_get, memory_recall.",
+    );
   });
 
-  it("falls back to LanceDB compat tools when custom memory tools only contain reserved entries", async () => {
+  it("falls back to default recall-capable tools when custom memory tools only contain reserved entries", async () => {
     setMemorySlot("memory-lancedb");
     api.pluginConfig = {
       agents: ["main"],
@@ -2092,8 +2080,10 @@ describe("active-memory plugin", () => {
     });
 
     const runParams = lastEmbeddedRunParams();
-    expect(runParams.toolsAllow).toEqual(["memory_recall"]);
-    expect(runParams.prompt).toContain("Configured memory tools: memory_recall.");
+    expect(runParams.toolsAllow).toEqual(["memory_search", "memory_get", "memory_recall"]);
+    expect(runParams.prompt).toContain(
+      "Configured memory tools: memory_search, memory_get, memory_recall.",
+    );
   });
 
   it("defaults prompt style by query mode when no promptStyle is configured", async () => {
@@ -2914,7 +2904,7 @@ describe("active-memory plugin", () => {
     seedSession(sessionKey, "s-missing-memory-tools-with-policy-source", 0);
     const error = makeMemoryToolAllowlistError(
       "no registered tools matched",
-      "tools.allow: *, lobster; runtime toolsAllow: memory_search, memory_get",
+      "tools.allow: *, lobster; runtime toolsAllow: memory_search, memory_get, memory_recall",
     );
     expect(testing.isMissingRegisteredMemoryToolsError(error)).toBe(true);
     runEmbeddedAgent.mockRejectedValueOnce(error);
@@ -2964,7 +2954,7 @@ describe("active-memory plugin", () => {
     seedSession(sessionKey, "s-memory-tools-filtered-by-policy", 0);
     const error = makeMemoryToolAllowlistError(
       "no registered tools matched",
-      "tools.allow: read, exec; runtime toolsAllow: memory_search, memory_get",
+      "tools.allow: read, exec; runtime toolsAllow: memory_search, memory_get, memory_recall",
     );
     expect(testing.isMissingRegisteredMemoryToolsError(error)).toBe(true);
     runEmbeddedAgent.mockRejectedValueOnce(error);
@@ -3750,11 +3740,12 @@ describe("active-memory plugin", () => {
 
   it("does not spend the model timeout budget on active-memory subagent setup", async () => {
     const CONFIGURED_TIMEOUT_MS = 25;
-    const SETUP_GRACE_TIMEOUT_MS = 50;
+    const SETUP_GRACE_TIMEOUT_MS = 1_000;
     testing.setMinimumTimeoutMsForTests(1);
     registerPluginConfig({
       timeoutMs: CONFIGURED_TIMEOUT_MS,
       setupGraceTimeoutMs: SETUP_GRACE_TIMEOUT_MS,
+      toolsAllow: ["memory_search"],
       logging: true,
     });
     runEmbeddedAgent.mockImplementationOnce(async (params: { sessionFile: string }) => {
@@ -4714,7 +4705,11 @@ describe("active-memory plugin", () => {
     const CONFIGURED_TIMEOUT_MS = 1_000;
     testing.setMinimumTimeoutMsForTests(1);
     testing.setSetupGraceTimeoutMsForTests(0);
-    registerPluginConfig({ timeoutMs: CONFIGURED_TIMEOUT_MS, logging: true });
+    registerPluginConfig({
+      timeoutMs: CONFIGURED_TIMEOUT_MS,
+      toolsAllow: ["memory_search"],
+      logging: true,
+    });
     const sessionKey = "agent:main:terminal-unavailable";
     hoisted.sessionStore[sessionKey] = { sessionId: "s-terminal-unavailable", updatedAt: 0 };
     runEmbeddedAgent.mockImplementationOnce(
@@ -4898,6 +4893,8 @@ describe("active-memory plugin", () => {
       { prompt: "what wings should i order? session id only" },
       {
         sessionId: "session-a",
+        messageProvider: "telegram",
+        channelId: "telegram",
       },
     );
 
@@ -4986,6 +4983,7 @@ describe("active-memory plugin", () => {
       { prompt: "what wings should i order? wrapper channel hint" },
       {
         sessionKey: "agent:main:telegram:direct:12345",
+        messageProvider: "telegram",
         channelId: "webchat",
       },
     );

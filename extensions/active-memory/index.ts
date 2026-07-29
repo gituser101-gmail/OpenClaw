@@ -92,7 +92,7 @@ export default definePluginEntry({
         return api.config as OpenClawConfig | undefined;
       }
     };
-    let config = normalizePluginConfig(api.pluginConfig, readCurrentConfig());
+    let config = normalizePluginConfig(api.pluginConfig);
     const warnDeprecatedModelFallbackPolicy = (pluginConfig: unknown) => {
       if (hasDeprecatedModelFallbackPolicy(pluginConfig)) {
         // Wording matters here: the previous text ("set config.modelFallback
@@ -126,7 +126,7 @@ export default definePluginEntry({
         liveConfig && !isActiveMemoryPluginEnabled(liveConfig)
           ? { enabled: false }
           : (livePluginConfig ?? fallbackConfig);
-      config = normalizePluginConfig(effectivePluginConfig, liveConfig);
+      config = normalizePluginConfig(effectivePluginConfig);
       if (livePluginConfig) {
         warnDeprecatedModelFallbackPolicy(livePluginConfig);
       }
@@ -392,6 +392,7 @@ export default definePluginEntry({
               isPrivateRecallDestination(destinationContext) &&
               chatIdAllowed,
             );
+            const memorySlot = normalizePluginsConfig(liveConfig.plugins).slots["memory.recall"];
             const productRecallEligible =
               productRecallRequested && memorySlot === MEMORY_CORE_PLUGIN_ID;
             if (productRecallRequested && !productRecallEligible) {
@@ -490,7 +491,7 @@ export default definePluginEntry({
           hookDeadline.stop();
         }
       },
-      { timeoutMs: beforePromptBuildTimeoutMs },
+      { timeoutMs: beforePromptBuildTimeoutMs, memoryRole: "recall" },
     );
   },
 });

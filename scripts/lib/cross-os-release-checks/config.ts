@@ -168,7 +168,7 @@ export function buildCrossOsReleaseSmokePluginAllowlist(
 }
 
 export function buildCrossOsReleaseSmokeMemorySlotConfigArgs() {
-  return ["config", "set", "plugins.slots.memory", JSON.stringify("none"), "--strict-json"];
+  return ["config", "set", "plugins.slots.memory.recall", JSON.stringify("none"), "--strict-json"];
 }
 
 function shouldSeedProviderConfigModels(providerMeta: ProviderConfig) {

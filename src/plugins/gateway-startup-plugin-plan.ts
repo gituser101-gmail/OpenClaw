@@ -23,11 +23,12 @@ import {
   canStartTrustedToolPolicyPlugin,
 } from "./gateway-startup-plugin-activation.js";
 import {
+  blocksPluginStartup,
   hasConfiguredStartupChannel,
   listPotentialEnabledChannelIds,
   resolveAuthorizedGatewayStartupDreamingPluginIds,
   resolveContextEngineSlotStartupPluginId,
-  resolveMemorySlotStartupPluginId,
+  resolveGatewayStartupMemorySlotReferences,
   shouldConsiderForGatewayStartup,
   createManifestRegistryLookup,
   findManifestPlugin,
@@ -54,6 +55,41 @@ import {
   collectConfiguredWorkerProviderIds,
   normalizeWorkerProviderIds,
 } from "./worker-provider-registry.js";
+
+function passesStartupConfigGate(params: {
+  pluginId: string;
+  pluginsConfig: ReturnType<typeof normalizePluginsConfigWithRegistry>;
+  activationSourcePlugins: ReturnType<typeof normalizePluginsConfigWithRegistry>;
+}): boolean {
+  if (!params.pluginsConfig.enabled || !params.activationSourcePlugins.enabled) {
+    return false;
+  }
+  return !blocksPluginStartup(params);
+}
+
+function canStartMemorySlotPlugin(params: {
+  pluginId: string;
+  pluginsConfig: ReturnType<typeof normalizePluginsConfigWithRegistry>;
+  activationSourcePlugins: ReturnType<typeof normalizePluginsConfigWithRegistry>;
+  memorySlotStartupPluginIds: ReadonlySet<string>;
+}): boolean {
+  if (!params.memorySlotStartupPluginIds.has(params.pluginId)) {
+    return false;
+  }
+  return passesStartupConfigGate(params);
+}
+
+function canStartStartupDreamingPlugin(params: {
+  pluginId: string;
+  pluginsConfig: ReturnType<typeof normalizePluginsConfigWithRegistry>;
+  activationSourcePlugins: ReturnType<typeof normalizePluginsConfigWithRegistry>;
+  startupDreamingPluginIds: ReadonlySet<string>;
+}): boolean {
+  if (!params.startupDreamingPluginIds.has(params.pluginId)) {
+    return false;
+  }
+  return passesStartupConfigGate(params);
+}
 
 export function resolveChannelPluginIdsFromRegistry(params: {
   manifestRegistry: PluginManifestRegistry;
@@ -190,20 +226,27 @@ export function resolveGatewayStartupPluginPlanFromRegistry(params: {
   const normalizePluginId = createPluginRegistryIdNormalizer(params.index, {
     manifestRegistry: params.manifestRegistry,
   });
-  const memorySlotStartupPluginId = resolveMemorySlotStartupPluginId({
+  const memorySlotReferences = resolveGatewayStartupMemorySlotReferences({
     activationSourceConfig,
     activationSourcePlugins,
     normalizePluginId,
   });
-  const startupDreamingPluginIds = resolveAuthorizedGatewayStartupDreamingPluginIds({
-    config: params.config,
-    pluginsConfig,
-    activationSource,
-    activationSourcePlugins,
-    selectedMemoryPluginId: memorySlotStartupPluginId,
-    index: params.index,
-    platform: params.platform,
-  });
+  const memorySlotStartupPluginIds = memorySlotReferences.startupPluginIds;
+  const startupDreamingPluginIds = new Set<string>();
+  for (const selection of memorySlotReferences.dreamingSelections) {
+    for (const pluginId of resolveAuthorizedGatewayStartupDreamingPluginIds({
+      config: params.config,
+      pluginsConfig,
+      activationSource,
+      activationSourcePlugins,
+      selectedMemoryPluginId: selection.pluginId,
+      agentId: selection.agentId,
+      index: params.index,
+      platform: params.platform,
+    })) {
+      startupDreamingPluginIds.add(pluginId);
+    }
+  }
   const contextEngineSlotStartupPluginId = resolveContextEngineSlotStartupPluginId({
     activationSourceConfig,
     activationSourcePlugins,
@@ -408,13 +451,31 @@ export function resolveGatewayStartupPluginPlanFromRegistry(params: {
         plugin,
         manifest,
         startupDreamingPluginIds,
-        memorySlotStartupPluginId,
+        memorySlotStartupPluginIds,
         contextEngineSlotStartupPluginId,
       })
     ) {
       continue;
     }
-    if (startupDreamingPluginIds.has(plugin.pluginId)) {
+    if (
+      canStartStartupDreamingPlugin({
+        pluginId: plugin.pluginId,
+        pluginsConfig,
+        activationSourcePlugins,
+        startupDreamingPluginIds,
+      })
+    ) {
+      pluginIds.push(plugin.pluginId);
+      continue;
+    }
+    if (
+      canStartMemorySlotPlugin({
+        pluginId: plugin.pluginId,
+        pluginsConfig,
+        activationSourcePlugins,
+        memorySlotStartupPluginIds,
+      })
+    ) {
       pluginIds.push(plugin.pluginId);
       continue;
     }

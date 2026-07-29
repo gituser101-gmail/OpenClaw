@@ -60,6 +60,68 @@ function isSupportedHomeRelativePath(candidate: string): boolean {
   return candidate.startsWith("~/") || candidate.startsWith("~\\");
 }
 
+function isRootedLocalMediaPath(candidate: string): boolean {
+  return (
+    candidate.startsWith("/") ||
+    candidate.startsWith("./") ||
+    candidate.startsWith(".\\") ||
+    isSupportedHomeRelativePath(candidate) ||
+    WINDOWS_DRIVE_RE.test(candidate) ||
+    candidate.startsWith("\\\\")
+  );
+}
+
+function beginsIndependentMediaSource(raw: string): boolean {
+  const candidate = normalizeMediaSource(cleanCandidate(raw));
+  return (
+    isRootedLocalMediaPath(candidate) ||
+    candidate.startsWith("../") ||
+    candidate.startsWith("..\\") ||
+    candidate.startsWith("~") ||
+    SCHEME_RE.test(candidate)
+  );
+}
+
+function splitUnquotedMediaDirectiveParts(payload: string): string[] {
+  const matches = Array.from(payload.matchAll(/\S+/g));
+  const parts: string[] = [];
+
+  for (let index = 0; index < matches.length;) {
+    const firstMatch = expectDefined(matches[index], "media directive part");
+    const firstCandidate = normalizeMediaSource(cleanCandidate(firstMatch[0]));
+    let end = index + 1;
+
+    // Without filesystem probes, rooted fragments and relative media are
+    // ambiguous. Stop at independent roots or valid media after a completed
+    // path; slicing the payload also preserves its original whitespace.
+    if (isRootedLocalMediaPath(firstCandidate) && !HAS_FILE_EXT.test(firstCandidate)) {
+      while (end < matches.length) {
+        const nextMatch = expectDefined(matches[end], "media directive part");
+        const previousMatch = expectDefined(matches[end - 1], "media directive part");
+        const accumulatedCandidate = normalizeMediaSource(
+          cleanCandidate(
+            payload.slice(firstMatch.index, previousMatch.index + previousMatch[0].length),
+          ),
+        );
+        if (
+          beginsIndependentMediaSource(nextMatch[0]) ||
+          (HAS_FILE_EXT.test(accumulatedCandidate) &&
+            isValidMedia(normalizeMediaSource(cleanCandidate(nextMatch[0]))))
+        ) {
+          break;
+        }
+        end += 1;
+      }
+    }
+
+    const lastMatch = expectDefined(matches[end - 1], "media directive part");
+    parts.push(payload.slice(firstMatch.index, lastMatch.index + lastMatch[0].length));
+    index = end;
+  }
+
+  return parts;
+}
+
 function hasTraversalOrUnsupportedHomeDirPrefix(candidate: string): boolean {
   return (
     candidate.startsWith("../") ||
@@ -483,19 +545,6 @@ function isInsideFence(fenceSpans: Array<{ start: number; end: number }>, offset
 }
 
 /** Splits tool/stdout text into visible text, media attachments, voice tags, and ordered segments. */
-function beginsNewMediaRoot(candidate: string): boolean {
-  return (
-    hasHttpUrlPrefix(candidate) ||
-    FILE_URL_PREFIX_RE.test(candidate) ||
-    WINDOWS_DRIVE_RE.test(candidate) ||
-    candidate.startsWith("/") ||
-    candidate.startsWith("~") ||
-    candidate.startsWith("./") ||
-    candidate.startsWith("../") ||
-    candidate.startsWith("\\\\")
-  );
-}
-
 export function splitMediaFromOutput(
   raw: string,
   options: SplitMediaFromOutputOptions = {},
@@ -598,19 +647,21 @@ export function splitMediaFromOutput(
       const payload = expectDefined(match[1], "parse regex capture 1");
       const unwrapped = unwrapQuoted(payload);
       const payloadValue = unwrapped ?? payload;
-      const parts = unwrapped ? [unwrapped] : payload.split(/\s+/).filter(Boolean);
+      const parts = unwrapped ? [unwrapped] : splitUnquotedMediaDirectiveParts(payload);
       const mediaStartIndex = media.length;
       let validCount = 0;
       const invalidParts: string[] = [];
       let hasValidMedia = false;
       for (const part of parts) {
         const candidate = normalizeMediaSource(cleanCandidate(part));
-        if (isValidMedia(candidate, unwrapped ? { allowSpaces: true } : undefined)) {
+        if (
+          isValidMedia(candidate, unwrapped || /\s/.test(part) ? { allowSpaces: true } : undefined)
+        ) {
           media.push(candidate);
           hasValidMedia = true;
           foundMediaToken = true;
           validCount += 1;
-        } else {
+        } else if (!/\s/.test(part) || !hasTraversalOrUnsupportedHomeDirPrefix(candidate)) {
           invalidParts.push(part);
         }
       }
@@ -620,38 +671,9 @@ export function splitMediaFromOutput(
         looksLikeLocalFilePath(trimmedPayload) || FILE_URL_PREFIX_RE.test(trimmedPayload);
       if (
         !unwrapped &&
-        parts.length > 1 &&
-        !parts.every((part) => HAS_FILE_EXT.test(cleanCandidate(part))) &&
-        /\s/.test(payloadValue) &&
-        looksLikeLocalPath &&
-        beginsNewMediaRoot(normalizeMediaSource(cleanCandidate(parts[0] ?? ""))) &&
-        !parts
-          .slice(1)
-          .some((part) => beginsNewMediaRoot(normalizeMediaSource(cleanCandidate(part))))
-      ) {
-        // A single ABSOLUTE path with spaces splits on whitespace into fragments that
-        // each look path-like, so the loop above over-counts them as separate media.
-        // Collapse only when at least one fragment has NO file extension: a real spaced
-        // path ("/home/u/my folder/a.png") has an extension-less fragment ("/home/u/my"),
-        // whereas a genuine mixed list ("/tmp/a.png media/b.png") has every fragment ending
-        // in a media file -- keep those split as separate attachments.
-        // Collapse only when the payload STARTS at an absolute path/URL root and no
-        // later fragment begins a new root -- that keeps "/home/u/my folder/a.png" as
-        // one item while leaving genuine relative multi-media like "media/a.png
-        // media/b.png" (no rooted first fragment) as separate attachments.
-        const spacedPath = normalizeMediaSource(cleanCandidate(payloadValue));
-        if (isValidMedia(spacedPath, { allowSpaces: true, allowBareFilename: true })) {
-          media.splice(mediaStartIndex, media.length - mediaStartIndex, spacedPath);
-          hasValidMedia = true;
-          foundMediaToken = true;
-          validCount = 1;
-          invalidParts.length = 0;
-        }
-      }
-      if (
-        !unwrapped &&
         validCount === 1 &&
         invalidParts.length > 0 &&
+        !parts.slice(1).some(beginsIndependentMediaSource) &&
         /\s/.test(payloadValue) &&
         looksLikeLocalPath
       ) {

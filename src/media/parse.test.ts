@@ -5,33 +5,6 @@ import { splitMediaFromOutput } from "./parse.js";
 type SplitMediaFromOutputOptions = NonNullable<Parameters<typeof splitMediaFromOutput>[1]>;
 
 describe("splitMediaFromOutput", () => {
-  it("keeps an unquoted local path with spaces as one media item (#112421)", () => {
-    expectParsedMediaOutputCase("MEDIA:/home/user/my folder/shot.png", {
-      mediaUrls: ["/home/user/my folder/shot.png"],
-    });
-    expectParsedMediaOutputCase("MEDIA:C:\\Users\\First Last\\workspace\\shot.png", {
-      mediaUrls: ["C:\\Users\\First Last\\workspace\\shot.png"],
-    });
-  });
-
-  it("still splits genuinely separate absolute media on one line", () => {
-    expectParsedMediaOutputCase("MEDIA:/home/user/a.png /home/user/b.png", {
-      mediaUrls: ["/home/user/a.png", "/home/user/b.png"],
-    });
-  });
-
-  it("keeps relative multi-media directives as separate items (#112464 review)", () => {
-    expectParsedMediaOutputCase("MEDIA:media/a.png media/b.png", {
-      mediaUrls: ["media/a.png", "media/b.png"],
-    });
-  });
-
-  it("keeps a mixed absolute + relative multi-media directive as separate items (#112464 review)", () => {
-    expectParsedMediaOutputCase("MEDIA:/tmp/a.png media/b.png", {
-      mediaUrls: ["/tmp/a.png", "media/b.png"],
-    });
-  });
-
   function expectParsedMediaOutputCase(
     input: string,
     expected: {
@@ -82,6 +55,31 @@ describe("splitMediaFromOutput", () => {
     ["~/Pictures/My File.png", "MEDIA:~/Pictures/My File.png"],
     ["~/.openclaw/media/browser/snap.png", "MEDIA:~/.openclaw/media/browser/snap.png"],
     ["C:\\Users\\pete\\Pictures\\snap.png", "MEDIA:C:\\Users\\pete\\Pictures\\snap.png"],
+    [
+      String.raw`C:\Users\First Last\workspace\shot.png`,
+      String.raw`MEDIA:C:\Users\First Last\workspace\shot.png`,
+    ],
+    [
+      String.raw`C:\Users\First  Last\workspace\shot.png`,
+      String.raw`MEDIA:C:\Users\First  Last\workspace\shot.png`,
+    ],
+    [
+      String.raw`C:\Users\First Last\My Pictures\shot.png`,
+      String.raw`MEDIA:C:\Users\First Last\My Pictures\shot.png`,
+    ],
+    [
+      String.raw`C:\Users\First Last\workspace\shot.png`,
+      String.raw`MEDIA:"C:\Users\First Last\workspace\shot.png"`,
+    ],
+    [
+      String.raw`C:\Users\First Last\workspace\shot.png`,
+      "MEDIA:`" + String.raw`C:\Users\First Last\workspace\shot.png` + "`",
+    ],
+    [
+      "/tmp/project screenshots/workspace/shot.png",
+      "MEDIA:/tmp/project screenshots/workspace/shot.png",
+    ],
+    ["/tmp/album.v1/photo.png copy.png", "MEDIA:/tmp/album.v1/photo.png copy.png"],
     ["/tmp/tts-fAJy8C/voice-1770246885083.opus", "MEDIA:/tmp/tts-fAJy8C/voice-1770246885083.opus"],
     ["image.png", "MEDIA:image.png"],
     [
@@ -102,11 +100,172 @@ describe("splitMediaFromOutput", () => {
   });
 
   it.each([
+    {
+      name: "POSIX absolute paths",
+      input: "MEDIA:/tmp/first.png /tmp/second.png",
+      mediaUrls: ["/tmp/first.png", "/tmp/second.png"],
+    },
+    {
+      name: "Windows drive paths",
+      input: String.raw`MEDIA:C:\first\one.png D:\second\two.png`,
+      mediaUrls: [String.raw`C:\first\one.png`, String.raw`D:\second\two.png`],
+    },
+    {
+      name: "a spaced Windows path and another Windows drive",
+      input: String.raw`MEDIA:C:\Users\First Last\workspace\shot.png D:\other\second.png`,
+      mediaUrls: [
+        String.raw`C:\Users\First Last\workspace\shot.png`,
+        String.raw`D:\other\second.png`,
+      ],
+    },
+    {
+      name: "a spaced Windows path and a slash-relative attachment",
+      input: String.raw`MEDIA:C:\Users\First Last\workspace\shot.png media/second.png`,
+      mediaUrls: [String.raw`C:\Users\First Last\workspace\shot.png`, "media/second.png"],
+    },
+    {
+      name: "a spaced POSIX path and a backslash-relative attachment",
+      input: String.raw`MEDIA:/tmp/project screenshots/shot.png media\second.png`,
+      mediaUrls: ["/tmp/project screenshots/shot.png", String.raw`media\second.png`],
+    },
+    {
+      name: "a spaced Windows path and a POSIX absolute path",
+      input: String.raw`MEDIA:C:\Users\First Last\workspace\shot.png /tmp/second.png`,
+      mediaUrls: [String.raw`C:\Users\First Last\workspace\shot.png`, "/tmp/second.png"],
+    },
+    {
+      name: "a spaced Windows path and an HTTPS URL",
+      input: String.raw`MEDIA:C:\Users\First Last\workspace\shot.png https://example.com/second.png`,
+      mediaUrls: [
+        String.raw`C:\Users\First Last\workspace\shot.png`,
+        "https://example.com/second.png",
+      ],
+    },
+    {
+      name: "a spaced Windows path and a UNC path",
+      input: String.raw`MEDIA:C:\Users\First Last\workspace\shot.png \\server\share\second.png`,
+      mediaUrls: [
+        String.raw`C:\Users\First Last\workspace\shot.png`,
+        String.raw`\\server\share\second.png`,
+      ],
+    },
+    {
+      name: "a spaced POSIX path and a file URL",
+      input: "MEDIA:/tmp/project screenshots/shot.png file:///tmp/second.png",
+      mediaUrls: ["/tmp/project screenshots/shot.png", "/tmp/second.png"],
+    },
+    {
+      name: "multiple spaced rooted paths",
+      input:
+        String.raw`MEDIA:C:\Users\First Last\workspace\shot.png` +
+        " /tmp/project screenshots/second.png " +
+        String.raw`D:\Other User\third.png`,
+      mediaUrls: [
+        String.raw`C:\Users\First Last\workspace\shot.png`,
+        "/tmp/project screenshots/second.png",
+        String.raw`D:\Other User\third.png`,
+      ],
+    },
+    {
+      name: "a rejected spaced Windows traversal and a safe independent path",
+      input: String.raw`MEDIA:C:\Users\First Last\..\secret.png D:\safe\second.png`,
+      mediaUrls: [String.raw`D:\safe\second.png`],
+    },
+    {
+      name: "a rejected spaced POSIX traversal and a safe independent path",
+      input: "MEDIA:/tmp/project screenshots/../../.env /tmp/safe/second.png",
+      mediaUrls: ["/tmp/safe/second.png"],
+    },
+    {
+      name: "relative paths",
+      input: "MEDIA:first/one.png second/two.png",
+      mediaUrls: ["first/one.png", "second/two.png"],
+    },
+    {
+      name: "POSIX absolute and relative paths",
+      input: "MEDIA:/tmp/first.png second/two.png",
+      mediaUrls: ["/tmp/first.png", "second/two.png"],
+    },
+    {
+      name: "Windows absolute and relative paths",
+      input: String.raw`MEDIA:C:\first\one.png second\two.png`,
+      mediaUrls: [String.raw`C:\first\one.png`, String.raw`second\two.png`],
+    },
+    {
+      name: "a POSIX path and an HTTPS URL",
+      input: "MEDIA:/tmp/first.png https://example.com/second.png",
+      mediaUrls: ["/tmp/first.png", "https://example.com/second.png"],
+    },
+    {
+      name: "a Windows path and a file URL",
+      input: String.raw`MEDIA:C:\first\one.png file:///tmp/second.png`,
+      mediaUrls: [String.raw`C:\first\one.png`, "/tmp/second.png"],
+    },
+    {
+      name: "a Windows drive and a UNC path",
+      input: String.raw`MEDIA:C:\first\one.png \\server\share\second.png`,
+      mediaUrls: [String.raw`C:\first\one.png`, String.raw`\\server\share\second.png`],
+    },
+  ] as const)("preserves distinct $name in one MEDIA directive", ({ input, mediaUrls }) => {
+    expectParsedMediaOutputCase(input, { mediaUrls: [...mediaUrls] });
+  });
+
+  it.each([
+    {
+      input: String.raw`MEDIA:C:\Users\First Last\workspace\shot.png https://127.0.0.1/secret.png`,
+      mediaPath: String.raw`C:\Users\First Last\workspace\shot.png`,
+      blockedUrl: "https://127.0.0.1/secret.png",
+    },
+    {
+      input: "MEDIA:/tmp/first.png https://metadata.google.internal/secret.png",
+      mediaPath: "/tmp/first.png",
+      blockedUrl: "https://metadata.google.internal/secret.png",
+    },
+  ] as const)(
+    "never absorbs independently rooted blocked remote media: $blockedUrl",
+    ({ input, mediaPath, blockedUrl }) => {
+      expectParsedMediaOutputCase(input, { mediaUrls: [mediaPath], text: blockedUrl });
+    },
+  );
+
+  it("keeps a spaced Windows path as one ordered media segment", () => {
+    const mediaPath = String.raw`C:\Users\First Last\workspace\shot.png`;
+
+    expect(splitMediaFromOutput(`Before\nMEDIA:${mediaPath}\nAfter`)).toMatchObject({
+      text: "Before\nAfter",
+      mediaUrls: [mediaPath],
+      segments: [
+        { type: "text", text: "Before" },
+        { type: "media", url: mediaPath },
+        { type: "text", text: "After" },
+      ],
+    });
+  });
+
+  it("keeps spaced and independently rooted paths as ordered media segments", () => {
+    const firstPath = String.raw`C:\Users\First Last\workspace\shot.png`;
+    const secondPath = String.raw`D:\Other User\workspace\second.png`;
+
+    expect(splitMediaFromOutput(`Before\nMEDIA:${firstPath} ${secondPath}\nAfter`)).toMatchObject({
+      text: "Before\nAfter",
+      mediaUrls: [firstPath, secondPath],
+      segments: [
+        { type: "text", text: "Before" },
+        { type: "media", url: firstPath },
+        { type: "media", url: secondPath },
+        { type: "text", text: "After" },
+      ],
+    });
+  });
+
+  it.each([
     "MEDIA:../../../etc/passwd",
     "MEDIA:../../.env",
     "MEDIA:~user/Pictures/My File.png",
     "MEDIA:~/Pictures/../../.ssh/id_rsa",
     "MEDIA:./foo/../../../etc/shadow",
+    String.raw`MEDIA:C:\Users\First Last\..\secret.png`,
+    "MEDIA:/tmp/project screenshots/../../.env",
   ] as const)("rejects traversal and unsupported home-dir path: %s", (input) => {
     expectRejectedMediaPathCase(input);
   });

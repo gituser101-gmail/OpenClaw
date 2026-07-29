@@ -2,6 +2,7 @@ import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { isUsageCountedSessionTranscriptFileName } from "openclaw/plugin-sdk/memory-core-host-engine-qmd";
+import { resolveMemoryCorePluginConfig } from "openclaw/plugin-sdk/memory-core-host-status";
 import type { PluginStateLeaseRunner } from "openclaw/plugin-sdk/plugin-state-runtime";
 import { buildAgentSessionKey } from "openclaw/plugin-sdk/routing";
 import {
@@ -19,7 +20,6 @@ import {
   type OpenClawConfig,
   withManager,
 } from "./cli.host.runtime.js";
-import { asRecord } from "./dreaming-shared.js";
 import type { MemoryCoreAcquireLocalService } from "./memory/embedding-local-service.js";
 import type { ShortTermAuditSummary } from "./short-term-promotion.js";
 const { warn } = theme;
@@ -58,9 +58,11 @@ export function emitMemorySecretResolveDiagnostics(
     }
   }
 }
-export function resolveMemoryPluginConfig(cfg: OpenClawConfig): Record<string, unknown> {
-  const entry = asRecord(cfg.plugins?.entries?.["memory-core"]);
-  return asRecord(entry?.config) ?? {};
+export function resolveMemoryPluginConfig(
+  cfg: OpenClawConfig,
+  options: { agentId?: string } = {},
+): Record<string, unknown> {
+  return resolveMemoryCorePluginConfig(cfg, options) ?? {};
 }
 export function formatAuditCounts(audit: ShortTermAuditSummary): string {
   const scriptCoverage = audit.conceptTagScripts

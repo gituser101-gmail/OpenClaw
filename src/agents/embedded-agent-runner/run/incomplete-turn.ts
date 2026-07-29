@@ -299,10 +299,22 @@ export function resolveIncompleteTurnPayloadText(params: {
     return null;
   }
 
-  return params.hadPotentialSideEffects ||
-    resolveAttemptReplayMetadata(params.attempt).hadPotentialSideEffects
-    ? "⚠️ Agent couldn't generate a response. Note: some tool actions may have already been executed — please verify before retrying."
-    : "⚠️ Agent couldn't generate a response. Please try again.";
+  const hadSideEffects =
+    params.hadPotentialSideEffects ||
+    resolveAttemptReplayMetadata(params.attempt).hadPotentialSideEffects;
+
+  if (hadSideEffects) {
+    const toolMetas = params.attempt.toolMetas ?? [];
+    const allToolsSucceeded =
+      toolMetas.length > 0 &&
+      toolMetas.every((tool) => tool.isError !== true && tool.asyncStarted !== true);
+    if (allToolsSucceeded) {
+      return "⚠️ Tool work completed, but no summary could be generated. Check the produced artifacts.";
+    }
+    return "⚠️ Agent couldn't generate a response. Note: some tool actions may have already been executed — please verify before retrying.";
+  }
+
+  return "⚠️ Agent couldn't generate a response. Please try again.";
 }
 
 /**

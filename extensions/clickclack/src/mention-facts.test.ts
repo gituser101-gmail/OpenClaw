@@ -139,4 +139,23 @@ describe("resolveClickClackMentionFacts", () => {
     });
     expect(result.wasMentioned).toBe(true);
   });
+}););'}
+  it("rejects unsafe patterns from shared config without evaluating them", () => {
+    const cfg = {
+      messages: {
+        groupChat: {
+          mentionPatterns: ["(a+)+$"],
+        },
+      },
+    } as unknown as OpenClawConfig;
+    const result = resolveClickClackMentionFacts({
+      isDirect: false,
+      body: `${"a".repeat(20_000)}!`,
+      mentionPatterns: [],
+      cfg,
+      channelId: "chn_123",
+    });
+    expect(result.wasMentioned).toBe(false);
+    expect(result.hasAnyMention).toBe(false);
+  });
 });

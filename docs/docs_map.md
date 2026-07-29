@@ -8983,6 +8983,7 @@ Do not edit it by hand; run `pnpm docs:map:gen`.
   - H2: Integrity checks
   - H2: Troubleshooting
   - H3: Why you cannot go back after updating to 2026.7.2
+  - H3: Schema mismatch must never quarantine or empty the database
   - H3: The Gateway refuses to start with a newer schema version error
   - H3: A database is quarantined after integrity verification failed
   - H2: Downgrades are unsupported

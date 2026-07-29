@@ -64,6 +64,7 @@ import { ensureAdditiveStateColumns } from "./openclaw-state-db-schema-additive.
 import { tableExists } from "./openclaw-state-db-schema-helpers.js";
 import {
   assertCanonicalStateSchemaShape,
+  detectOpenClawStateDatabaseSchemaMigrationsFromDatabase,
   dropLegacyStateTables,
   markCurrentStateSchemaVersion,
   repairAgentDatabasesCompositePrimaryKey,
@@ -106,7 +107,6 @@ const terminalOpenLatch = createSqliteTerminalOpenLatch({
       return;
     }
     cached.walMaintenance.close();
-    clearNodeSqliteKyselyCacheForDatabase(cached.db);
     if (cached.db.isOpen) {
       cached.db.close();
     }
@@ -178,6 +178,7 @@ export function repairOpenClawStateDatabaseSchema(options: OpenClawStateDatabase
   const db = openNodeSqliteDatabase(pathname);
   const rebuiltIndexNames = new Set<string>();
   try {
+    db.exec(`PRAGMA busy_timeout = ${OPENCLAW_SQLITE_BUSY_TIMEOUT_MS};`);
     assertSupportedSchemaVersion(db, pathname);
     db.exec("PRAGMA foreign_keys = OFF;");
     const changes = runSqliteImmediateTransactionSync(
@@ -289,6 +290,41 @@ export function repairOpenClawStateDatabaseSchema(options: OpenClawStateDatabase
     db.close();
     ensureOpenClawStatePermissions(pathname, env);
   }
+}
+
+/** Skip the exclusive doctor repair when automatic migration sees a canonical current schema. */
+export function repairOpenClawStateDatabaseSchemaIfNeeded(
+  options: OpenClawStateDatabaseOptions = {},
+): {
+  changes: string[];
+  warnings: string[];
+} {
+  const pathname = resolveDatabasePath(options);
+  if (!existsSync(pathname)) {
+    return { changes: [], warnings: [] };
+  }
+
+  let needsRepair = true;
+  let database: DatabaseSync | undefined;
+  try {
+    database = openNodeSqliteDatabase(pathname, { readOnly: true });
+    assertSupportedSchemaVersion(database, pathname);
+    needsRepair =
+      readSqliteUserVersion(database) !== OPENCLAW_STATE_SCHEMA_VERSION ||
+      detectOpenClawStateDatabaseSchemaMigrationsFromDatabase(database, pathname).length > 0;
+    if (!needsRepair) {
+      assertCurrentStateRuntimeSchema(database, pathname);
+    }
+  } catch {
+    // Preserve the repair path's existing diagnostics for unreadable or noncanonical databases.
+    needsRepair = true;
+  } finally {
+    if (database?.isOpen) {
+      database.close();
+    }
+  }
+
+  return needsRepair ? repairOpenClawStateDatabaseSchema(options) : { changes: [], warnings: [] };
 }
 
 function ensureSchema(db: DatabaseSync, pathname: string): void {
@@ -546,7 +582,6 @@ export function openOpenClawStateDatabase(
       return maintenance;
     } catch (err) {
       maintenance?.close();
-      clearNodeSqliteKyselyCacheForDatabase(db);
       db.close();
       if (
         err instanceof Error &&
@@ -610,7 +645,6 @@ export function closeOpenClawStateDatabaseByPath(pathname: string): boolean {
     return false;
   }
   database.walMaintenance.close();
-  clearNodeSqliteKyselyCacheForDatabase(database.db);
   if (database.db.isOpen) {
     database.db.close();
   }
@@ -622,7 +656,6 @@ export function closeOpenClawStateDatabaseByPath(pathname: string): boolean {
 export function closeOpenClawStateDatabase(): void {
   for (const database of cachedDatabases.values()) {
     database.walMaintenance.close();
-    clearNodeSqliteKyselyCacheForDatabase(database.db);
     if (database.db.isOpen) {
       database.db.close();
     }

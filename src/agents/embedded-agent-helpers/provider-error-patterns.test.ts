@@ -105,6 +105,51 @@ describe("classifyProviderSpecificError", () => {
     );
   });
 
+  it("classifies xAI credit exhaustion as billing (#115853)", () => {
+    expect(
+      classifyProviderSpecificError({
+        errorMessage: "You have run out of credits. Please purchase more to continue.",
+        provider: "xai",
+      }),
+    ).toBe("billing");
+  });
+
+  it("classifies xAI subscription requirement as billing (#115853)", () => {
+    expect(
+      classifyProviderSpecificError({
+        errorMessage: "You need a valid subscription to access this model.",
+        provider: "xai",
+      }),
+    ).toBe("billing");
+  });
+
+  it("does NOT classify non-xAI 'run out of credits' as billing via provider patterns (#115853)", () => {
+    expect(
+      classifyProviderSpecificError({
+        errorMessage: "You have run out of credits. Please purchase more to continue.",
+        provider: "openai",
+      }),
+    ).toBeNull();
+  });
+
+  it("does NOT classify non-xAI 'need a subscription' as billing via provider patterns (#115853)", () => {
+    expect(
+      classifyProviderSpecificError({
+        errorMessage: "You need a valid subscription to access this model.",
+        provider: "anthropic",
+      }),
+    ).toBeNull();
+  });
+
+  it("classifies xAI run out of credits regardless of case (#115853)", () => {
+    expect(
+      classifyProviderSpecificError({
+        errorMessage: "Your team has RUN OUT OF CREDITS for this month.",
+        provider: "xai",
+      }),
+    ).toBe("billing");
+  });
+
   it("does not match generic 'model is not ready' without Bedrock prefix", () => {
     expect(classifyProviderSpecificError("model is not ready")).toBeNull();
   });
@@ -170,6 +215,63 @@ describe("classifyFailoverReason with provider patterns", () => {
         { provider: "xai" },
       ),
     ).toBe("billing");
+  });
+
+  it("classifies xAI run out of credits as billing in the full pipeline (#115853)", () => {
+    expect(
+      classifyFailoverReason("You have run out of credits. Please purchase more to continue.", {
+        provider: "xai",
+      }),
+    ).toBe("billing");
+  });
+
+  it("classifies xAI needs subscription as billing in the full pipeline (#115853)", () => {
+    expect(
+      classifyFailoverReason("You need a valid subscription to access this model.", {
+        provider: "xai",
+      }),
+    ).toBe("billing");
+  });
+
+  it("classifies xAI 403 run-out-of-credits as billing NOT auth (#115853)", () => {
+    // The real xAI response includes HTTP 403. /\b403\b/ in the auth patterns
+    // must not win over the xAI-scoped billing pattern.
+    expect(
+      classifyFailoverReason("403 You have run out of credits. Please purchase more to continue.", {
+        provider: "xai",
+      }),
+    ).toBe("billing");
+  });
+
+  it("classifies xAI 403 needs-subscription as billing NOT auth (#115853)", () => {
+    expect(
+      classifyFailoverReason("403 You need a Grok subscription to access this model.", {
+        provider: "xai",
+      }),
+    ).toBe("billing");
+  });
+
+  it("does NOT classify non-xAI run out of credits as billing (#115853)", () => {
+    expect(
+      classifyFailoverReason("You have run out of credits. Please purchase more to continue.", {
+        provider: "openai",
+      }),
+    ).toBeNull();
+  });
+
+  it("non-xAI 403 with no billing text remains auth (#115853)", () => {
+    // Non-xAI 403 messages continue through the normal auth path.
+    expect(classifyFailoverReason("403 Forbidden: Access denied.", { provider: "openai" })).toBe(
+      "auth",
+    );
+  });
+
+  it("does NOT classify non-xAI needs subscription as billing (#115853)", () => {
+    expect(
+      classifyFailoverReason("You need a valid subscription to access this model.", {
+        provider: "anthropic",
+      }),
+    ).toBeNull();
   });
 });
 

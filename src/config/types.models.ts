@@ -278,11 +278,18 @@ export type ModelCatalogRefreshConfig = {
   url?: string;
 };
 
+export type ModelPricingConfig = {
+  /** Bootstrap hosted model pricing metadata. Default: true. */
+  enabled?: boolean;
+};
+
 export type ModelsConfig = {
   /** Merge provider config with bundled catalogs or replace bundled catalogs entirely. */
   mode?: "merge" | "replace";
   /** Configured provider catalog keyed by provider id. */
   providers?: Record<string, ModelProviderConfig>;
+  /** Hosted model pricing bootstrap settings. */
+  pricing?: ModelPricingConfig;
   /** Hosted model catalog refresh settings. */
   catalogRefresh?: ModelCatalogRefreshConfig;
 };

@@ -576,10 +576,18 @@ const ModelCatalogRefreshConfigSchema = z
   .strict()
   .optional();
 
+const ModelPricingConfigSchema = z
+  .object({
+    enabled: z.boolean().optional(),
+  })
+  .strict()
+  .optional();
+
 export const ModelsConfigSchema = z
   .object({
     mode: z.union([z.literal("merge"), z.literal("replace")]).optional(),
     providers: ModelProvidersSchema.optional(),
+    pricing: ModelPricingConfigSchema,
     catalogRefresh: ModelCatalogRefreshConfigSchema,
   })
   .strict()

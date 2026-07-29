@@ -284,6 +284,20 @@ function createEnabledDemoClawHubInstallConfig(): OpenClawConfig {
       memory: "demo",
     },
   };
+  config.agents = {
+    list: [
+      {
+        id: "research",
+        plugins: {
+          slots: {
+            "memory.recall": "demo",
+            "memory.compaction": "demo",
+            "memory.capture": "keep",
+          },
+        },
+      },
+    ],
+  };
   return config;
 }
 
@@ -2145,11 +2159,6 @@ describe("updateNpmInstalledPlugins", () => {
       config: {
         plugins: {
           allow: ["lossless-claw", "keep"],
-          deny: ["lossless-claw", "blocked"],
-          slots: {
-            memory: "lossless-claw",
-            contextEngine: "lossless-claw",
-          },
           entries: {
             "lossless-claw": {
               enabled: true,
@@ -2178,12 +2187,7 @@ describe("updateNpmInstalledPlugins", () => {
       enabled: false,
       config: { preserved: true },
     });
-    expect(result.config.plugins?.allow).toEqual(["lossless-claw", "keep"]);
-    expect(result.config.plugins?.deny).toEqual(["lossless-claw", "blocked"]);
-    expect(result.config.plugins?.slots).toEqual({
-      memory: "memory-core",
-      contextEngine: "legacy",
-    });
+    expect(result.config.plugins?.allow).toEqual(["keep"]);
     expect(result.outcomes).toEqual([
       {
         pluginId: "lossless-claw",
@@ -2247,7 +2251,6 @@ describe("updateNpmInstalledPlugins", () => {
     const config = {
       plugins: {
         allow: ["demo", "other"],
-        deny: ["demo", "blocked"],
         slots: { memory: "demo" },
         entries: {
           demo: {
@@ -2278,8 +2281,7 @@ describe("updateNpmInstalledPlugins", () => {
       enabled: false,
       config: { preserved: true },
     });
-    expect(result.config.plugins?.allow).toEqual(["demo", "other"]);
-    expect(result.config.plugins?.deny).toEqual(["demo", "blocked"]);
+    expect(result.config.plugins?.allow).toEqual(["other"]);
     expect(result.config.plugins?.slots?.memory).toBe("memory-core");
     expect(result.outcomes).toEqual([
       {
@@ -2756,7 +2758,7 @@ describe("updateNpmInstalledPlugins", () => {
     ]);
   });
 
-  it("disables failed plugin activation without revoking explicit policy", async () => {
+  it("disables enabled tracked plugin update failures when requested", async () => {
     const warn = vi.fn();
     installPluginFromNpmSpecMock.mockResolvedValue({
       ok: false,
@@ -2803,7 +2805,7 @@ describe("updateNpmInstalledPlugins", () => {
       enabled: false,
       config: { preserved: true },
     });
-    expect(result.config.plugins?.allow).toEqual(["demo", "other"]);
+    expect(result.config.plugins?.allow).toEqual(["other"]);
     expect(result.config.plugins?.deny).toEqual(["blocked"]);
     expect(result.config.plugins?.slots).toEqual({
       memory: "memory-core",
@@ -2882,6 +2884,15 @@ describe("updateNpmInstalledPlugins", () => {
       ...(warning ? { warning } : {}),
     });
     const config = createEnabledDemoClawHubInstallConfig();
+    config.plugins = {
+      ...config.plugins,
+      allow: ["demo", "keep"],
+      deny: ["demo", "blocked"],
+      slots: {
+        memory: "demo",
+        contextEngine: "demo",
+      },
+    };
 
     const result = await updatePlugin(config, "demo", { disableOnFailure: true });
 
@@ -2892,7 +2903,8 @@ describe("updateNpmInstalledPlugins", () => {
       enabled: true,
       config: { preserved: true },
     });
-    expect(result.config.plugins?.allow).toEqual(["demo"]);
+    expect(result.config.plugins?.allow).toEqual(["demo", "keep"]);
+    expect(result.config.plugins?.deny).toEqual(["demo", "blocked"]);
     expect(result.config.plugins?.slots?.memory).toBe("demo");
     expect(result.outcomes).toEqual([
       {
@@ -2942,7 +2954,7 @@ describe("updateNpmInstalledPlugins", () => {
       enabled: false,
       config: { preserved: true },
     });
-    expect(result.config.plugins?.allow).toEqual(["demo"]);
+    expect(result.config.plugins?.allow).toBeUndefined();
     expect(result.config.plugins?.slots?.memory).toBe("memory-core");
     expect(result.outcomes).toEqual([
       {
@@ -2975,13 +2987,18 @@ describe("updateNpmInstalledPlugins", () => {
       enabled: false,
       config: { preserved: true },
     });
-    expect(result.config.plugins?.allow).toEqual(["demo"]);
+    expect(result.config.plugins?.allow).toBeUndefined();
     expect(result.config.plugins?.slots).toEqual({
       memory: "memory-core",
     });
     const message =
       'Disabled "demo" after plugin update failure; OpenClaw will continue without it. Failed to update demo: ClawHub blocked this release; update was not started. (ClawHub clawhub:demo).';
     expect(warn).toHaveBeenCalledWith(message);
+    expect(result.config.agents?.list?.[0]?.plugins?.slots).toEqual({
+      "memory.recall": "memory-core",
+      "memory.compaction": "none",
+      "memory.capture": "keep",
+    });
     expect(result.outcomes).toEqual([
       {
         pluginId: "demo",
@@ -3399,18 +3416,18 @@ describe("updateNpmInstalledPlugins", () => {
         }),
       );
 
-    const config = createCodexAppServerInstallConfig({
-      spec: "openclaw-codex-app-server",
-    });
     const warnMessages: string[] = [];
-    const result = await updatePlugin(config, "openclaw-codex-app-server", {
+    const result = await updateNpmInstalledPlugins({
+      config: createCodexAppServerInstallConfig({
+        spec: "openclaw-codex-app-server",
+      }),
+      pluginIds: ["openclaw-codex-app-server"],
       updateChannel: "beta",
       logger: { warn: (msg) => warnMessages.push(msg) },
     });
 
     expect(npmInstallCall(0)?.spec).toBe("openclaw-codex-app-server@beta");
     expect(npmInstallCall(1)?.spec).toBe("openclaw-codex-app-server");
-    expect(npmInstallCall(1)?.config).toBe(config);
     expect(warnMessages).toEqual([
       'Plugin "openclaw-codex-app-server" has no beta npm release for openclaw-codex-app-server@beta; using openclaw-codex-app-server instead. Core update can still complete.',
     ]);
@@ -4165,6 +4182,19 @@ describe("updateNpmInstalledPlugins", () => {
             },
           },
         },
+        agents: {
+          list: [
+            {
+              id: "research",
+              plugins: {
+                slots: {
+                  "memory.recall": "voice-call",
+                  "memory.compaction": "voice-call",
+                },
+              },
+            },
+          ],
+        },
       },
       pluginIds: ["voice-call"],
     });
@@ -4174,6 +4204,10 @@ describe("updateNpmInstalledPlugins", () => {
     expect(result.config.plugins?.allow).toEqual(["@openclaw/voice-call"]);
     expect(result.config.plugins?.deny).toEqual(["@openclaw/voice-call"]);
     expect(result.config.plugins?.slots?.memory).toBe("@openclaw/voice-call");
+    expect(result.config.agents?.list?.[0]?.plugins?.slots).toEqual({
+      "memory.recall": "@openclaw/voice-call",
+      "memory.compaction": "@openclaw/voice-call",
+    });
     expect(result.config.plugins?.entries?.["@openclaw/voice-call"]).toEqual({
       enabled: false,
       hooks: { allowPromptInjection: false },

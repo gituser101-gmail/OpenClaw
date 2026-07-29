@@ -266,7 +266,7 @@ export async function runMemorySearch(
   const { config: cfg, diagnostics } = await loadMemoryCommandConfig("memory search");
   emitMemorySecretResolveDiagnostics(diagnostics, { json: Boolean(opts.json) });
   const agentId = resolveAgent(cfg, opts.agent);
-  const memoryPluginConfig = resolveMemoryPluginConfig(cfg);
+  const memoryPluginConfig = resolveMemoryPluginConfig(cfg, { agentId });
   const dreamingEnabled = resolveMemoryDreamingConfig({
     pluginConfig: memoryPluginConfig,
     cfg,
@@ -376,7 +376,7 @@ export async function runMemoryPromote(
       const status = manager.status();
       const workspaceDir = status.workspaceDir?.trim();
       const dreaming = resolveShortTermPromotionDreamingConfig({
-        pluginConfig: resolveMemoryPluginConfig(cfg),
+        pluginConfig: resolveMemoryPluginConfig(cfg, { agentId }),
         cfg,
       });
       if (!workspaceDir) {
@@ -536,7 +536,7 @@ export async function runMemoryPromoteExplain(
       const status = manager.status();
       const workspaceDir = status.workspaceDir?.trim();
       const dreaming = resolveShortTermPromotionDreamingConfig({
-        pluginConfig: resolveMemoryPluginConfig(cfg),
+        pluginConfig: resolveMemoryPluginConfig(cfg, { agentId }),
         cfg,
       });
       if (!workspaceDir) {

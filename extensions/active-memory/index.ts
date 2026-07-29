@@ -92,7 +92,7 @@ export default definePluginEntry({
         return api.config as OpenClawConfig | undefined;
       }
     };
-    let config = normalizePluginConfig(api.pluginConfig, readCurrentConfig());
+    let config = normalizePluginConfig(api.pluginConfig);
     const warnDeprecatedModelFallbackPolicy = (pluginConfig: unknown) => {
       if (hasDeprecatedModelFallbackPolicy(pluginConfig)) {
         // Wording matters here: the previous text ("set config.modelFallback
@@ -126,7 +126,7 @@ export default definePluginEntry({
         liveConfig && !isActiveMemoryPluginEnabled(liveConfig)
           ? { enabled: false }
           : (livePluginConfig ?? fallbackConfig);
-      config = normalizePluginConfig(effectivePluginConfig, liveConfig);
+      config = normalizePluginConfig(effectivePluginConfig);
       if (livePluginConfig) {
         warnDeprecatedModelFallbackPolicy(livePluginConfig);
       }
@@ -342,7 +342,7 @@ export default definePluginEntry({
               latestUserMessage: event.prompt,
               recentTurns,
             });
-            const memorySlot = normalizePluginsConfig(liveConfig.plugins).slots.memory;
+            const activeMemorySlot = normalizePluginsConfig(liveConfig.plugins).slots.memory;
             const chatIdAllowed = isAllowedChatId(invocationConfig, {
               sessionKey: destinationContext.sessionKey,
               messageProvider: destinationContext.messageProvider,
@@ -356,7 +356,7 @@ export default definePluginEntry({
             if (
               activeMemoryConfigured &&
               effectiveAgentId &&
-              memorySlot === MEMORY_CORE_PLUGIN_ID &&
+              activeMemorySlot === MEMORY_CORE_PLUGIN_ID &&
               isPrivateRecallDestination(destinationContext) &&
               chatIdAllowed
             ) {
@@ -392,8 +392,11 @@ export default definePluginEntry({
               isPrivateRecallDestination(destinationContext) &&
               chatIdAllowed,
             );
+            const recallMemorySlot = normalizePluginsConfig(liveConfig.plugins).slots[
+              "memory.recall"
+            ];
             const productRecallEligible =
-              productRecallRequested && memorySlot === MEMORY_CORE_PLUGIN_ID;
+              productRecallRequested && recallMemorySlot === MEMORY_CORE_PLUGIN_ID;
             if (productRecallRequested && !productRecallEligible) {
               api.logger.warn?.(
                 "active-memory: the current memory provider does not support protected private transcript recall; skipping Remember across conversations",
@@ -490,7 +493,7 @@ export default definePluginEntry({
           hookDeadline.stop();
         }
       },
-      { timeoutMs: beforePromptBuildTimeoutMs },
+      { timeoutMs: beforePromptBuildTimeoutMs, memoryRole: "recall" },
     );
   },
 });

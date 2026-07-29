@@ -610,7 +610,7 @@ describe("scripts/openclaw-cross-os-release-checks", () => {
     expect(buildCrossOsReleaseSmokeMemorySlotConfigArgs()).toEqual([
       "config",
       "set",
-      "plugins.slots.memory",
+      "plugins.slots.memory.recall",
       JSON.stringify("none"),
       "--strict-json",
     ]);

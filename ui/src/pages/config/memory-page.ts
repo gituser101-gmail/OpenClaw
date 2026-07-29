@@ -20,7 +20,7 @@ import {
 import { OpenClawLightDomElement } from "../../lit/openclaw-element.ts";
 import { SubscriptionsController } from "../../lit/subscriptions-controller.ts";
 import {
-  resolveConfiguredDreaming,
+  resolveConfiguredDreamingFromConfig,
   resolveDreamingConfigPathSupport,
   type DreamingConfigPathSupport,
 } from "../agents/memory/dreaming.ts";
@@ -362,7 +362,9 @@ class MemorySettingsPage extends OpenClawLightDomElement {
   }
 
   private dreamingPluginId(): string {
-    return resolveConfiguredDreaming(this.configObjectFromController()).pluginId;
+    return resolveConfiguredDreamingFromConfig(this.configObjectFromController(), {
+      agentId: this.resolveAgentId(),
+    }).pluginId;
   }
 
   private dreamingConfig(): Record<string, unknown> | null {
@@ -372,7 +374,9 @@ class MemorySettingsPage extends OpenClawLightDomElement {
   }
 
   private syncSupport(runtimeConfig: ApplicationContext["runtimeConfig"]) {
-    const pluginId = resolveConfiguredDreaming(currentConfigObject(runtimeConfig.state)).pluginId;
+    const pluginId = resolveConfiguredDreamingFromConfig(currentConfigObject(runtimeConfig.state), {
+      agentId: this.resolveAgentId(),
+    }).pluginId;
     if (pluginId !== this.supportPluginId) {
       this.supportPluginId = pluginId;
       this.support = "unknown";

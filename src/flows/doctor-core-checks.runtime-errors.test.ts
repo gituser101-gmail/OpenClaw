@@ -42,6 +42,11 @@ vi.mock("../plugins/provider-runtime.js", () => ({
   normalizeProviderToolSchemasWithPlugin: mocks.normalizeProviderToolSchemasWithPlugin,
 }));
 
+vi.mock("../plugins/provider-hook-runtime.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../plugins/provider-hook-runtime.js")>()),
+  resolveProviderToolSchemaNormalizeCacheKey: () => null,
+}));
+
 const { collectRuntimeToolSchemaFindings } = await import("./doctor-core-checks.runtime.js");
 
 function tool(name: string, parameters: unknown): AnyAgentTool {

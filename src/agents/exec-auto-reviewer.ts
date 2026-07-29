@@ -337,6 +337,32 @@ async function raceWithReviewerTimeout<T>(
   }
 }
 
+function buildExecReviewMemoKey(input: ExecAutoReviewInput): string | undefined {
+  // Only memoize when all fields are specified to avoid cross-context reuse.
+  // An unbound request (no resolved executable) is not memoized: without a
+  // resolved path the reviewer is assessing an unknown target, so reusing a
+  // prior verdict would be unsafe.
+  if (!input.command || !input.argv || !input.cwd || !input.envKeys || !input.resolvedPath) {
+    return undefined;
+  }
+  // Key covers every field that influences the reviewer prompt, matching what
+  // stringifyInput sends to the model. This prevents reusing an allow-once
+  // verdict across a different resolved executable, host, reason, analysis, or
+  // agent context — resolvedPath included because two commands that resolve to
+  // different executables are not the same review.
+  return JSON.stringify({
+    command: input.command,
+    argv: [...input.argv],
+    resolvedPath: input.resolvedPath,
+    cwd: input.cwd,
+    envKeys: [...input.envKeys],
+    host: input.host,
+    reason: input.reason,
+    analysis: input.analysis,
+    agent: input.agent,
+  });
+}
+
 /** Creates an exec auto-reviewer that uses a configured model when available. */
 export function createModelExecAutoReviewer(params: {
   cfg?: OpenClawConfig;
@@ -357,10 +383,25 @@ export function createModelExecAutoReviewer(params: {
     completeWithPreparedSimpleCompletionModel;
   const modelRef = resolveReviewerModelRef(params.reviewer);
   const timeoutMs = resolveExecReviewerTimeoutMs(params.reviewer);
+  // Per-run memo for identical exec requests. Since the reviewer uses
+  // temperature: 0 and the prompt is a pure function of the request tuple,
+  // caching the verdict for identical inputs removes redundant paid completions
+  // without changing security posture. The one-shot approval itself is still
+  // registered by each caller per invocation, so memoizing the verdict does not
+  // extend a single-use approval across executions. FIFO cap prevents
+  // unbounded memory growth in long-running agents.
+  const verdictMemo = new Map<string, ExecAutoReviewDecision>();
+  const MEMO_CAP = 256;
   return async (input) => {
     let completionController: AbortController | undefined;
     try {
       params.signal?.throwIfAborted();
+      // Check memo for identical exec requests within this run.
+      const memoKey = buildExecReviewMemoKey(input);
+      const cached = memoKey ? verdictMemo.get(memoKey) : undefined;
+      if (cached) {
+        return cached;
+      }
       if (hasReviewerDirective(input)) {
         return {
           decision: "ask",
@@ -428,7 +469,19 @@ export function createModelExecAutoReviewer(params: {
           completionFailure,
         );
       }
-      return parseExecAutoReviewResponse(extractTextContent(result));
+      const decision = parseExecAutoReviewResponse(extractTextContent(result));
+      // Cache allow-once verdicts for identical exec requests within this run.
+      // FIFO eviction: when the memo is full, remove the oldest entry to cap memory.
+      if (memoKey && decision.decision === "allow-once") {
+        if (verdictMemo.size >= MEMO_CAP) {
+          const oldest = verdictMemo.keys().next().value;
+          if (oldest !== undefined) {
+            verdictMemo.delete(oldest);
+          }
+        }
+        verdictMemo.set(memoKey, decision);
+      }
+      return decision;
     } catch (err) {
       params.signal?.throwIfAborted();
       if (completionController?.signal.aborted) {

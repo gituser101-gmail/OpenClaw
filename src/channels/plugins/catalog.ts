@@ -265,7 +265,7 @@ function toChannelMeta(params: {
     detailLabel,
     ...(systemImage ? { systemImage } : {}),
     arrayFieldMode: "defined",
-    selectionDocsPrefixMode: "truthy",
+    selectionDocsPrefixMode: "defined",
   });
 }
 

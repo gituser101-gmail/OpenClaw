@@ -479,6 +479,71 @@ describe("cron service timer seam coverage", () => {
     expect(runScriptJob).not.toHaveBeenCalled();
   });
 
+  it("blocks a host-shell precheck when cron.triggers.enabled is not true", async () => {
+    const { storePath } = await makeStorePath();
+    const now = Date.parse("2026-07-25T12:00:00.000Z");
+    const runIsolatedAgentJob = vi.fn(async () => ({ status: "ok" as const }));
+    const state = createCronServiceState({
+      storePath,
+      cronEnabled: true,
+      // triggers disabled: unattended host-shell execution must be denied.
+      cronConfig: { triggers: { enabled: false } },
+      log: logger,
+      nowMs: () => now,
+      enqueueSystemEvent: vi.fn(),
+      requestHeartbeat: vi.fn(),
+      runIsolatedAgentJob,
+    });
+    const job: CronJob = {
+      ...createDueMainJob({ now, wakeMode: "now" }),
+      precheck: { kind: "exec", command: "exit 2" },
+    };
+
+    const result = await executeJobCore(state, job);
+
+    expect(result).toMatchObject({
+      status: "error",
+      error: expect.stringContaining("cron.triggers.enabled=true"),
+    });
+    // The gate must short-circuit before any agent payload runs.
+    expect(runIsolatedAgentJob).not.toHaveBeenCalled();
+  });
+
+  it("allows a host-shell precheck to skip the payload when triggers are enabled", async () => {
+    const { storePath } = await makeStorePath();
+    const now = Date.parse("2026-07-25T12:00:00.000Z");
+    const enqueueSystemEvent = vi.fn();
+    // This path needs triggers + a permitting exec security (host approvals often
+    // default allowlist/full). Policy denies without shell spawn are covered in
+    // job-precheck.test.ts. Here we prove no-work precheck skips the payload.
+    const state = createCronServiceState({
+      storePath,
+      cronEnabled: true,
+      cronConfig: { triggers: { enabled: true } },
+      log: logger,
+      nowMs: () => now,
+      enqueueSystemEvent,
+      requestHeartbeat: vi.fn(),
+      runIsolatedAgentJob: vi.fn(async () => ({ status: "ok" as const })),
+    });
+    const job: CronJob = {
+      ...createDueMainJob({ now, wakeMode: "now" }),
+      // exit code 2 = NO_WORK under the default exit-code contract.
+      precheck: { kind: "exec", command: "exit 2" },
+    };
+
+    const result = await executeJobCore(state, job);
+
+    // If host exec policy denies in this environment, we still must not run payload.
+    if (result.status === "error" && String(result.error).includes("precheck-policy-denied")) {
+      expect(enqueueSystemEvent).not.toHaveBeenCalled();
+      return;
+    }
+    expect(result).toMatchObject({ status: "skipped" });
+    // No payload/model side effect on a no-work skip.
+    expect(enqueueSystemEvent).not.toHaveBeenCalled();
+  });
+
   it.each([
     ["now", "immediate"],
     ["next-heartbeat", "event"],

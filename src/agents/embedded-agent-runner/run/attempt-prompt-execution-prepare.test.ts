@@ -8,7 +8,6 @@ const hoisted = vi.hoisted(() => ({
   reacquireAfterPrompt: vi.fn(async () => undefined),
   releaseForPrompt: vi.fn(async () => undefined),
   resolveImageSanitizationLimits: vi.fn(() => ({ maxDimensionPx: 2048 })),
-  waitForSessionEvents: vi.fn(async () => undefined),
   withSessionWriteLock: vi.fn(async (operation: () => unknown) => await operation()),
 }));
 
@@ -60,7 +59,6 @@ function createInput(overrides: Partial<PromptExecutionInput> = {}): PromptExecu
       publishOwnedSessionFileSnapshot: hoisted.publishOwnedSessionFileSnapshot,
       reacquireAfterPrompt: hoisted.reacquireAfterPrompt,
       releaseForPrompt: hoisted.releaseForPrompt,
-      waitForSessionEvents: hoisted.waitForSessionEvents,
       withSessionWriteLock: hoisted.withSessionWriteLock,
     },
     skipPromptSubmission: false,
@@ -119,13 +117,10 @@ describe("prepareEmbeddedAttemptPromptExecution", () => {
       | {
           reacquireAfterPrompt: () => Promise<void>;
           releaseForPrompt: () => Promise<void>;
-          waitForSessionEvents: (session: unknown) => Promise<void>;
         }
       | undefined;
-    await lockHandoff?.waitForSessionEvents(input.session);
     await lockHandoff?.releaseForPrompt();
     await lockHandoff?.reacquireAfterPrompt();
-    expect(hoisted.waitForSessionEvents).toHaveBeenCalledWith(input.session);
     expect(hoisted.releaseForPrompt).toHaveBeenCalledOnce();
     expect(hoisted.reacquireAfterPrompt).toHaveBeenCalledOnce();
     expect(hoisted.detectAndLoadPromptImages).toHaveBeenCalledWith({
@@ -184,11 +179,6 @@ describe("prepareEmbeddedAttemptPromptExecution", () => {
 
   it.each([
     {
-      name: "legacy-only",
-      message: { MediaPath: "/tmp/legacy.png", MediaType: "image/png" },
-      expectedPath: "/tmp/legacy.png",
-    },
-    {
       name: "facts-only",
       message: { __openclaw: { media: [{ path: "/tmp/fact.png", contentType: "image/png" }] } },
       expectedPath: "/tmp/fact.png",
@@ -231,7 +221,7 @@ describe("prepareEmbeddedAttemptPromptExecution", () => {
       },
       expectedPath: "/tmp/media-only.png",
     },
-  ])("hydrates $name persisted rows through facts-first media", async (testCase) => {
+  ])("hydrates $name persisted rows through canonical media", async (testCase) => {
     const base = createInput();
     const persistedMessage = {
       role: "user" as const,

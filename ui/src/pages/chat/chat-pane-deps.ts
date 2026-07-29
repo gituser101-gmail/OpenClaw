@@ -31,7 +31,6 @@ export {
 export type {
   ControlUiSessionBranch,
   ControlUiSessionPullRequest,
-  ControlUiSessionPullRequests,
 } from "../../../../src/gateway/control-ui-contract.js";
 export { GatewayRequestError, type GatewayBrowserClient } from "../../api/gateway.ts";
 export type {
@@ -40,6 +39,7 @@ export type {
   SessionVisibility,
 } from "../../api/types.ts";
 export { findInlineApproval } from "../../app/approval-presentation.ts";
+export { invalidateAssistantIdentityCache } from "../../app/assistant-identity.ts";
 export {
   applicationContext,
   type ApplicationContext,
@@ -64,6 +64,7 @@ export {
 export { loadSettings, patchSettings } from "../../app/settings.ts";
 export {
   readPresenceEntries,
+  resolveActorIdentityUsers,
   resolveCurrentSelfUser,
   type PresencePayload,
 } from "../../app/user-profile.ts";
@@ -85,7 +86,6 @@ export {
   hasSessionPresenceViewers,
 } from "../../components/viewer-facepile.ts";
 export { t } from "../../i18n/index.ts";
-export { resolveBoardChatLayoutWidth } from "../../lib/board/chat-layout.ts";
 export {
   acquireBoardProviderForSession,
   boardProviderCacheKey,
@@ -100,14 +100,13 @@ export {
   type BoardFace,
   type BoardSessionView,
 } from "../../lib/board/settings.ts";
-export type { SwarmRosterHydrator } from "../../lib/board/swarm-dashboard.ts";
+export type { SwarmRosterHydrator } from "../../lib/sessions/swarm-roster.ts";
 export type { BoardSnapshot, BoardTab } from "../../lib/board/types.ts";
 export type { BoardViewSnapshot } from "../../lib/board/view-types.ts";
 export {
   resolveControlUiFollowUpMode,
   resolveControlUiServerQueueMode,
 } from "../../lib/chat/follow-up-mode.ts";
-export { retirePendingChatSideQuestion } from "../../lib/chat/side-result.ts";
 export { copyToClipboard } from "../../lib/clipboard.ts";
 export { clampText } from "../../lib/format.ts";
 export {
@@ -117,6 +116,7 @@ export {
 export {
   ObserverDigestHistory,
   pickFreshestObserverDigest,
+  projectSessionObserverDigest,
   resolveChatPaneObserverRunId,
 } from "../../lib/observer-digest.ts";
 export { isWorkboardEnabledInConfigSnapshot } from "../../lib/plugin-activation.ts";
@@ -136,10 +136,13 @@ export {
 export {
   areUiSessionKeysEquivalent,
   buildAgentMainSessionKey,
+  canonicalUiSessionKeyForPersistence,
+  normalizeAgentId,
   normalizeSessionKeyForUiComparison,
   parseAgentSessionKey,
   resolveAgentIdFromSessionKey,
   resolveUiConfiguredMainKey,
+  resolveUiGlobalAliasAgentId,
   uiSessionEventMatches,
 } from "../../lib/sessions/session-key.ts";
 export { SessionUnreadPatchGuard } from "../../lib/sessions/unread.ts";
@@ -156,11 +159,13 @@ export {
   type WorkboardCardChipProps,
 } from "./board-session-surface.ts";
 export { catalogMessageId } from "./catalog-message-id.ts";
-export { refreshChatAvatar } from "./chat-avatar.ts";
+export { invalidateChatAvatarCache, refreshChatAvatar } from "./chat-avatar.ts";
+export { replaceChatAttachmentsFromEditor } from "./attachment-payload-store.ts";
 export type { ChatHistoryPagination } from "./chat-history-pagination.ts";
 export {
   applyChatAgentsList,
   clearChatHistory,
+  loadChatBranches,
   loadChatHistory,
   loadOlderChatHistoryPage,
   rewindChatHistory,
@@ -168,10 +173,11 @@ export {
   switchChatHistoryBranch,
   syncSelectedSessionMessageSubscription,
 } from "./chat-history.ts";
-export { requestSessionObserverAnswer, sendSessionObserverVisibility } from "./chat-observer.ts";
+export { sendSessionObserverVisibility } from "./chat-observer.ts";
 export {
   applySelectedSessionProjection,
   dismissChatError,
+  resolveChatArtifactDownload,
   resolveAssistantAttachmentAuthToken,
   SessionParticipationTracker,
 } from "./chat-pane-state.ts";
@@ -180,30 +186,56 @@ export { dismissRealtimeTalkError } from "./chat-realtime.ts";
 export { activeChatRunStartupStatus } from "./chat-run-startup.ts";
 export { flushChatQueueForEvent, retryReconnectableQueuedChatSends } from "./chat-send-actions.ts";
 export {
+  ChatSessionCompanionThreads,
+  requestSessionCompanionAnswer,
+  requestSessionCompanionState,
+  resetSessionCompanion,
+} from "./chat-session-companion.ts";
+export {
   flushChatQueueAfterIdleSessionReconciliation,
   switchChatFastMode,
   switchChatModel,
   switchChatThinkingLevel,
 } from "./chat-session.ts";
+export { ChatStateController } from "./chat-state-controller.ts";
+export { handlePageGatewayEvent } from "./chat-state-events.ts";
+export type { ChatPageHost } from "./chat-state-host.ts";
+export { createPageState } from "./chat-state-page.ts";
 export {
-  canCreateChatSession,
-  ChatStateController,
-  createPageState,
-  handlePageGatewayEvent,
+  invalidateChatMetadataCache,
   refreshChatCommands,
   refreshChatMetadata,
   refreshChatModelAuthStatus,
   refreshPageChat,
+} from "./chat-state-refresh.ts";
+export {
+  canCreateChatSession,
   refreshRouteSessionOptions,
   resetChatStateForRouteSession,
   retryChatComposerMemoryFallback,
   resolveChatAgentId,
   resolveChatAvatarUrl,
+  selectedChatSessionRow,
   saveRouteSessionSettings,
-  type ChatPageHost,
-} from "./chat-state.ts";
+} from "./chat-state-route.ts";
 export { resetChatViewState } from "./chat-view-state.ts";
 export { renderChat, type ChatProps } from "./chat-view.ts";
+export {
+  SIDEBAR_NARROW_BREAKPOINT_PX,
+  activatePanel,
+  closeSlot,
+  detachPanelToColumn,
+  fitSidebarLayout,
+  isSidebarRegionCollapsed,
+  mergePanelIntoColumn,
+  sidebarPrimaryWidth,
+  normalizeSidebarLayout,
+  openSlot,
+  resizeColumn,
+  type SidebarLayout,
+  type SidebarSide,
+  type SidebarSlotId,
+} from "./sidebar-layout.ts";
 export { renderCatalogTerminalButton } from "./components/catalog-terminal-button.ts";
 export { chatAttachmentFromDataUrl } from "./components/chat-attachments.ts";
 export {
@@ -227,6 +259,7 @@ export {
   listDismissedChatPullRequests,
 } from "./components/chat-pull-requests.ts";
 export { renderChatResizableDivider } from "./components/chat-resizable-divider.ts";
+export type { SessionRailMode } from "./components/chat-session-rail.ts";
 export {
   renderChatSessionSharing,
   type ChatSessionSharingState,
@@ -240,15 +273,10 @@ export {
   toggleSessionWorkspace,
   type SessionWorkspaceProps,
 } from "./components/chat-session-workspace.ts";
-export {
-  CHAT_DETAIL_FULL_MESSAGE_MAX_CHARS,
-  type DetailFullMessageResult,
-  type SidebarContent,
-  type SidebarFullMessageRequest,
-} from "./components/chat-sidebar.ts";
+export type { SessionDiscussionPanelConfig } from "./components/session-discussion-panel.ts";
 export {
   ChatTranscriptController,
-  resetChatThreadPresentationState,
+  resetChatThreadSessionPresentationState,
 } from "./components/chat-thread.ts";
 export { WIDGET_PROMPT_EVENT, type WidgetPromptEventDetail } from "./components/chat-tool-cards.ts";
 export {
@@ -259,13 +287,20 @@ export {
   storedChatOutboxScopeKey,
 } from "./composer-persistence.ts";
 export { exportChatMarkdown } from "./export.ts";
-export { admitInitialUserMessageHandoff } from "./initial-turn-handoff.ts";
+export { admitInitialTurnHandoff, admitInitialUserMessageHandoff } from "./initial-turn-handoff.ts";
 export {
   hasAbortableSessionRun,
   reconcileStaleChatRunAfterSessionStatePublication,
   replayPendingChatAbort,
 } from "./run-lifecycle.ts";
-export { scheduleChatScroll } from "./scroll.ts";
+export {
+  captureChatSessionScrollPosition,
+  getChatSessionScrollPosition,
+  restoreChatScroll,
+  saveChatSessionScrollPosition,
+  scheduleChatScroll,
+  type ChatSessionScrollPosition,
+} from "./scroll.ts";
 export {
   clearChatMessagesFromCache,
   readChatSessionSnapshot,
@@ -274,6 +309,7 @@ export {
 export {
   reconcileWaitingApprovalsFromSnapshot,
   resolveActiveRunOutputTokens,
+  resolveChatProjectionRunId,
 } from "./tool-stream.ts";
 export { configureToolTitleFetcher } from "./tool-titles.ts";
 export { workspaceResultConflictFromPlacement } from "./workspace-conflict.ts";

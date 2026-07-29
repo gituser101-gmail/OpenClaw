@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto";
 import fsSync, { type Stats } from "node:fs";
 import fs from "node:fs/promises";
-import type { FileHandle } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
@@ -9,7 +8,9 @@ import { z } from "zod";
 import { loadSqliteVecExtension } from "../../packages/memory-host-sdk/src/engine-storage.js";
 import {
   ensureDurableDirectory,
+  getPublishFileExclusiveFailureDetails,
   pinDirectory,
+  publishFileNoClobber,
   requireDirectorySync,
   syncDirectory,
   syncDirectoryIfSupported,
@@ -572,11 +573,20 @@ class LocalSqliteSnapshotProvider implements SqliteSnapshotProvider {
         );
       }
       const snapshotPath = path.join(this.#repositoryPath, entry.name);
-      if (await isIncompleteSnapshotDirectory(snapshotPath)) {
+      const snapshotState = await classifySnapshotDirectory(snapshotPath);
+      if (snapshotState === "incomplete") {
         continue;
       }
-      await assertExactSnapshotContents(snapshotPath);
-      const manifest = await readSnapshotManifest(snapshotPath);
+      const manifest =
+        snapshotState === "complete-pending"
+          ? await recoverCompletePendingSnapshot({
+              allowedDatabaseRoles: this.#allowedDatabaseRoles,
+              repositoryIdentity: repositoryStat,
+              repositoryPath: this.#repositoryPath,
+              snapshotPath,
+              validationRootPath: this.#validationRootPath,
+            })
+          : await readVerifiedSnapshotManifest(snapshotPath);
       assertAllowedDatabaseRole(manifest, this.#allowedDatabaseRoles);
       snapshots.push({
         ref: { path: snapshotPath },
@@ -601,6 +611,18 @@ class LocalSqliteSnapshotProvider implements SqliteSnapshotProvider {
     assertDirectory(repositoryStat, this.#repositoryPath, "SQLite snapshot repository");
     const snapshotStat = await fs.lstat(snapshotDir);
     assertDirectory(snapshotStat, snapshotDir, "SQLite snapshot");
+    if (await lstatIfExists(path.join(snapshotDir, SNAPSHOT_PENDING_FILENAME))) {
+      const snapshotState = await classifySnapshotDirectory(snapshotDir);
+      if (snapshotState === "complete-pending") {
+        await recoverCompletePendingSnapshot({
+          allowedDatabaseRoles: this.#allowedDatabaseRoles,
+          repositoryIdentity: repositoryStat,
+          repositoryPath: this.#repositoryPath,
+          snapshotPath: snapshotDir,
+          validationRootPath: this.#validationRootPath,
+        });
+      }
+    }
     return snapshotDir;
   }
 }
@@ -881,110 +903,49 @@ function assertDirectoryIdentitySync(directoryPath: string, expectedIdentity: St
   }
 }
 
-function isSnapshotEntryLinkFallbackError(error: unknown): boolean {
-  const code = (error as NodeJS.ErrnoException).code;
-  return (
-    code === "EPERM" ||
-    code === "EXDEV" ||
-    code === "ENOTSUP" ||
-    code === "EOPNOTSUPP" ||
-    code === "ENOSYS"
-  );
-}
-
 async function publishSnapshotEntryNoOverwrite(
   sourcePath: string,
   targetPath: string,
   entryName: string,
   publishedEntries: Map<string, Stats>,
 ): Promise<void> {
-  let linked = false;
-  let linkedSourceIdentity: Stats | undefined;
+  let publication: Awaited<ReturnType<typeof publishFileNoClobber>>;
   try {
-    linkedSourceIdentity = await fs.lstat(sourcePath);
-    await fs.link(sourcePath, targetPath);
-    publishedEntries.set(entryName, linkedSourceIdentity);
-    linked = true;
+    publication = await publishFileNoClobber(sourcePath, targetPath, {
+      strategy: "link-or-copy",
+      moveSource: true,
+      durability: "fail-closed",
+    });
   } catch (error) {
-    if (!isSnapshotEntryLinkFallbackError(error)) {
-      throw error;
+    const details = getPublishFileExclusiveFailureDetails(error);
+    if (details?.targetCreated && details.cleanup !== "removed") {
+      const [currentSource, currentTarget] = await Promise.all([
+        fs.lstat(sourcePath).catch(() => undefined),
+        fs.lstat(targetPath).catch(() => undefined),
+      ]);
+      const matchesReceipt =
+        details.targetIdentity &&
+        currentTarget &&
+        sameFileIdentity(details.targetIdentity, currentTarget);
+      const matchesSource =
+        currentSource && currentTarget && sameFileIdentity(currentSource, currentTarget);
+      if (currentTarget && (matchesReceipt || matchesSource)) {
+        publishedEntries.set(entryName, currentTarget);
+      }
     }
-    const copiedIdentity = await copySnapshotEntryExclusive(sourcePath, targetPath);
-    publishedEntries.set(entryName, copiedIdentity);
+    throw error;
   }
-  const expectedTargetIdentity = publishedEntries.get(entryName);
+  const expectedTargetIdentity = publication.identity;
+  publishedEntries.set(entryName, expectedTargetIdentity);
   const initialTargetIdentity = await fs.lstat(targetPath);
-  if (!expectedTargetIdentity || !sameFileIdentity(expectedTargetIdentity, initialTargetIdentity)) {
+  if (!sameFileIdentity(expectedTargetIdentity, initialTargetIdentity)) {
     throw new Error(`SQLite snapshot entry changed during publication: ${targetPath}`);
   }
-  if (linked) {
-    if (!linkedSourceIdentity || !sameFileIdentity(linkedSourceIdentity, initialTargetIdentity)) {
-      throw new Error(`SQLite snapshot entry changed during publication: ${targetPath}`);
-    }
-    const sourceIdentity = await fs.lstat(sourcePath);
-    if (!sameFileIdentity(sourceIdentity, initialTargetIdentity)) {
-      throw new Error(`SQLite snapshot entry changed during publication: ${targetPath}`);
-    }
-  }
-  await fs.unlink(sourcePath);
   const finalTargetIdentity = await fs.lstat(targetPath);
   if (!sameFileIdentity(initialTargetIdentity, finalTargetIdentity)) {
     throw new Error(`SQLite snapshot entry changed after publication: ${targetPath}`);
   }
   publishedEntries.set(entryName, finalTargetIdentity);
-}
-
-async function copySnapshotEntryExclusive(sourcePath: string, targetPath: string): Promise<Stats> {
-  const source = await fs.open(sourcePath, "r");
-  let target: FileHandle | undefined;
-  let targetIdentity: Stats | undefined;
-  try {
-    target = await fs.open(targetPath, "wx+", SNAPSHOT_FILE_MODE);
-    targetIdentity = await target.stat();
-    const buffer = Buffer.allocUnsafe(1024 * 1024);
-    let offset = 0;
-    while (true) {
-      const { bytesRead } = await source.read(buffer, 0, buffer.length, offset);
-      if (bytesRead === 0) {
-        break;
-      }
-      let bytesWritten = 0;
-      while (bytesWritten < bytesRead) {
-        const result = await target.write(
-          buffer,
-          bytesWritten,
-          bytesRead - bytesWritten,
-          offset + bytesWritten,
-        );
-        if (result.bytesWritten === 0) {
-          throw new Error(`SQLite snapshot entry copy made no progress: ${targetPath}`);
-        }
-        bytesWritten += result.bytesWritten;
-      }
-      offset += bytesRead;
-    }
-    await target.sync();
-    const finalIdentity = await target.stat();
-    const currentIdentity = await fs.lstat(targetPath);
-    if (
-      !sameFileIdentity(targetIdentity, finalIdentity) ||
-      !sameFileIdentity(targetIdentity, currentIdentity)
-    ) {
-      throw new Error(`SQLite snapshot entry changed during copy: ${targetPath}`);
-    }
-    return finalIdentity;
-  } catch (error) {
-    if (targetIdentity) {
-      const currentIdentity = await fs.lstat(targetPath).catch(() => undefined);
-      if (currentIdentity && sameFileIdentity(currentIdentity, targetIdentity)) {
-        await fs.unlink(targetPath).catch(() => undefined);
-      }
-    }
-    throw error;
-  } finally {
-    await target?.close().catch(() => undefined);
-    await source.close().catch(() => undefined);
-  }
 }
 
 async function assertExactSnapshotContents(snapshotDir: string): Promise<void> {
@@ -1026,7 +987,9 @@ async function assertSnapshotContents(snapshotDir: string, expected: Set<string>
   }
 }
 
-async function isIncompleteSnapshotDirectory(snapshotDir: string): Promise<boolean> {
+type SnapshotDirectoryState = "committed" | "complete-pending" | "incomplete";
+
+async function classifySnapshotDirectory(snapshotDir: string): Promise<SnapshotDirectoryState> {
   const entries = await fs.readdir(snapshotDir, { withFileTypes: true });
   const knownEntries = new Set([
     SNAPSHOT_MANIFEST_FILENAME,
@@ -1041,7 +1004,94 @@ async function isIncompleteSnapshotDirectory(snapshotDir: string): Promise<boole
     }
   }
   const names = new Set(entries.map((entry) => entry.name));
-  return names.size === 0 || names.has(SNAPSHOT_PENDING_FILENAME);
+  if (names.size === 0) {
+    return "incomplete";
+  }
+  if (!names.has(SNAPSHOT_PENDING_FILENAME)) {
+    return "committed";
+  }
+  const complete = names.has(SNAPSHOT_MANIFEST_FILENAME) && names.has(SNAPSHOT_SQLITE_FILENAME);
+  return complete ? "complete-pending" : "incomplete";
+}
+
+async function recoverCompletePendingSnapshot(params: {
+  allowedDatabaseRoles: readonly SnapshotDatabaseIdentity["role"][] | undefined;
+  repositoryIdentity: Stats;
+  repositoryPath: string;
+  snapshotPath: string;
+  validationRootPath: string;
+}): Promise<SnapshotManifest> {
+  const trustedRepositoryPath = await assertTrustedStagingRoot(
+    params.repositoryIdentity,
+    params.repositoryPath,
+  );
+  await assertDirectoryIdentity(trustedRepositoryPath, params.repositoryIdentity);
+  const snapshotDirectory = await pinDirectory(params.snapshotPath, {
+    label: "SQLite pending snapshot directory",
+  });
+  try {
+    const snapshotIdentity = snapshotDirectory.receipt.identity;
+    await assertPrivateStagingDirectory(snapshotIdentity, params.snapshotPath);
+    await snapshotDirectory.assertCurrent();
+    const snapshotState = await classifySnapshotDirectory(params.snapshotPath);
+    if (snapshotState === "incomplete") {
+      throw new Error(`SQLite snapshot is incomplete: ${params.snapshotPath}`);
+    }
+    const manifest = await readSnapshotManifest(params.snapshotPath);
+    assertAllowedDatabaseRole(manifest, params.allowedDatabaseRoles);
+    const artifact = await hashSnapshotArtifact(params.snapshotPath);
+    const artifactPath = path.join(params.snapshotPath, SNAPSHOT_SQLITE_FILENAME);
+    assertArtifactMatchesManifest(artifactPath, artifact, manifest);
+    await verifySnapshotDatabaseFile(
+      artifactPath,
+      artifact.stat,
+      manifest,
+      params.validationRootPath,
+    );
+    requireDirectorySync(await snapshotDirectory.sync(), "SQLite pending snapshot directory");
+
+    const pendingPath = path.join(params.snapshotPath, SNAPSHOT_PENDING_FILENAME);
+    const pendingIdentity = lstatIfExistsSync(pendingPath);
+    if (pendingIdentity) {
+      if (
+        pendingIdentity.isSymbolicLink() ||
+        !pendingIdentity.isFile() ||
+        pendingIdentity.nlink > 1
+      ) {
+        throw new Error(`SQLite snapshot pending marker is unsafe: ${pendingPath}`);
+      }
+      await snapshotDirectory.assertCurrent();
+      const currentPendingIdentity = lstatIfExistsSync(pendingPath);
+      if (currentPendingIdentity) {
+        if (!sameFileIdentity(pendingIdentity, currentPendingIdentity)) {
+          throw new Error(`SQLite snapshot pending marker changed: ${pendingPath}`);
+        }
+        try {
+          fsSync.unlinkSync(pendingPath);
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+            throw error;
+          }
+        }
+      }
+    }
+
+    // Both durable payload files already exist. Removing the exact marker and
+    // syncing this directory completes the interrupted repository commit.
+    // A concurrent recovery may win the unlink; syncing here still commits it.
+    requireDirectorySync(await snapshotDirectory.sync(), "SQLite pending snapshot directory");
+    await snapshotDirectory.assertCurrent();
+    const committedManifest = await readVerifiedSnapshotManifest(params.snapshotPath);
+    if (!isDeepStrictEqual(committedManifest, manifest)) {
+      throw new Error(`SQLite snapshot manifest changed during recovery: ${params.snapshotPath}`);
+    }
+    const committedArtifact = await hashSnapshotArtifact(params.snapshotPath);
+    assertArtifactMatchesManifest(artifactPath, committedArtifact, committedManifest);
+    await assertDirectoryIdentity(trustedRepositoryPath, params.repositoryIdentity);
+    return committedManifest;
+  } finally {
+    await snapshotDirectory.close().catch(() => undefined);
+  }
 }
 
 async function assertFreshRestorePathsAbsent(databasePath: string): Promise<void> {
@@ -1073,6 +1123,17 @@ function assertNoSqliteSidecarsSync(databasePath: string): void {
 async function lstatIfExists(pathname: string): Promise<Stats | undefined> {
   try {
     return await fs.lstat(pathname);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return undefined;
+    }
+    throw error;
+  }
+}
+
+function lstatIfExistsSync(pathname: string): Stats | undefined {
+  try {
+    return fsSync.lstatSync(pathname);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
       return undefined;

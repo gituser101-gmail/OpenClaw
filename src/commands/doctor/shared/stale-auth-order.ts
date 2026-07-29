@@ -5,14 +5,10 @@ import { listAgentIds, resolveAgentDir } from "../../../agents/agent-scope-confi
 import { listRuntimeExternalAuthProfiles } from "../../../agents/auth-profiles/external-auth.js";
 import { resolveAuthProfileOrder } from "../../../agents/auth-profiles/order.js";
 import {
-  resolveAuthStatePath,
-  resolveAuthStorePath,
-  resolveLegacyAuthStorePath,
-} from "../../../agents/auth-profiles/paths.js";
-import {
   coercePersistedAuthProfileStore,
   mergeAuthProfileStores,
 } from "../../../agents/auth-profiles/persisted.js";
+import { resolveSharedMainAuthAgentDir } from "../../../agents/auth-profiles/shared-main-dir.js";
 import {
   inspectPersistedAuthProfileStateRaw,
   inspectPersistedAuthProfileStoreRaw,
@@ -28,15 +24,17 @@ import type { AuthProfileStore } from "../../../agents/auth-profiles/types.js";
 import { resolveProviderIdForAuth } from "../../../agents/provider-auth-aliases.js";
 import { resolveStateDir } from "../../../config/paths.js";
 import type { OpenClawConfig } from "../../../config/types.openclaw.js";
-import {
-  LEGACY_IMPLICIT_AGENT_ID as DEFAULT_AGENT_ID,
-  normalizeAgentId,
-} from "../../../routing/session-key.js";
+import { normalizeAgentId } from "../../../routing/session-key.js";
 import {
   inspectOpenClawAgentDatabaseOwner,
   listOpenClawRegisteredAgentDatabases,
 } from "../../../state/openclaw-agent-db.js";
 import { isRecord, resolveUserPath } from "../../../utils.js";
+import {
+  resolveLegacyAuthProfilesPath as resolveAuthStorePath,
+  resolveLegacyAuthStatePath as resolveAuthStatePath,
+  resolveLegacyFlatAuthPath as resolveLegacyAuthStorePath,
+} from "../../doctor-auth-legacy-paths.js";
 
 type StaleConfiguredAuthOrder = {
   provider: string;
@@ -290,7 +288,7 @@ function loadConfiguredAgentAuthStores(
   }
   // Every secondary agent inherits the legacy main store at runtime, even when
   // `agents.list` names a different default agent.
-  const mainAgentDir = path.join(resolveStateDir(env), "agents", DEFAULT_AGENT_ID, "agent");
+  const mainAgentDir = path.resolve(resolveSharedMainAuthAgentDir(env));
   const activeAgentDirs = new Set<string>();
   const expectedAgentIdsByDir = new Map<string, Set<string>>();
   const addExpectedAgentDir = (agentDir: string, agentId: string) => {
@@ -298,7 +296,7 @@ function loadConfiguredAgentAuthStores(
     owners.add(normalizeAgentId(agentId));
     expectedAgentIdsByDir.set(agentDir, owners);
   };
-  addExpectedAgentDir(mainAgentDir, DEFAULT_AGENT_ID);
+  addExpectedAgentDir(mainAgentDir, resolveAuthProfileDatabaseOwnerId(mainAgentDir));
   for (const agentId of listAgentIds(cfg)) {
     const agentDir = path.resolve(resolveAgentDir(cfg, agentId, env));
     activeAgentDirs.add(agentDir);

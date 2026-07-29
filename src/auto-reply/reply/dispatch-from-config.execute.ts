@@ -71,6 +71,7 @@ export async function executeDispatch(state: PrepareDispatchExecutionReadyState)
     reasoningPayloadsEnabled,
     recordAgentDispatchCompleted,
     recordProcessed,
+    recordRoutedBlockReplyDelivery,
     replyConfig,
     replyContextAccountId,
     replyResolver,
@@ -81,6 +82,7 @@ export async function executeDispatch(state: PrepareDispatchExecutionReadyState)
     routeReplyTo,
     runWithDispatchLifecycleAdmission,
     sendPayloadAsync,
+    sendTrackedBlockReply,
     sendPlanUpdate,
     sendPolicy,
     sendPolicyDenied,
@@ -108,6 +110,7 @@ export async function executeDispatch(state: PrepareDispatchExecutionReadyState)
     suppressToolErrorWarnings,
     traceReplyPhase,
     trackDispatchLifecycleWork,
+    turnLedger,
     typing,
     waitForPendingDirectBlockReplyDelivery,
     wrapProgressCallback,
@@ -310,7 +313,7 @@ export async function executeDispatch(state: PrepareDispatchExecutionReadyState)
                       await sendPayloadAsync(deliveryPayload, undefined, false);
                     } else {
                       markInboundDedupeReplayUnsafe();
-                      const delivered = dispatcher.sendToolResult(deliveryPayload);
+                      const delivered = turnLedger.sendQueued("tool", deliveryPayload).queued;
                       if (delivered && hasAskUserPayload(deliveryPayload)) {
                         // ask_user blocks until this callback resolves; drain its prompt now
                         // or the answerable UI can remain queued behind the blocked agent run.
@@ -541,15 +544,16 @@ export async function executeDispatch(state: PrepareDispatchExecutionReadyState)
                       return;
                     }
                     if (shouldRouteToOriginating) {
-                      await sendPayloadAsync(
+                      const result = await sendPayloadAsync(
                         normalizedPayload,
                         context?.abortSignal,
                         false,
                         "block",
                       );
+                      recordRoutedBlockReplyDelivery(normalizedPayload, result);
                     } else {
                       markInboundDedupeReplayUnsafe();
-                      const delivered = dispatcher.sendBlockReply(normalizedPayload);
+                      const delivered = sendTrackedBlockReply(normalizedPayload);
                       if (delivered) {
                         state.hasPendingDirectBlockReplyDelivery = true;
                       }

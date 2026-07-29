@@ -7,10 +7,6 @@ import { buildAuthHealthSummary } from "../../../agents/auth-health.js";
 import { testing as externalAuthTesting } from "../../../agents/auth-profiles/external-auth.test-support.js";
 import { resolveAuthProfileOrder } from "../../../agents/auth-profiles/order.js";
 import {
-  resolveAuthStorePath,
-  resolveLegacyAuthStorePath,
-} from "../../../agents/auth-profiles/paths.js";
-import {
   resolveAuthProfileDatabasePath,
   resolveAuthProfileDatabaseFilePaths,
   writePersistedAuthProfileStateRaw,
@@ -24,6 +20,10 @@ import {
   openOpenClawAgentDatabase,
 } from "../../../state/openclaw-agent-db.js";
 import { closeOpenClawStateDatabaseForTest } from "../../../state/openclaw-state-db.js";
+import {
+  resolveLegacyAuthProfilesPath as resolveAuthStorePath,
+  resolveLegacyFlatAuthPath as resolveLegacyAuthStorePath,
+} from "../../doctor-auth-legacy-paths.js";
 import {
   collectStaleConfiguredAuthOrderWarnings,
   maybeRepairStaleConfiguredAuthOrders,
@@ -682,6 +682,34 @@ describe("repairStaleConfiguredAuthOrders", () => {
       }
     },
   );
+
+  it("uses OPENCLAW_AGENT_DIR as the inherited shared-main auth store", async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-main-auth-order-"));
+    try {
+      const sharedMainAgentDir = path.join(stateDir, "relocated-main-agent");
+      writePersistedAuthProfileStoreRaw(
+        tokenStore({ profileId: "anthropic:relocated-main", provider: "anthropic" }),
+        sharedMainAgentDir,
+      );
+      const cfg = {
+        auth: { order: { anthropic: ["anthropic:missing"] } },
+      } satisfies OpenClawConfig;
+
+      const result = maybeRepairStaleConfiguredAuthOrders({
+        cfg,
+        env: {
+          OPENCLAW_AGENT_DIR: sharedMainAgentDir,
+          OPENCLAW_STATE_DIR: stateDir,
+        },
+      });
+
+      expect(result.config.auth?.order?.anthropic).toBeUndefined();
+      expect(result.changes).toHaveLength(1);
+      expect(result.warnings).toBeUndefined();
+    } finally {
+      await fs.rm(stateDir, { recursive: true, force: true });
+    }
+  });
 
   it("preserves an order that selects a runtime-only external profile", async () => {
     const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-runtime-auth-order-"));

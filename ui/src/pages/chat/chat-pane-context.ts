@@ -1,12 +1,17 @@
 import {
   applyChatAgentsList,
   applySelectedSessionProjection,
-  areUiSessionKeysEquivalent,
   buildAgentMainSessionKey,
+  canonicalUiSessionKeyForPersistence,
   clearChatMessagesFromCache,
   hasOperatorAdminAccess,
+  invalidateChatAvatarCache,
+  invalidateAssistantIdentityCache,
+  invalidateChatMetadataCache,
   isGatewayMethodAdvertised,
+  loadSettings,
   markQueuedChatSendsWaitingForReconnect,
+  normalizeSidebarLayout,
   parseAgentSessionKey,
   parseCatalogSessionKey,
   readPresenceEntries,
@@ -20,6 +25,7 @@ import {
   resolveSessionKey,
   resolveUiConfiguredMainKey,
   retryReconnectableQueuedChatSends,
+  selectedChatSessionRow,
   setQuestionPromptClient,
   syncSelectedSessionMessageSubscription,
   uiSessionEventMatches,
@@ -27,6 +33,8 @@ import {
   type ApplicationGatewaySnapshot,
 } from "./chat-pane-deps.ts";
 import { ChatPaneLifecycle } from "./chat-pane-lifecycle.ts";
+import { resolveAssistantAttachmentAuthToken } from "./chat-pane-state.ts";
+import { releaseChatMediaResourceSubscriber } from "./components/chat-message-media.ts";
 
 export abstract class ChatPaneContext extends ChatPaneLifecycle {
   protected applySessionsState(stateValue: ApplicationContext["sessions"]["state"]) {
@@ -53,16 +61,18 @@ export abstract class ChatPaneContext extends ChatPaneLifecycle {
     state.sessionsLoading = stateValue.loading;
     state.sessionsError = stateValue.error;
     for (const row of stateValue.result?.sessions ?? []) {
-      const sessionKey = this.resolveBoardSessionKey(row.key);
+      const sessionKey = this.resolveObserverDigestHistoryKey(
+        row.key,
+        row.observerDigest?.agentId ?? stateValue.agentId ?? undefined,
+      );
       this.observerDigestHistory.sync(sessionKey, row.sessionId);
       if (row.observerDigest) {
         this.observerDigestHistory.hydrate(sessionKey, row.observerDigest, row.sessionId);
       }
     }
+    this.refreshSwarmRoster();
     this.refreshBuiltinBoardSnapshot();
-    const selectedSession = stateValue.result?.sessions.find((row) =>
-      areUiSessionKeysEquivalent(row.key, state.sessionKey),
-    );
+    const selectedSession = selectedChatSessionRow(state);
     if (applySelectedSessionProjection(state, selectedSession)) {
       this.markSessionRead(selectedSession);
     }
@@ -129,6 +139,9 @@ export abstract class ChatPaneContext extends ChatPaneLifecycle {
     ) {
       return;
     }
+    if (rootsChanged) {
+      releaseChatMediaResourceSubscriber(state.requestUpdate);
+    }
     state.localMediaPreviewRoots = config.localMediaPreviewRoots;
     state.embedSandboxMode = config.embedSandboxMode;
     state.allowExternalEmbedUrls = config.allowExternalEmbedUrls;
@@ -140,7 +153,9 @@ export abstract class ChatPaneContext extends ChatPaneLifecycle {
     if (!state) {
       return;
     }
+    const previousMediaAuthToken = resolveAssistantAttachmentAuthToken(state);
     const wasConnected = state.connected;
+    const previousSidebarSessionKey = canonicalUiSessionKeyForPersistence(state, state.sessionKey);
     const sourceChanged =
       state.client !== snapshot.client || wasConnected !== (snapshot.phase === "connected");
     const clientChanged = this.connectedClient !== snapshot.client;
@@ -151,9 +166,14 @@ export abstract class ChatPaneContext extends ChatPaneLifecycle {
       this.presencePayload = presence ? { presence } : undefined;
     }
     if (sourceChanged) {
+      releaseChatMediaResourceSubscriber(state.requestUpdate);
       // A reconnect can retain the browser client. Keep async ownership tied
       // to the logical connection, not only the transport object identity.
       this.connectionGeneration += 1;
+      invalidateChatAvatarCache(state);
+      invalidateAssistantIdentityCache(state.client);
+      state.assistantIdentityRequestVersion += 1;
+      invalidateChatMetadataCache(state);
       this.swarmHydrator?.dispose();
       this.swarmHydrator = null;
       this.builtinBoardSnapshot = null;
@@ -166,6 +186,7 @@ export abstract class ChatPaneContext extends ChatPaneLifecycle {
       this.clearTypingActors();
       this.sessionDiscussionStates.clear();
       this.sessionDiscussionOpenUrls.clear();
+      this.sessionDiscussionPanels.clear();
       this.sessionParticipationTracker.reset();
       // A new gateway/account owns its own membership + identity data; drop the
       // previous connection's sharing cache so a stale loading entry cannot
@@ -179,22 +200,33 @@ export abstract class ChatPaneContext extends ChatPaneLifecycle {
     state.connected = snapshot.phase === "connected";
     state.connectionEpoch = this.connectionGeneration;
     state.hello = snapshot.hello;
+    if (!sourceChanged && previousMediaAuthToken !== resolveAssistantAttachmentAuthToken(state)) {
+      releaseChatMediaResourceSubscriber(state.requestUpdate);
+    }
+    state.canvasPluginSurfaceUrl = snapshot.canvasPluginSurfaceUrl;
+    const sidebarSessionKey = canonicalUiSessionKeyForPersistence(state, state.sessionKey);
+    const sidebarKeyChanged = sidebarSessionKey !== previousSidebarSessionKey;
+    if (sidebarSessionKey && (clientChanged || sidebarKeyChanged)) {
+      const sidebarSettings = loadSettings();
+      const persistedLayout = sidebarSettings.sidebarSessionLayouts?.[sidebarSessionKey];
+      if (persistedLayout !== undefined) {
+        state.sidebarLayout = normalizeSidebarLayout(persistedLayout);
+      } else if (clientChanged) {
+        state.sidebarLayout = { columns: [] };
+      } else if (state.sidebarLayout.columns.length > 0) {
+        state.updateSidebarLayout(state.sidebarLayout);
+      }
+      state.sidebarFocusPanelId =
+        sidebarSettings.sidebarSessionActivePanels?.[sidebarSessionKey] ?? "";
+      state.sidebarFocusVersion += 1;
+    }
     if (state.connected && state.pendingAbort) {
       void replayPendingChatAbort(state).finally(() => state.requestUpdate?.());
     }
-    if (sourceChanged && state.sidebarContent?.kind === "session-discussion") {
-      // A reconnect may point at a different gateway/provider; an open panel
-      // would keep rendering the previous provider's URL. Close it — the
-      // re-probe below restores the action for the new source.
-      state.handleCloseSidebar();
-    }
-    if (sourceChanged && snapshot.phase === "connected" && state.sessionKey) {
-      // Reconnects clear the probed states above; re-probe the active session
-      // so source-owned affordances reappear without a manual session switch.
-      void this.probeSessionDiscussion(state.sessionKey);
-      if (!clientChanged) {
-        void this.refreshSessionPullRequests();
-      }
+    if (sourceChanged && snapshot.phase === "connected" && state.sessionKey && !clientChanged) {
+      // A logical reconnect can retain the browser client and skip full startup.
+      // The existing transcript is already authoritative, so rehydrate after its next commit.
+      this.deferSessionHydrationUntilTranscript(state.sessionKey, Promise.resolve());
     }
     state.terminalAvailable =
       this.context.config.current.terminalEnabled &&
@@ -257,6 +289,7 @@ export abstract class ChatPaneContext extends ChatPaneLifecycle {
       state.requestUpdate?.();
       return;
     }
+    this.refreshSwarmRoster();
     if (clientChanged && snapshot.client) {
       const startupClient = snapshot.client;
       const startupGeneration = this.connectionGeneration;
@@ -300,14 +333,19 @@ export abstract class ChatPaneContext extends ChatPaneLifecycle {
       }
       void syncSelectedSessionMessageSubscription(state, { force: true });
       void retryReconnectableQueuedChatSends(state);
-      void refreshPageChat(state, { startup: true, awaitHistory: true }).finally(() => {
+      const historyRefresh = refreshPageChat(state, {
+        startup: true,
+        awaitHistory: true,
+        deferBranches: true,
+      });
+      this.deferSessionHydrationUntilTranscript(startupSessionKey, historyRefresh);
+      void historyRefresh.finally(() => {
         void finishStartup();
       });
       void refreshChatModelAuthStatus(state).finally(() => state.requestUpdate?.());
       void state.loadAssistantIdentity();
       void this.refreshTaskSuggestions();
       void this.refreshSessionSuggestions();
-      void this.refreshSessionPullRequests();
     }
     this.reconcileWaitingApprovalSnapshot();
     state.requestUpdate?.();

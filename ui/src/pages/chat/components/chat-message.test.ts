@@ -1060,68 +1060,56 @@ describe("grouped chat rendering", () => {
     expect(tooltip?.content).toBe("Rewind is unavailable while the agent is working");
   });
 
-  it("places the delete confirm below the trigger near the top viewport edge", () => {
-    stubDeleteConfirmGeometry({
+  it.each([
+    {
+      name: "places the delete confirm below the trigger near the top viewport edge",
       trigger: { left: 20, top: 4, width: 24, height: 24 },
       popover: { width: 200, height: 96 },
       viewport: { width: 320, height: 240 },
-    });
-    const fixture = renderDeleteConfirmFixture();
-
-    openDeleteConfirm(fixture.deleteButton);
-
-    const popover = expectElement(fixture.container, ".chat-delete-confirm", HTMLElement);
-    expect(popover.dataset.placement).toBe("below");
-    expect(popover.style.top).toBe("34px");
-    expect(popover.style.left).toBe("20px");
-  });
-
-  it("places the delete confirm above the trigger near the bottom viewport edge", () => {
-    stubDeleteConfirmGeometry({
+      placement: "below",
+      top: "34px",
+      left: "20px",
+    },
+    {
+      name: "places the delete confirm above the trigger near the bottom viewport edge",
       trigger: { left: 20, top: 190, width: 24, height: 24 },
       popover: { width: 200, height: 80 },
       viewport: { width: 320, height: 240 },
-    });
-    const fixture = renderDeleteConfirmFixture();
-
-    openDeleteConfirm(fixture.deleteButton);
-
-    const popover = expectElement(fixture.container, ".chat-delete-confirm", HTMLElement);
-    expect(popover.dataset.placement).toBe("above");
-    expect(popover.style.top).toBe("104px");
-    expect(popover.style.left).toBe("20px");
-  });
-
-  it("clamps the delete confirm horizontally inside narrow viewports", () => {
-    stubDeleteConfirmGeometry({
+      placement: "above",
+      top: "104px",
+      left: "20px",
+    },
+    {
+      name: "clamps the delete confirm horizontally inside narrow viewports",
       trigger: { left: 260, top: 120, width: 24, height: 24 },
       popover: { width: 200, height: 80 },
       viewport: { width: 320, height: 240 },
-    });
-    const fixture = renderDeleteConfirmFixture();
-
-    openDeleteConfirm(fixture.deleteButton);
-
-    const popover = expectElement(fixture.container, ".chat-delete-confirm", HTMLElement);
-    expect(popover.style.left).toBe("112px");
-  });
-
-  it("clamps the delete confirm inside shifted visual viewports", () => {
-    stubDeleteConfirmGeometry({
+      left: "112px",
+    },
+    {
+      name: "clamps the delete confirm inside shifted visual viewports",
       trigger: { left: 620, top: 540, width: 24, height: 24 },
       popover: { width: 200, height: 80 },
       viewport: { left: 320, top: 300, width: 320, height: 240 },
-    });
+      placement: "above",
+      top: "452px",
+      left: "432px",
+    },
+  ])("$name", ({ trigger, popover, viewport, placement, top, left }) => {
+    stubDeleteConfirmGeometry({ trigger, popover, viewport });
     const fixture = renderDeleteConfirmFixture();
 
     openDeleteConfirm(fixture.deleteButton);
 
-    const popover = expectElement(fixture.container, ".chat-delete-confirm", HTMLElement);
-    expect(popover.dataset.placement).toBe("above");
-    expect(popover.style.left).toBe("432px");
-    expect(popover.style.top).toBe("452px");
+    const element = expectElement(fixture.container, ".chat-delete-confirm", HTMLElement);
+    if (placement) {
+      expect(element.dataset.placement).toBe(placement);
+    }
+    if (top) {
+      expect(element.style.top).toBe(top);
+    }
+    expect(element.style.left).toBe(left);
   });
-
   it("exposes dialog semantics and keeps keyboard focus inside the confirmation", () => {
     const fixture = renderDeleteConfirmFixture();
 
@@ -1592,18 +1580,56 @@ describe("grouped chat rendering", () => {
     expect(container.querySelector(".chat-group-footer")).toBeNull();
   });
 
-  it("renders the active startup phase with elapsed time", () => {
+  it("morphs one assistant turn from working status to its terminal recap", () => {
+    const container = document.createElement("div");
+    const message = {
+      role: "assistant",
+      content: "First result is ready.",
+      timestamp: 1_000,
+    };
+
+    renderAssistantMessage(container, message, {
+      activeContinuation: {
+        parts: [{ kind: "reading-indicator", key: "reading", startedAt: 1_000 }],
+        options: {},
+      },
+    });
+
+    expect(container.querySelectorAll(".chat-group.assistant")).toHaveLength(1);
+    expect(container.querySelector(".chat-reading-indicator")).toBeNull();
+    expect(container.querySelector(".chat-working-indicator--continuation")).not.toBeNull();
+    expect(container.querySelector(".chat-working-indicator__status")?.textContent).toContain(
+      "Working…",
+    );
+
+    renderAssistantMessage(container, message, {
+      turnRecap: { runtimeMs: 5_000, outputTokens: 42 },
+    });
+
+    expect(container.querySelectorAll(".chat-group.assistant")).toHaveLength(1);
+    expect(container.querySelector(".chat-working-indicator")).toBeNull();
+    expect(container.querySelector(".chat-turn-recap--continuation")?.textContent).toContain(
+      "Done in 5s",
+    );
+    expect(container.querySelector(".chat-tasks-status__claw")).toBeNull();
+  });
+
+  it.each([
+    ["provisioning_environment", "Provisioning environment…"],
+    ["preparing_context", "Preparing this turn…"],
+    ["starting_model", "Waiting for a response…"],
+  ] as const)("renders the %s startup phase with elapsed time", (startupPhase, label) => {
     const container = document.createElement("div");
 
     render(
       renderStreamGroup([{ kind: "reading-indicator", key: "reading", startedAt: 1_000 }], {
-        startupPhase: "provisioning_environment",
+        startupPhase,
       }),
       container,
     );
 
     expect(container.querySelector(".chat-working-indicator__status")?.textContent).toContain(
-      "Provisioning environment…",
+      label,
     );
     expect(container.querySelector(".chat-working-indicator__elapsed")).not.toBeNull();
     expect(
@@ -1691,8 +1717,8 @@ describe("grouped chat rendering", () => {
     expect(container.querySelector(".chat-reading-indicator")).not.toBeNull();
   });
 
-  it("seeds a stable claw stance per reading-indicator key", () => {
-    const stanceFor = (key: string) => {
+  it("seeds at most one stable claw surprise per reading-indicator key", () => {
+    const surpriseFor = (key: string) => {
       const container = document.createElement("div");
       render(renderStreamGroup([{ kind: "reading-indicator", key, startedAt: 1 }]), container);
       const bubble = container.querySelector(".chat-reading-indicator");
@@ -1701,10 +1727,10 @@ describe("grouped chat rendering", () => {
       );
     };
 
-    const first = stanceFor("stream:agent:main:pending");
-    // Stable across re-renders: same key always claws the same style.
-    expect(stanceFor("stream:agent:main:pending")).toEqual(first);
-    // At most one stance modifier; plain in-place clawing is the unmarked default.
+    const first = surpriseFor("stream:agent:main:pending");
+    // Stable across re-renders: the same key keeps the same surprise decision.
+    expect(surpriseFor("stream:agent:main:pending")).toEqual(first);
+    // At most one surprise modifier; plain in-place clawing is the unmarked default.
     expect(first.length).toBeLessThanOrEqual(1);
     for (const cls of first) {
       expect([
@@ -3235,7 +3261,7 @@ describe("grouped chat rendering", () => {
     ).toContain("mediaTicket=ticket-fresh");
   });
 
-  it("retries unavailable local assistant media after the retry window", async () => {
+  it("automatically retries unavailable local assistant media after the retry window", async () => {
     vi.useFakeTimers();
     const source = `/tmp/openclaw/${crypto.randomUUID()}-retry.png`;
     const fetchMock = vi
@@ -3272,12 +3298,58 @@ describe("grouped chat rendering", () => {
     );
 
     await vi.advanceTimersByTimeAsync(5_001);
-    rerender();
     await flushAssistantAttachmentAvailabilityChecks();
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(
       expectElement(container, ".chat-message-image", HTMLImageElement).getAttribute("src"),
     ).toContain("mediaTicket=ticket-retry");
+  });
+
+  it("stops automatically retrying permanently unavailable local assistant media", async () => {
+    vi.useFakeTimers();
+    const source = `/tmp/openclaw/${crypto.randomUUID()}-permanently-unavailable.png`;
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ available: false }),
+    }));
+    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+    const container = document.createElement("div");
+    const rerender = () =>
+      renderAssistantMessage(
+        container,
+        {
+          id: "assistant-local-media-permanently-unavailable",
+          role: "assistant",
+          content: `Local image\nMEDIA:${source}`,
+          timestamp: Date.now(),
+        },
+        {
+          showToolCalls: false,
+          basePath: "/openclaw",
+          localMediaPreviewRoots: ["/tmp/openclaw"],
+          onRequestUpdate: rerender,
+        },
+      );
+
+    rerender();
+    await flushAssistantAttachmentAvailabilityChecks();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(5_001);
+    await flushAssistantAttachmentAvailabilityChecks();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+
+    await vi.advanceTimersByTimeAsync(20_000);
+    await flushAssistantAttachmentAvailabilityChecks();
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(vi.getTimerCount()).toBe(0);
+    expect(container.querySelector(".chat-assistant-attachment-badge")?.textContent?.trim()).toBe(
+      "Unavailable",
+    );
+
+    rerender();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   it("preserves same-origin assistant attachments without local preview rewriting", () => {
@@ -3610,6 +3682,52 @@ describe("grouped chat rendering", () => {
     );
     const activeItem = onOpenImage.mock.calls[0]?.[0];
     activeItem?.release?.();
+  });
+
+  it("prefers an artifact ticket without forwarding the gateway bearer", async () => {
+    const artifactId = `artifact_managed_image_${crypto.randomUUID()}`;
+    const managedChatImageUrl = `/api/chat/media/outgoing/agent%3Amain%3Amain/${crypto.randomUUID()}/full`;
+    const ticketedUrl = `${managedChatImageUrl}?mediaTicket=ticket`;
+    const resolveArtifactDownload = vi.fn(async () => ({
+      url: ticketedUrl,
+      expiresAt: "2026-07-28T05:00:00.000Z",
+    }));
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      expect(url).toBe(ticketedUrl);
+      const headers = new Headers(init?.headers);
+      expect(headers.get("Authorization")).toBeNull();
+      expect(headers.get("x-openclaw-requester-session-key")).toBeNull();
+      return { ok: true, blob: async () => new Blob(["png"], { type: "image/png" }) };
+    });
+    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+
+    const container = document.createElement("div");
+    renderAssistantMessage(
+      container,
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "image",
+            artifactId,
+            url: managedChatImageUrl,
+            alt: "Ticketed image",
+          },
+        ],
+        timestamp: Date.now(),
+      },
+      {
+        showToolCalls: false,
+        assistantAttachmentAuthToken: "must-not-be-forwarded",
+        resolveArtifactDownload,
+      },
+    );
+
+    await vi.waitFor(() => expect(container.querySelector(".chat-message-image")).not.toBeNull());
+    expect(resolveArtifactDownload).toHaveBeenCalledWith({
+      sessionKey: "agent:main:main",
+      artifactId,
+    });
   });
 
   it("aborts a stalled managed outgoing image fetch after the deadline", async () => {

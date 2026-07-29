@@ -1,0 +1,20 @@
+{
+  "name": "@openclaw/local-whisper-provider",
+  "version": "2026.7.2",
+  "private": true,
+  "description": "OpenClaw local faster-whisper realtime transcription provider (offline, no OpenAI calls)",
+  "type": "module",
+  "openclaw": {
+    "extensions": [
+      "./index.ts"
+    ],
+    "build": {
+      "staticAssets": [
+        {
+          "source": "./worker.py",
+          "output": "worker.py"
+        }
+      ]
+    }
+  }
+}

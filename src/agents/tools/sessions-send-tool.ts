@@ -15,6 +15,7 @@ import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { callGateway } from "../../gateway/call.js";
 import { formatErrorMessage } from "../../infra/errors.js";
 import {
+  classifySessionKeyShape,
   isSubagentSessionKey,
   normalizeAgentId,
   resolveAgentIdFromSessionKey,
@@ -560,6 +561,17 @@ export function createSessionsSendTool(opts?: {
           error: "Either sessionKey or label is required",
         });
       }
+      // Reject malformed raw keys early; configured-agent validation happens on the
+      // canonical key after resolveSessionReference so opaque session IDs/aliases
+      // that resolve to an unknown agent are also blocked before dispatch.
+      const rawSessionKeyShape = classifySessionKeyShape(sessionKey);
+      if (rawSessionKeyShape === "malformed_agent") {
+        return jsonResult({
+          runId: crypto.randomUUID(),
+          status: "error",
+          error: `agent not found: ${sessionKey}`,
+        });
+      }
       const resolvedSession = await resolveSessionReference({
         sessionKey,
         alias,
@@ -593,6 +605,28 @@ export function createSessionsSendTool(opts?: {
       // Normalize sessionKey/sessionId input into a canonical session key.
       const resolvedKey = visibleSession.key;
       const displayKey = visibleSession.displayKey;
+      // Reject unknown agents on the canonical resolved key so opaque session IDs
+      // or aliases that resolve to an unconfigured agent cannot reach dispatch.
+      const resolvedKeyShape = classifySessionKeyShape(resolvedKey);
+      if (resolvedKeyShape === "malformed_agent") {
+        return jsonResult({
+          runId: crypto.randomUUID(),
+          status: "error",
+          error: `agent not found: ${resolvedKey}`,
+          sessionKey: unresolvedDisplayKey,
+        });
+      }
+      if (resolvedKeyShape === "agent") {
+        const targetAgentId = resolveAgentIdFromSessionKey(resolvedKey);
+        if (!listAgentIds(cfg).includes(targetAgentId)) {
+          return jsonResult({
+            runId: crypto.randomUUID(),
+            status: "error",
+            error: `agent not found: ${targetAgentId}`,
+            sessionKey: unresolvedDisplayKey,
+          });
+        }
+      }
       const requesterSessionKey = opts?.agentSessionKey ? effectiveRequesterKey : undefined;
       const timeoutMs =
         finiteSecondsToTimerSafeMilliseconds(timeoutSeconds, {

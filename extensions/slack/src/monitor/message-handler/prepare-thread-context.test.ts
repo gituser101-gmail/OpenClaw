@@ -14,6 +14,7 @@ import {
 
 describe("resolveSlackThreadContextData", () => {
   const storeFixture = createSlackSessionStoreFixture("openclaw-slack-thread-context-");
+  const threadSessionKey = "agent:main:slack:channel:c123:thread:100.000";
 
   beforeAll(() => {
     storeFixture.setup();
@@ -62,6 +63,7 @@ describe("resolveSlackThreadContextData", () => {
     allowFromLower: string[];
     allowNameMatching: boolean;
     sessionState?: "missing" | "fresh" | "stale";
+    sessionLastInteractionAt?: number;
   }) {
     const { storePath } = storeFixture.makeTmpStorePath();
     const replies = vi.fn().mockResolvedValue({
@@ -73,7 +75,17 @@ describe("resolveSlackThreadContextData", () => {
       ctx.channelRuntime = {
         ...ctx.channelRuntime!,
         session: {
-          resolveEntryResetFreshness: () => ({ state: params.sessionState }),
+          resolveEntryResetFreshness: () =>
+            params.sessionState === "missing"
+              ? { state: "missing", entry: undefined }
+              : {
+                  state: params.sessionState,
+                  entry: {
+                    ...(params.sessionLastInteractionAt !== undefined
+                      ? { lastInteractionAt: params.sessionLastInteractionAt }
+                      : {}),
+                  },
+                },
         },
       };
     }
@@ -92,7 +104,7 @@ describe("resolveSlackThreadContextData", () => {
       threadStarter: params.threadStarter,
       roomLabel: "#general",
       storePath,
-      sessionKey: "thread-session",
+      sessionKey: threadSessionKey,
       allowFromLower: params.allowFromLower,
       allowNameMatching: params.allowNameMatching,
       contextVisibilityMode: "allowlist",
@@ -128,14 +140,20 @@ describe("resolveSlackThreadContextData", () => {
     {
       title: "does not hydrate starter media for an existing thread session",
       sessionState: "fresh" as const,
+      sessionLastInteractionAt: 100,
       hydrates: false,
+    },
+    {
+      title: "hydrates starter media for an outbound-only thread session",
+      sessionState: "fresh" as const,
+      hydrates: true,
     },
     {
       title: "hydrates starter media after a thread session reset",
       sessionState: "stale" as const,
       hydrates: true,
     },
-  ])("$title", async ({ sessionState, hydrates }) => {
+  ])("$title", async ({ sessionState, sessionLastInteractionAt, hydrates }) => {
     const resolveSlackMedia = vi
       .spyOn(mediaModule, "resolveSlackMedia")
       .mockResolvedValue(starterMedia);
@@ -145,10 +163,38 @@ describe("resolveSlackThreadContextData", () => {
       allowFromLower: ["u1"],
       allowNameMatching: false,
       sessionState,
+      sessionLastInteractionAt,
     });
 
     expect(result.threadStarterMedia).toEqual(hydrates ? starterMedia : null);
     expect(resolveSlackMedia).toHaveBeenCalledTimes(hydrates ? 1 : 0);
+  });
+
+  it("hydrates the visible conversation for an outbound-only thread session", async () => {
+    const { replies, result } = await resolveAllowlistedThreadContext({
+      repliesMessages: [
+        { text: "starter from Alice", user: "U1", ts: "100.000" },
+        { text: "assistant answer", bot_id: "B1", ts: "100.200" },
+        { text: "untagged follow-up", user: "U1", ts: "100.800" },
+        { text: "current message", user: "U1", ts: "101.000" },
+      ],
+      threadStarter: {
+        text: "starter from Alice",
+        userId: "U1",
+        ts: "100.000",
+      },
+      allowFromLower: ["u1"],
+      allowNameMatching: false,
+      sessionState: "fresh",
+    });
+
+    expect(result.shouldSeedInitialThreadContext).toBe(true);
+    expect(result.threadStarterBody).toBe("starter from Alice");
+    expect(result.threadHistoryBody).toContain("starter from Alice");
+    expect(result.threadHistoryBody).toContain("untagged follow-up");
+    expect(result.threadHistoryBody).not.toContain("assistant answer");
+    expect(result.threadHistoryBody).not.toContain("current message");
+    expect(replies).toHaveBeenCalledTimes(1);
   });
 
   it("omits non-allowlisted starter, follow-ups, and unrelated current-bot replies", async () => {
@@ -294,7 +340,7 @@ describe("resolveSlackThreadContextData", () => {
       },
       roomLabel: "#general",
       storePath,
-      sessionKey: "thread-session",
+      sessionKey: threadSessionKey,
       allowFromLower: ["u1"],
       allowNameMatching: false,
       contextVisibilityMode: "allowlist",
@@ -340,7 +386,7 @@ describe("resolveSlackThreadContextData", () => {
       },
       roomLabel: "#general",
       storePath,
-      sessionKey: "thread-session",
+      sessionKey: threadSessionKey,
       allowFromLower: ["u1"],
       allowNameMatching: false,
       contextVisibilityMode: "allowlist",
@@ -464,7 +510,7 @@ describe("resolveSlackThreadContextData", () => {
       },
       roomLabel: "DM",
       storePath,
-      sessionKey: "thread-session",
+      sessionKey: threadSessionKey,
       allowFromLower: [],
       allowNameMatching: false,
       contextVisibilityMode: "all",

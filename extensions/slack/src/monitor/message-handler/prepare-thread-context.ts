@@ -43,9 +43,17 @@ type SlackThreadContextData = {
 
 const SLACK_THREAD_CONTEXT_USER_LOOKUP_CONCURRENCY = 4;
 
-type SlackSessionResetFreshness = {
-  state: "missing" | "fresh" | "stale";
-};
+type SlackSessionResetFreshness =
+  | {
+      state: "missing";
+      entry: undefined;
+    }
+  | {
+      state: "fresh" | "stale";
+      entry: {
+        lastInteractionAt?: number;
+      };
+    };
 
 type SlackSessionFreshnessRuntime = {
   session?: {
@@ -188,11 +196,14 @@ export async function resolveSlackThreadContextData(params: {
           sessionKey: params.sessionKey,
         })
       : undefined;
+  // Outbound delivery mirroring can create a fresh thread session before its
+  // first inbound turn. Seed that session or the root conversation is lost.
   const shouldSeedInitialThreadContext = Boolean(
     params.isThreadReply &&
     params.threadTs &&
     (threadSessionFreshness
-      ? threadSessionFreshness.state !== "fresh"
+      ? threadSessionFreshness.state !== "fresh" ||
+        threadSessionFreshness.entry.lastInteractionAt === undefined
       : threadSessionPreviousTimestamp === undefined),
   );
   const shouldLoadInitialThreadHistory =

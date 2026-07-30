@@ -364,6 +364,8 @@ export const zh_CN: TranslationMap = {
       "更新已安装，但运行版本未变化——重启可能已被阻止。预期 v{expectedVersion}，运行 v{actualVersion}。",
     handoffTimeout:
       "更新交接已开始，但在重新连接后未报告完成。请运行 `openclaw update status` 查看最终结果。",
+    outcomeUnknown:
+      "更新请求可能已被接受，但 Gateway 在重新连接后未报告最终结果。请在重试前运行 `openclaw update status`。",
     failureReasons: {
       dirty: "请提交或暂存更改，然后重试。",
       noUpstream: "请设置上游分支，然后重试。",
@@ -2012,6 +2014,7 @@ export const zh_CN: TranslationMap = {
       title: "您的 AI 已就绪",
       detail: "{modelRef} · {latencyMs} ms",
       openChat: "打开聊天",
+      continueSetup: "继续设置",
       configuredModel: "已配置的模型",
     },
     failure: {
@@ -2189,6 +2192,11 @@ export const zh_CN: TranslationMap = {
       channelDegraded: "{channel} 已降级——问我发生了什么",
       channelFallback: "某个通道",
       dismiss: "忽略此更新",
+      channelSetupTitle: "在此应用之外访问 OpenClaw",
+      channelSetupBody:
+        "网页应用已经可用。仅当你想从其他服务向 OpenClaw 发送消息时，才需要添加渠道。",
+      channelSetupAction: "设置渠道",
+      channelSetupDismiss: "继续使用网页应用",
     },
   },
   mcpServers: {
@@ -2202,6 +2210,9 @@ export const zh_CN: TranslationMap = {
     targetLabel: "URL 或命令",
     nameInvalid: "服务器名称可使用字母、数字、点、短横线或下划线。",
     targetInvalid: "为 HTTP 传输输入 URL，或为 stdio 输入有效的命令行。",
+    sessionEnableFailed: "服务器已保存并在全局范围内禁用，但为此会话启用它失败：{error}",
+    sessionChanged: "活动会话在启用之前发生了更改。",
+    sessionUnavailable: "活动会话不可用；请刷新后重试。",
     nameTaken: "名为“{name}”的 MCP 服务器已存在。",
     missing: "在配置中未找到 MCP 服务器“{name}”。",
     missingTransport: "缺少传输",
@@ -2364,7 +2375,9 @@ export const zh_CN: TranslationMap = {
       title: "引擎",
       description: "恰好只有一个记忆插件占用记忆槽位。选择某个引擎会启用它并禁用其他引擎。",
       rowTitle: "记忆引擎",
+      openClawMemory: "OpenClaw Memory",
       off: "关闭",
+      unavailable: "不可用",
       autoHint: "配置中未固定任何引擎，因此该槽位回退到其默认占用者。",
       explicitHint: "此引擎在配置的 plugins.slots.memory 下被固定。",
       offHint: "记忆已在配置中关闭：plugins.slots.memory 设置为 none。",
@@ -2650,6 +2663,10 @@ export const zh_CN: TranslationMap = {
       title: "工具搜索",
       description:
         "保持有限的工具目录可见，其余的通过搜索延后显示，以便大型 MCP 和插件目录不再挤占提示词。",
+    },
+    loopDetection: {
+      title: "工具循环检测",
+      description: "启用滚动历史防护，当代理停止取得进展时，对重复的工具调用发出警告或阻止。",
     },
     localModelLean: {
       title: "为本地模型精简工具",
@@ -3663,12 +3680,12 @@ export const zh_CN: TranslationMap = {
       loadingPage: "正在加载 wiki 页面…",
       dreamsTab: "梦境",
       insightsTab: "已导入的洞察",
-      palaceTab: "记忆宫殿",
+      wikiTab: "Memory Wiki",
       dreamsExplainer:
         "这是系统在回放和整合记忆时所写的原始梦境日记；用它来检查记忆系统正在注意到什么，以及哪些地方仍然显得杂乱或稀疏。",
       insightsExplainer:
         "这些是从外部历史中聚类得出的已导入洞察；用它来回顾导入所呈现的内容，然后其中任何一部分才会升级为持久记忆。",
-      palaceExplainer:
+      wikiExplainer:
         "这是系统可以搜索和推理的已编译记忆 wiki 界面；用它来检查实际的记忆页面、主张、未解问题和矛盾，而不是原始导入的源聊天。",
       copyArchivePath: "复制存档路径",
       loadingInsights: "正在加载已导入的洞察…",
@@ -3683,9 +3700,9 @@ export const zh_CN: TranslationMap = {
       riskReasons: "风险原因：",
       labels: "标签：",
       openSourcePage: "打开源页面",
-      loadingPalace: "正在加载记忆宫殿…",
-      emptyPalace: "记忆宫殿尚未填充内容",
-      emptyPalaceHint:
+      loadingWiki: "正在加载 memory wiki…",
+      emptyWiki: "Memory wiki 尚未填充",
+      emptyWikiHint:
         "目前 wiki 中主要是原始来源导入和运行报告。一旦开始编写综合内容、实体或概念，此选项卡才会变得有用。",
       claims: "主张",
       openQuestions: "未解问题",
@@ -3761,7 +3778,7 @@ export const zh_CN: TranslationMap = {
       tidyingKnowledgeGraph: "正在整理知识图谱…",
       replayingConversations: "正在重放今天的对话…",
       weavingShortTerm: "正在将短期记忆编织进长期记忆…",
-      defragmentingMindPalace: "正在整理心智宫殿的碎片…",
+      defragmentingMemoryLane: "正在整理记忆…",
       filingLooseThoughts: "正在归档零散思绪…",
       connectingDots: "正在连接遥远的线索…",
       compostingContext: "正在将旧上下文窗口化作养分…",
@@ -3786,6 +3803,7 @@ export const zh_CN: TranslationMap = {
     emptySubtitle: "Sign in to a provider or add an API key, then refresh.",
     status: {
       ok: "已连接",
+      ready: "就绪",
       expiring: "Expiring",
       expired: "已过期",
       missing: "Not signed in",
@@ -3838,6 +3856,15 @@ export const zh_CN: TranslationMap = {
         unknown: "连接失败",
         no_model: "没有可用模型",
       },
+    },
+    readiness: {
+      title: "AI 设置",
+      heading: "连接您的 AI",
+      signedInNoModels: "你已登录，但此账户未提供可用模型。请选择其他提供商或账户以继续。",
+      notConfigured: "选择一个提供商并验证 OpenClaw 将使用的模型。",
+      noModels: "无可用模型",
+      modelRequired: "需要模型",
+      chooseProvider: "选择其他提供商",
     },
     logout: {
       action: "退出登录",
@@ -4755,6 +4782,7 @@ export const zh_CN: TranslationMap = {
       pause: "暂停",
       seek: "定位媒体",
       download: "下载 {filename}",
+      preparing: "正在准备播放…",
       videoUnavailable: "无法播放此格式——请改为下载。",
     },
     modelControls: {
@@ -4923,7 +4951,21 @@ export const zh_CN: TranslationMap = {
         manageSkills: "管理 Skills",
         browseConnectors: "浏览连接器",
         addMcpServer: "添加 MCP 服务器…",
-        toolAccess: "工具访问权限",
+        addMcpServerTitle: "添加 MCP 服务器",
+        addMcpServerDescription: "配置服务器并选择启用位置。",
+        scopeLabel: "可用范围",
+        scopeSession: "本次会话",
+        scopeEverywhere: "所有位置",
+        scopeSessionHint: "该服务器将全局保存为禁用状态，仅在本次会话中启用。",
+        scopeEverywhereHint: "该服务器将保存并在每次会话中启用。",
+        toolAccess: {
+          label: "工具访问权限",
+          loading: "正在加载工具…",
+          loadFailed: "无法加载工具。",
+          noTools: "此连接器没有可用工具。",
+          summary: "已启用 {total} 个工具中的 {enabled} 个",
+          summaryOne: "已启用 {total} 个工具中的 {enabled} 个",
+        },
         enabledCount: "{count} 个已开启",
         loadingSkills: "正在加载 Skills…",
         skillsLoadFailed: "无法加载 Skills。",

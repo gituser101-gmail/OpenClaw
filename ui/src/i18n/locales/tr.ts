@@ -385,6 +385,8 @@ export const tr: TranslationMap = {
       "Güncelleme yüklendi ancak çalışan sürüm değişmedi — yeniden başlatma engellenmiş olabilir. Beklenen v{expectedVersion}, çalışan v{actualVersion}.",
     handoffTimeout:
       "Güncelleme devri başladı ancak yeniden bağlandıktan sonra tamamlanma bildirilmedi. Nihai sonuç için `openclaw update status` komutunu çalıştırın.",
+    outcomeUnknown:
+      "Güncelleme isteği kabul edilmiş olabilir, ancak Gateway yeniden bağlandıktan sonra nihai bir sonuç bildirmedi. Yeniden denemeden önce `openclaw update status` komutunu çalıştırın.",
     failureReasons: {
       dirty: "Değişiklikleri commit'leyin veya stash'leyin, ardından yeniden deneyin.",
       noUpstream: "Bir upstream dalı ayarlayın, ardından yeniden deneyin.",
@@ -2085,6 +2087,7 @@ export const tr: TranslationMap = {
       title: "Yapay zekânız hazır",
       detail: "{modelRef} · {latencyMs} ms",
       openChat: "Sohbeti Aç",
+      continueSetup: "Kuruluma devam et",
       configuredModel: "Yapılandırılmış model",
     },
     failure: {
@@ -2271,6 +2274,11 @@ export const tr: TranslationMap = {
       channelDegraded: "{channel} bozulmuş durumda — ne olduğunu bana sorun",
       channelFallback: "Bir kanal",
       dismiss: "Bu güncellemeyi kapat",
+      channelSetupTitle: "OpenClaw'a bu uygulamanın dışından ulaşın",
+      channelSetupBody:
+        "Web uygulaması zaten çalışıyor. Yalnızca OpenClaw'a başka bir hizmetten mesaj göndermek istiyorsanız bir kanal ekleyin.",
+      channelSetupAction: "Bir kanal ayarla",
+      channelSetupDismiss: "Web uygulamasını kullanmaya devam et",
     },
   },
   mcpServers: {
@@ -2284,6 +2292,10 @@ export const tr: TranslationMap = {
     targetLabel: "URL veya komut",
     nameInvalid: "Sunucu adları harf, rakam, nokta, tire veya alt çizgi kullanır.",
     targetInvalid: "HTTP aktarımları için bir URL veya stdio için geçerli bir komut satırı girin.",
+    sessionEnableFailed:
+      "Sunucu genel olarak devre dışı kaydedildi, ancak bu oturum için etkinleştirilmesi başarısız oldu: {error}",
+    sessionChanged: "Etkinleştirilmeden önce aktif oturum değişti.",
+    sessionUnavailable: "Aktif oturum kullanılamıyor; yenileyip tekrar deneyin.",
     nameTaken: "“{name}” adlı bir MCP sunucusu zaten var.",
     missing: "MCP sunucusu “{name}” yapılandırmada bulunamadı.",
     missingTransport: "aktarım eksik",
@@ -2452,7 +2464,9 @@ export const tr: TranslationMap = {
       description:
         "Bellek yuvasına tam olarak bir bellek eklentisi sahip olur. Bir motor seçmek onu etkinleştirir ve diğerlerini devre dışı bırakır.",
       rowTitle: "Bellek motoru",
+      openClawMemory: "OpenClaw Memory",
       off: "Kapalı",
+      unavailable: "Kullanılamıyor",
       autoHint:
         "Yapılandırmada hiçbir motor sabitlenmemiş, bu nedenle yuva varsayılan sahibine geri döner.",
       explicitHint: "Bu motor, plugins.slots.memory altındaki yapılandırmada sabitlenmiştir.",
@@ -2770,6 +2784,11 @@ export const tr: TranslationMap = {
       title: "Araç Arama",
       description:
         "Sınırlı bir araç dizinini görünür tutun ve geri kalanını aramanın ardında erteleyin; böylece büyük MCP ve eklenti katalogları istemi doldurmayı bıraksın.",
+    },
+    loopDetection: {
+      title: "Araç döngüsü algılama",
+      description:
+        "Bir aracı ilerleme kaydetmeyi durdurduğunda tekrarlanan araç çağrılarını uyaran veya engelleyen kayan geçmiş korumalarını etkinleştirin.",
     },
     localModelLean: {
       title: "Yerel modeller için sade araçlar",
@@ -3799,12 +3818,12 @@ export const tr: TranslationMap = {
       loadingPage: "Wiki sayfası yükleniyor…",
       dreamsTab: "Rüyalar",
       insightsTab: "İçe Aktarılan İçgörüler",
-      palaceTab: "Hafıza Sarayı",
+      wikiTab: "Bellek Wiki",
       dreamsExplainer:
         "Bu, sistemin belleği yeniden oynatıp pekiştirirken yazdığı ham rüya günlüğüdür; bunu bellek sisteminin neleri fark ettiğini ve hâlâ nerede gürültülü ya da yetersiz göründüğünü incelemek için kullanın.",
       insightsExplainer:
         "Bunlar, harici geçmişten kümelenmiş, içe aktarılan içgörülerdir; bunları içe aktarımların hangi bilgileri kalıcı belleğe geçmeden önce yüzeye çıkardığını gözden geçirmek için kullanın.",
-      palaceExplainer:
+      wikiExplainer:
         "Bu, sistemin arama yapıp üzerine akıl yürütebileceği derlenmiş bellek wiki yüzeyidir; bunu ham içe aktarılan kaynak sohbetler yerine gerçek bellek sayfalarını, iddiaları, açık soruları ve çelişkileri incelemek için kullanın.",
       copyArchivePath: "Arşiv yolunu kopyala",
       loadingInsights: "İçe aktarılan içgörüler yükleniyor…",
@@ -3820,9 +3839,9 @@ export const tr: TranslationMap = {
       riskReasons: "Risk nedenleri:",
       labels: "Etiketler:",
       openSourcePage: "Kaynak sayfasını aç",
-      loadingPalace: "Bellek sarayı yükleniyor…",
-      emptyPalace: "Bellek sarayı henüz doldurulmadı",
-      emptyPalaceHint:
+      loadingWiki: "Bellek wiki yükleniyor…",
+      emptyWiki: "Bellek wiki henüz doldurulmadı",
+      emptyWikiHint:
         "Şu anda wiki çoğunlukla ham kaynak içe aktarmaları ve operasyonel raporlar içeriyor. Bu sekme, sentezler, varlıklar veya kavramlar yazılmaya başlandığında kullanışlı hale gelir.",
       claims: "İddialar",
       openQuestions: "Açık sorular",
@@ -3898,7 +3917,7 @@ export const tr: TranslationMap = {
       tidyingKnowledgeGraph: "bilgi grafiği düzenleniyor…",
       replayingConversations: "bugünün konuşmaları yeniden oynatılıyor…",
       weavingShortTerm: "kısa vadeli hafıza uzun vadeli hafızaya işleniyor…",
-      defragmentingMindPalace: "zihin sarayı birleştiriliyor…",
+      defragmentingMemoryLane: "bellek yolu birleştiriliyor…",
       filingLooseThoughts: "dağınık düşünceler dosyalanıyor…",
       connectingDots: "uzaktaki noktalar birleştiriliyor…",
       compostingContext: "eski bağlam pencereleri kompost ediliyor…",
@@ -3923,6 +3942,7 @@ export const tr: TranslationMap = {
     emptySubtitle: "Sign in to a provider or add an API key, then refresh.",
     status: {
       ok: "Bağlı",
+      ready: "Hazır",
       expiring: "Expiring",
       expired: "Süresi doldu",
       missing: "Not signed in",
@@ -3976,6 +3996,16 @@ export const tr: TranslationMap = {
         unknown: "Bağlantı başarısız oldu",
         no_model: "Kullanılabilir model yok",
       },
+    },
+    readiness: {
+      title: "AI kurulumu",
+      heading: "AI'ınıza bağlanın",
+      signedInNoModels:
+        "Oturum açtınız, ancak bu hesap kullanılabilir model sunmuyor. Devam etmek için başka bir sağlayıcı veya hesap seçin.",
+      notConfigured: "Bir sağlayıcı seçin ve OpenClaw'ın kullanacağı modeli doğrulayın.",
+      noModels: "Kullanılabilir model yok",
+      modelRequired: "Model gerekli",
+      chooseProvider: "Başka bir sağlayıcı seçin",
     },
     logout: {
       action: "Çıkış yap",
@@ -4928,6 +4958,7 @@ export const tr: TranslationMap = {
       pause: "Duraklat",
       seek: "Medyada ara",
       download: "{filename} dosyasını indir",
+      preparing: "Oynatma hazırlanıyor…",
       videoUnavailable: "Bu format oynatılamıyor — bunun yerine indirin.",
     },
     modelControls: {
@@ -5100,7 +5131,22 @@ export const tr: TranslationMap = {
         manageSkills: "Skills'i yönet",
         browseConnectors: "Bağlayıcılara göz at",
         addMcpServer: "MCP sunucusu ekle…",
-        toolAccess: "Araç erişimi",
+        addMcpServerTitle: "MCP sunucusu ekle",
+        addMcpServerDescription: "Sunucuyu yapılandırın ve nerede etkinleştirileceğini seçin.",
+        scopeLabel: "Kullanılabilirlik",
+        scopeSession: "Bu oturum",
+        scopeEverywhere: "Her yerde",
+        scopeSessionHint:
+          "Sunucu global olarak devre dışı kaydedilir ve yalnızca bu oturum için etkinleştirilir.",
+        scopeEverywhereHint: "Sunucu her oturum için kaydedilir ve etkinleştirilir.",
+        toolAccess: {
+          label: "Araç erişimi",
+          loading: "Araçlar yükleniyor…",
+          loadFailed: "Araçlar yüklenemedi.",
+          noTools: "Bu bağlayıcı için kullanılabilir araç yok.",
+          summary: "{total} araçtan {enabled} tanesi açık",
+          summaryOne: "{total} araçtan {enabled} tanesi açık",
+        },
         enabledCount: "{count} açık",
         loadingSkills: "Skills yükleniyor…",
         skillsLoadFailed: "Skills yüklenemedi.",

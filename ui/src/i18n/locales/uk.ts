@@ -388,6 +388,8 @@ export const uk: TranslationMap = {
       "Оновлення встановлено, але запущена версія не змінилася — можливо, перезапуск було заблоковано. Очікувалося v{expectedVersion}, запущено v{actualVersion}.",
     handoffTimeout:
       "Передавання оновлення розпочато, але про завершення не повідомлено після повторного підключення. Виконайте `openclaw update status`, щоб дізнатися остаточний результат.",
+    outcomeUnknown:
+      "Запит на оновлення міг бути прийнятий, але Gateway не повідомив кінцевий результат після повторного з'єднання. Виконайте `openclaw update status` перед повторною спробою.",
     failureReasons: {
       dirty: "Зафіксуйте або сховайте зміни, потім повторіть.",
       noUpstream: "Встановіть upstream-гілку, потім повторіть.",
@@ -2094,6 +2096,7 @@ export const uk: TranslationMap = {
       title: "Ваш ШІ готовий",
       detail: "{modelRef} · {latencyMs} мс",
       openChat: "Відкрити чат",
+      continueSetup: "Продовжити налаштування",
       configuredModel: "Налаштована модель",
     },
     failure: {
@@ -2283,6 +2286,11 @@ export const uk: TranslationMap = {
       channelDegraded: "{channel} у погіршеному стані — запитайте мене, що сталося",
       channelFallback: "Канал",
       dismiss: "Відхилити це оновлення",
+      channelSetupTitle: "Зв'язуйтеся з OpenClaw поза цим застосунком",
+      channelSetupBody:
+        "Веб-застосунок уже працює. Додайте канал лише якщо хочете писати OpenClaw з іншого сервісу.",
+      channelSetupAction: "Налаштувати канал",
+      channelSetupDismiss: "Продовжити з веб-застосунком",
     },
   },
   mcpServers: {
@@ -2296,6 +2304,10 @@ export const uk: TranslationMap = {
     targetLabel: "URL або команда",
     nameInvalid: "Назви серверів можуть містити літери, цифри, крапки, дефіси або підкреслення.",
     targetInvalid: "Введіть URL для транспортів HTTP або дійсний командний рядок для stdio.",
+    sessionEnableFailed:
+      "Сервер було збережено вимкненим глобально, але не вдалося увімкнути його для цієї сесії: {error}",
+    sessionChanged: "Активна сесія змінилася до того, як її вдалося увімкнути.",
+    sessionUnavailable: "Активна сесія недоступна; оновіть і повторіть спробу.",
     nameTaken: "MCP-сервер з назвою «{name}» вже існує.",
     missing: "MCP-сервер «{name}» не знайдено в конфігурації.",
     missingTransport: "відсутній транспорт",
@@ -2465,7 +2477,9 @@ export const uk: TranslationMap = {
       description:
         "Рівно один плагін пам'яті володіє слотом пам'яті. Вибір рушія вмикає його та вимикає інші.",
       rowTitle: "Рушій пам'яті",
+      openClawMemory: "OpenClaw Memory",
       off: "Вимкнено",
+      unavailable: "Недоступно",
       autoHint:
         "У конфігурації не закріплено жодного рушія, тож слот повертається до типового власника.",
       explicitHint: "Цей рушій закріплено в конфігурації під plugins.slots.memory.",
@@ -2773,6 +2787,11 @@ export const uk: TranslationMap = {
       title: "Пошук інструментів",
       description:
         "Тримайте обмежений каталог інструментів видимим і відкладайте решту за пошуком, щоб великі каталоги MCP та плагінів не переповнювали підказку.",
+    },
+    loopDetection: {
+      title: "Виявлення циклів інструментів",
+      description:
+        "Увімкніть захист на основі змінної історії, який попереджає або блокує повторні виклики інструментів, коли агент перестає просуватися.",
     },
     localModelLean: {
       title: "Спрощені інструменти для локальних моделей",
@@ -3801,12 +3820,12 @@ export const uk: TranslationMap = {
       loadingPage: "Завантаження wiki-сторінки…",
       dreamsTab: "Сни",
       insightsTab: "Імпортовані інсайти",
-      palaceTab: "Палац пам'яті",
+      wikiTab: "Вікі пам'яті",
       dreamsExplainer:
         "Це необроблений щоденник снів, який система записує під час відтворення й консолідації пам'яті; використовуйте його, щоб оглянути, що помічає система пам'яті та де вона ще виглядає зашумленою чи неповною.",
       insightsExplainer:
         "Це імпортовані інсайти, згруповані із зовнішньої історії; використовуйте їх, щоб переглянути, що виявили імпорти, перш ніж щось із цього перейде в тривалу пам'ять.",
-      palaceExplainer:
+      wikiExplainer:
         "Це скомпільована wiki-поверхня пам'яті, яку система може шукати та осмислювати; використовуйте її для перегляду фактичних сторінок пам'яті, тверджень, відкритих запитань і суперечностей, а не необроблених імпортованих вихідних чатів.",
       copyArchivePath: "Скопіювати шлях архіву",
       loadingInsights: "Завантаження імпортованих інсайтів…",
@@ -3822,9 +3841,9 @@ export const uk: TranslationMap = {
       riskReasons: "Причини ризику:",
       labels: "Мітки:",
       openSourcePage: "Відкрити сторінку джерела",
-      loadingPalace: "Завантаження палацу пам'яті…",
-      emptyPalace: "Палац пам'яті ще не заповнено",
-      emptyPalaceHint:
+      loadingWiki: "Завантаження вікі пам'яті…",
+      emptyWiki: "Вікі пам'яті ще не заповнено",
+      emptyWikiHint:
         "Наразі вікі містить переважно необроблені імпорти джерел і операційні звіти. Ця вкладка стане корисною, щойно почнуть записуватися синтези, сутності чи концепції.",
       claims: "Твердження",
       openQuestions: "Відкриті питання",
@@ -3900,7 +3919,7 @@ export const uk: TranslationMap = {
       tidyingKnowledgeGraph: "упорядкування графа знань…",
       replayingConversations: "відтворення сьогоднішніх розмов…",
       weavingShortTerm: "переплетення короткострокового з довгостроковим…",
-      defragmentingMindPalace: "дефрагментація палацу розуму…",
+      defragmentingMemoryLane: "дефрагментація спогадів…",
       filingLooseThoughts: "упорядкування розрізнених думок…",
       connectingDots: "поєднання далеких точок…",
       compostingContext: "переробка старих контекстних вікон…",
@@ -3925,6 +3944,7 @@ export const uk: TranslationMap = {
     emptySubtitle: "Sign in to a provider or add an API key, then refresh.",
     status: {
       ok: "Підключено",
+      ready: "Готово",
       expiring: "Expiring",
       expired: "Застарів",
       missing: "Not signed in",
@@ -3977,6 +3997,16 @@ export const uk: TranslationMap = {
         unknown: "Не вдалося встановити з’єднання",
         no_model: "Немає доступних моделей",
       },
+    },
+    readiness: {
+      title: "Налаштування AI",
+      heading: "Підключіть свій AI",
+      signedInNoModels:
+        "Ви ввійшли, але цей акаунт не надає жодних придатних моделей. Виберіть іншого постачальника або акаунт, щоб продовжити.",
+      notConfigured: "Виберіть постачальника та перевірте модель, яку використовуватиме OpenClaw.",
+      noModels: "Немає доступних моделей",
+      modelRequired: "Потрібна модель",
+      chooseProvider: "Виберіть іншого постачальника",
     },
     logout: {
       action: "Вийти",
@@ -4926,6 +4956,7 @@ export const uk: TranslationMap = {
       pause: "Призупинити",
       seek: "Перемотати медіа",
       download: "Завантажити {filename}",
+      preparing: "Підготовка відтворення…",
       videoUnavailable: "Не вдається відтворити цей формат — завантажте замість цього.",
     },
     modelControls: {
@@ -5100,7 +5131,22 @@ export const uk: TranslationMap = {
         manageSkills: "Керувати Skills",
         browseConnectors: "Огляд конекторів",
         addMcpServer: "Додати сервер MCP…",
-        toolAccess: "Доступ до інструментів",
+        addMcpServerTitle: "Додати сервер MCP",
+        addMcpServerDescription: "Налаштуйте сервер і виберіть, де його ввімкнено.",
+        scopeLabel: "Доступність",
+        scopeSession: "Ця сесія",
+        scopeEverywhere: "Скрізь",
+        scopeSessionHint:
+          "Сервер зберігається глобально вимкненим і вмикається лише для цієї сесії.",
+        scopeEverywhereHint: "Сервер зберігається та вмикається для кожної сесії.",
+        toolAccess: {
+          label: "Доступ до інструментів",
+          loading: "Завантаження інструментів…",
+          loadFailed: "Не вдалося завантажити інструменти.",
+          noTools: "Немає доступних інструментів для цього конектора.",
+          summary: "{enabled} з {total} інструментів увімкнено",
+          summaryOne: "{enabled} з {total} інструмента увімкнено",
+        },
         enabledCount: "{count} увімкнено",
         loadingSkills: "Завантаження Skills…",
         skillsLoadFailed: "Не вдалося завантажити Skills.",

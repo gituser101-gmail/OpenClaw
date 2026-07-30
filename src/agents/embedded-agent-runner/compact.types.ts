@@ -113,6 +113,18 @@ export type CompactEmbeddedAgentSessionParams = {
   sourceReplyDeliveryMode?: SourceReplyDeliveryMode;
   ownerNumbers?: string[];
   abortSignal?: AbortSignal;
+  /**
+   * Separate caller-cancellation signal, distinct from the safety-timeout
+   * signal carried by `abortSignal`. Used by the fallback chain to give each
+   * candidate a full independent timeout window while still propagating
+   * caller cancellation — see #115546.
+   *
+   * Set by {@link compactContextEngineWithSafetyTimeout} on
+   * `runtimeContext` and threaded through the delegate. Only present when
+   * the caller provides an explicit cancellation signal (never set for the
+   * CLI-budget compaction path).
+   */
+  callerAbortSignal?: AbortSignal;
   onCompactionHookMessages?: (payload: {
     phase: "before" | "after";
     messages: string[];

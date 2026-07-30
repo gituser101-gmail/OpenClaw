@@ -235,6 +235,7 @@ export const ru: TranslationMap = {
         "На телефоне откройте WhatsApp → Настройки → Связанные устройства → Привязка устройства, затем отсканируйте этот код.",
       whatsappQrLoading: "Создание QR-кода…",
       whatsappQrHint: "Нажмите «Показать QR-код», чтобы создать код привязки.",
+      whatsappQrAlt: "QR-код WhatsApp",
       whatsappLinked: "WhatsApp привязан и готов к работе.",
       regenerateQr: "Новый QR-код",
       linkLater: "Привязать позже",
@@ -612,6 +613,8 @@ export const ru: TranslationMap = {
     loadError: "Не удалось загрузить дашборды: {error}",
   },
   sessionsView: {
+    subagentPrefix: "Субагент:",
+    automationPrefix: "Автоматизация:",
     deletePreservedWorktrees:
       "{count} рабочих деревьев сеанса с незакоммиченными или неотправленными изменениями были сохранены ({branches}). Управляйте ими в Settings -> Worktrees.",
     deletePreservedWorktreeConfirm:
@@ -791,7 +794,7 @@ export const ru: TranslationMap = {
     groupBy: "Группировать по",
     groupByNone: "Нет",
     groupByCategory: "Пользовательские группы",
-    showCronSessions: "Показать сеансы cron",
+    showCronSessions: "Показывать сеансы автоматизации",
     groupByChannel: "Канал",
     groupByKind: "Тип",
     groupByAgent: "Агент",
@@ -963,10 +966,10 @@ export const ru: TranslationMap = {
     },
     cronPanel: {
       schedulerTitle: "Планировщик",
-      schedulerSubtitle: "Статус cron в шлюзе.",
+      schedulerSubtitle: "Состояние автоматизаций Gateway.",
       jobs: "Задания",
       nextWake: "Следующее пробуждение",
-      agentJobsTitle: "Cron-задания агента",
+      agentJobsTitle: "Автоматизации агента",
       agentJobsSubtitle: "Запланированные задания, назначенные этому агенту.",
       noJobs: "Нет назначенных заданий.",
       runNow: "Запустить сейчас",
@@ -1151,7 +1154,7 @@ export const ru: TranslationMap = {
         description: "Управление сессиями и их сохранение",
       },
       cron: {
-        label: "Cron",
+        label: "Автоматизации",
         description: "Запланированные задачи и автоматизация",
       },
       discovery: {
@@ -1222,6 +1225,8 @@ export const ru: TranslationMap = {
       lobsterdexSeen: "{seen}/{total} посещено",
       lobsterdexFirstVisited: "{name} · первое посещение {date}",
       lobsterdexCardFirstVisited: "Первое посещение {date}",
+      lobsterdexCardShinySeen: "✦ Блестящий замечен {date}",
+      lobsterdexCardCopyLink: "Копировать ссылку",
       lobsterdexOpen: "Открыть Lobsterdex",
     },
     security: {
@@ -1325,7 +1330,7 @@ export const ru: TranslationMap = {
       commands: "Команды",
       hooks: "Хуки",
       bindings: "Привязки",
-      cron: "Cron",
+      cron: "Автоматизации",
       approvals: "Одобрения",
       security: "Политика безопасности",
       plugins: "Плагины",
@@ -1880,7 +1885,7 @@ export const ru: TranslationMap = {
     sessions: "Активные сеансы и значения по умолчанию.",
     usage: "Использование API и расходы.",
     cron: "Пробуждения и повторяющиеся запуски.",
-    tasks: "Фоновые задачи: субагенты, запуски cron, CLI.",
+    tasks: "Фоновые задачи: субагенты, запуски автоматизаций, CLI.",
     skills: "Навыки и ключи API.",
     plugins: "Устанавливайте дополнительные возможности и управляйте ими.",
     skillWorkshop:
@@ -1894,7 +1899,7 @@ export const ru: TranslationMap = {
     communications: "Каналы, сообщения и настройки аудио.",
     appearance: "Тема, интерфейс и настройки мастера настройки.",
     lobsterdex: "Каждая палитра lobster, посетившая этот браузер.",
-    automation: "Команды, хуки, cron и плагины.",
+    automation: "Команды, хуки, автоматизации и плагины.",
     mcp: "Серверы MCP, аутентификация, инструменты и диагностика.",
     memory: "Движок памяти, бэкенд, поиск и сны.",
     infrastructure: "Настройки шлюза, веба, браузера и медиа.",
@@ -2052,6 +2057,39 @@ export const ru: TranslationMap = {
     replaceExisting: "Заменять существующие импорты",
     replaceHint:
       "Повторно просмотрите конфликты и сохраните резервные копии элементов перед заменой.",
+    backfill: {
+      title: "Из прошлых сеансов",
+      subtitle:
+        "Подготовьте проверенные воспоминания из предыдущих сеансов агента. Во время сновидений полезные из них переносятся в долговременную память.",
+      dateRange: "Диапазон дат сеансов",
+      dateRangeHint: "Оставьте любую из дат пустой, чтобы просканировать весь доступный диапазон.",
+      from: "С",
+      to: "Кому",
+      actions: "Заполнить пропуски",
+      preview: "Предпросмотр",
+      previewing: "Предварительный просмотр…",
+      apply: "Применить",
+      applying: "Применение…",
+      rollback: "Откатить",
+      previewSummary: "{candidates} кандидатов за {days} дней",
+      previewTruncated:
+        "В этом предварительном просмотре показан первый ограниченный пакет. При применении будут обработаны остальные кандидаты.",
+      candidateCount: "{count} кандидатов",
+      noCandidates: "Новых доверенных кандидатов на импорт сеансов не найдено.",
+      progress: "Обработано дней: {days} · подготовлено: {staged}",
+      processedCandidates: "Обработано кандидатов на импорт сеансов: {count}",
+      processedDayCountOne: "Обработан {count} день",
+      processedDayCount: "Обработано дней: {count}",
+      complete: "Подготовлено: {count}; перенос выполняется посредством сновидений",
+      rollbackConfirmTitle: "Откатить импорт прошлых сеансов?",
+      rollbackConfirmDescription:
+        "Удалить записи дневника и подготовленные воспоминания, созданные при импорте прошлых сеансов для этого агента.",
+      rollbackWarning:
+        "Отслеживаемые указатели сеансов останутся на месте, поэтому удалённые записи не будут подготовлены повторно.",
+      rollbackComplete: "Импорт прошлых сеансов отменён",
+      rollbackCounts: "Удалено записей дневника: {diary}; подготовленных записей: {staged}",
+      unavailable: "Импорт прошлых сеансов недоступен на этом Gateway.",
+    },
   },
   onboarding: {
     memoryImport: {
@@ -2094,6 +2132,14 @@ export const ru: TranslationMap = {
     sessionRestarted:
       "{error} OpenClaw начал новую сессию; предыдущие сообщения сохранены для контекста.",
     unsupportedGateway: "Обновите Gateway, чтобы продолжить настройку с OpenClaw.",
+    panel: {
+      title: "OpenClaw",
+      toggle: "Спросить OpenClaw",
+      close: "Закрыть «Спросить OpenClaw»",
+      resize: "Изменить размер панели «Спросить OpenClaw»",
+      dockBottom: "Закрепить панель «Спросить OpenClaw» внизу",
+      dockRight: "Закрепить панель «Спросить OpenClaw» справа",
+    },
     history: {
       button: "История",
       title: "Недавние изменения",
@@ -2228,7 +2274,7 @@ export const ru: TranslationMap = {
     },
     dreaming: {
       intro:
-        "Dreaming работает как одна управляемая cron-задача для всех рабочих пространств агентов, поэтому эти настройки глобальные. Они принадлежат плагину {plugin}.",
+        "Сновидения выполняются как единая управляемая автоматизация во всех рабочих пространствах агентов, поэтому эти настройки являются глобальными. За них отвечает плагин {plugin}.",
       schedule: {
         title: "Расписание",
         description: "Когда выполняется полный проход и какая модель его описывает.",
@@ -2598,36 +2644,8 @@ export const ru: TranslationMap = {
   },
   profilePage: {
     offline: "Подключитесь к Gateway, чтобы встретить своего агента.",
-    loading: "Погружаемся за статистикой…",
-    emptyTitle: "Свежая раковина",
-    emptyBody:
-      "Пока нет активности токенов. Отправьте агенту сообщение и наблюдайте, как риф оживает.",
-    sinceChip: "На рифе с {date}",
-    channelChipTitle: "{tokens} токенов в этом канале",
-    statLifetimeTokens: "Токены за всё время",
-    statPeakDay: "Пиковый день",
-    statLongestSession: "Самая длинная сессия",
-    statCurrentStreak: "Текущая серия",
-    statLongestStreak: "Самая длинная серия",
-    streakDay: "{count} дн.",
-    streakDays: "{count} дн.",
-    heatmapTitle: "Активность токенов",
-    heatmapSub: "Год на рифе — чем краснее, тем занятые клешни.",
-    heatmapCellTokens: "{tokens} токенов",
-    legendLess: "Меньше",
-    legendMore: "Больше",
-    insightsTitle: "Инсайты активности",
-    insightModel: "Самая используемая модель",
-    insightMessages: "Сообщений обменяно",
-    insightToolCalls: "Вызовы инструментов",
-    insightUniqueTools: "Различные инструменты",
-    insightAgents: "Агенты в рифе",
-    insightSessions: "Отслеживаемые сеансы",
-    sessionsCapped: "{count}+",
-    toolsTitle: "Наиболее используемые инструменты",
-    toolsEmpty: "Запуски инструментов пока не зарегистрированы.",
-    toolRun: "{count} запуск",
-    toolRuns: "{count} запусков",
+    usageStatistics: "Статистика использования",
+    usageStatisticsDescription: "Просматривайте активность, расходы и тенденции использования.",
     identity: {
       title: "Профиль",
       menuLabel: "Меню идентификации",
@@ -2683,7 +2701,7 @@ export const ru: TranslationMap = {
     },
     runtime: {
       subagent: "Субагент",
-      cron: "Cron",
+      cron: "Автоматизация",
       acp: "ACP",
       cli: "CLI",
       unknown: "Задача",
@@ -3294,8 +3312,8 @@ export const ru: TranslationMap = {
   },
   attention: {
     cronErrorUnknown: "Неизвестная ошибка",
-    cronFailed: "Сбой заданий cron: {count}",
-    cronOverdue: "Просрочено заданий cron: {count}",
+    cronFailed: "Сбоев автоматизации: {count}",
+    cronOverdue: "Просрочено автоматизаций: {count}",
     modelAuthExpired: "Срок авторизации модели истёк: {providers}",
     pendingApproval: "{count} ожидающее подтверждение",
     pendingApprovals: "{count} ожидающих подтверждения",
@@ -3358,7 +3376,7 @@ export const ru: TranslationMap = {
     items: {
       apps: "Приложения",
       sessions: "Сеансы",
-      scheduled: "Запланировано",
+      scheduled: "Автоматизации",
       skills: "Навыки",
       plugins: "Плагины",
       settings: "Настройки",
@@ -3667,6 +3685,14 @@ export const ru: TranslationMap = {
       cost: "Стоимость",
       session: "сеанс",
       sessions: "сеансы",
+    },
+    heatmap: {
+      title: "Активность токенов",
+      subtitle:
+        "Ежедневная интенсивность использования токенов за выбранный период, но не более одного года.",
+      cellTokens: "{tokens} токенов",
+      less: "Меньше",
+      more: "Больше",
     },
     providerUsage: {
       title: "Тарифы и расчёты провайдеров",
@@ -4411,6 +4437,12 @@ export const ru: TranslationMap = {
       reply: "Ответить",
       replyToMessage: "Ответить на сообщение",
       replyingTo: "Ответ пользователю {name}",
+      message: "сообщение",
+      currentMessage: "текущее сообщение",
+      actions: "Действия с сообщением",
+      selectionActions: "Действия с выбранным",
+      moreDetails: "Подробнее",
+      askInSideChat: "Спросить в боковом чате",
       rewind: "Перемотать",
       rewindConfirm: "Перемотать к состоянию до этого сообщения?",
       rewindToHere: "Перемотать сюда",
@@ -4536,7 +4568,17 @@ export const ru: TranslationMap = {
       runDone: "Готово",
       runInterrupted: "Прервано",
       runStatus: "Статус выполнения: {status}",
+      compactingContext: "Сжатие контекста...",
+      contextCompacted: "Контекст сжат",
+      fallbackActive: "Активна резервная модель: {model}",
+      fallbackCleared: "Резервная модель отключена: {model}",
+      fallbackSelected: "Выбрано: {model}",
+      fallbackCurrent: "Активно: {model}",
+      fallbackPrevious: "Предыдущая резервная модель: {model}",
+      fallbackReason: "Причина: {reason}",
+      fallbackAttempts: "Попыток: {attempts}",
       cancelReply: "Отменить ответ",
+      attachmentPreview: "Предпросмотр вложения",
       compactRecommendedContext: "Сжать рекомендованный контекст сессии",
       removeAttachment: "Удалить вложение",
       addAttachment: "Добавить вложение",
@@ -4815,6 +4857,8 @@ export const ru: TranslationMap = {
     ru: "Русский (русский)",
   },
   cron: {
+    adminRequired:
+      "Доступен только просмотр. Для изменения автоматизаций требуется доступ operator.admin.",
     tabs: {
       filterLabel: "Статус автоматизации",
       all: "Все",

@@ -240,6 +240,7 @@ export const fr: TranslationMap = {
         "Sur votre téléphone, ouvrez WhatsApp → Paramètres → Appareils connectés → Connecter un appareil, puis scannez ce code.",
       whatsappQrLoading: "Génération du code QR…",
       whatsappQrHint: "Cliquez sur Afficher le code QR pour générer un code d’association.",
+      whatsappQrAlt: "QR WhatsApp",
       whatsappLinked: "WhatsApp est associé et prêt.",
       regenerateQr: "Nouveau code QR",
       linkLater: "Associer plus tard",
@@ -621,6 +622,8 @@ export const fr: TranslationMap = {
     loadError: "Impossible de charger les tableaux de bord : {error}",
   },
   sessionsView: {
+    subagentPrefix: "Sous-agent :",
+    automationPrefix: "Automatisation :",
     deletePreservedWorktrees:
       "{count} worktree(s) de session avec des modifications non validées ou non envoyées ont été conservés ({branches}). Gérez-les dans Settings -> Worktrees.",
     deletePreservedWorktreeConfirm:
@@ -800,7 +803,7 @@ export const fr: TranslationMap = {
     groupBy: "Regrouper par",
     groupByNone: "Aucun",
     groupByCategory: "Groupes personnalisés",
-    showCronSessions: "Afficher les sessions cron",
+    showCronSessions: "Afficher les sessions d’automatisation",
     groupByChannel: "Canal",
     groupByKind: "Type",
     groupByAgent: "Agent",
@@ -972,10 +975,10 @@ export const fr: TranslationMap = {
     },
     cronPanel: {
       schedulerTitle: "Scheduler",
-      schedulerSubtitle: "Gateway cron status.",
+      schedulerSubtitle: "État des automatisations du Gateway.",
       jobs: "Tâches",
       nextWake: "Prochain réveil",
-      agentJobsTitle: "Agent Cron Jobs",
+      agentJobsTitle: "Automatisations de l’agent",
       agentJobsSubtitle: "Scheduled jobs targeting this agent.",
       noJobs: "No jobs assigned.",
       runNow: "Run Now",
@@ -1158,7 +1161,7 @@ export const fr: TranslationMap = {
         description: "Gestion et persistance des sessions",
       },
       cron: {
-        label: "Cron",
+        label: "Automatisations",
         description: "Tâches planifiées et automatisation",
       },
       discovery: {
@@ -1229,6 +1232,8 @@ export const fr: TranslationMap = {
       lobsterdexSeen: "{seen}/{total} visités",
       lobsterdexFirstVisited: "{name} · première visite le {date}",
       lobsterdexCardFirstVisited: "Première visite le {date}",
+      lobsterdexCardShinySeen: "✦ Brillant repéré le {date}",
+      lobsterdexCardCopyLink: "Copier le lien",
       lobsterdexOpen: "Ouvrir Lobsterdex",
     },
     security: {
@@ -1332,7 +1337,7 @@ export const fr: TranslationMap = {
       commands: "Commandes",
       hooks: "Hooks",
       bindings: "Liaisons",
-      cron: "Cron",
+      cron: "Automatisations",
       approvals: "Approbations",
       security: "Politique de sécurité",
       plugins: "Plugins",
@@ -1891,7 +1896,7 @@ export const fr: TranslationMap = {
     sessions: "Sessions actives et valeurs par défaut.",
     usage: "Utilisation de l’API et coûts.",
     cron: "Réveils et exécutions récurrentes.",
-    tasks: "Tâches en arrière-plan : sous-agents, exécutions cron, CLI.",
+    tasks: "Tâches en arrière-plan : sous-agents, exécutions d’automatisations, CLI.",
     skills: "Skills et clés API.",
     plugins: "Installez et gérez des fonctionnalités optionnelles.",
     skillWorkshop:
@@ -1905,7 +1910,7 @@ export const fr: TranslationMap = {
     communications: "Canaux, messages et paramètres audio.",
     appearance: "Thème, UI et paramètres de l’assistant de configuration.",
     lobsterdex: "Chaque palette de homard ayant visité ce navigateur.",
-    automation: "Commandes, hooks, cron et plugins.",
+    automation: "Commandes, hooks, automatisations et plugins.",
     mcp: "Serveurs MCP, authentification, outils et diagnostics.",
     memory: "Moteur de mémoire, backend, recherche et rêve.",
     infrastructure: "Paramètres Gateway, web, navigateur et médias.",
@@ -2068,6 +2073,39 @@ export const fr: TranslationMap = {
     replaceExisting: "Remplacer les importations existantes",
     replaceHint:
       "Prévisualisez à nouveau les conflits et conservez les sauvegardes des éléments avant leur remplacement.",
+    backfill: {
+      title: "À partir des sessions précédentes",
+      subtitle:
+        "Préparez les souvenirs fiables issus de sessions antérieures de l’agent. Le rêve transfère les plus utiles vers la mémoire à long terme.",
+      dateRange: "Plage de dates des sessions",
+      dateRangeHint: "Laissez l’une des dates vide pour analyser toute la plage disponible.",
+      from: "Du",
+      to: "Au",
+      actions: "Récupérer l’historique",
+      preview: "Aperçu",
+      previewing: "Aperçu en cours…",
+      apply: "Appliquer",
+      applying: "Application…",
+      rollback: "Annuler",
+      previewSummary: "{candidates} candidats sur {days} jours",
+      previewTruncated:
+        "Cet aperçu affiche le premier lot limité. L’application se poursuit avec les candidats restants.",
+      candidateCount: "{count} candidats",
+      noCandidates: "Aucun nouveau candidat de session fiable n’a été trouvé.",
+      progress: "{days} jours traités · {staged} mis en attente",
+      processedCandidates: "{count} candidats de session traités",
+      processedDayCountOne: "{count} jour traité",
+      processedDayCount: "{count} jours traités",
+      complete: "{count} mis en attente ; la promotion s’effectue via le rêve",
+      rollbackConfirmTitle: "Annuler le remplissage rétroactif des sessions ?",
+      rollbackConfirmDescription:
+        "Supprimez les entrées du journal et les souvenirs mis en attente créés par le remplissage rétroactif des sessions pour cet agent.",
+      rollbackWarning:
+        "Les curseurs de session suivis restent en place ; les entrées supprimées ne seront donc pas remises en attente.",
+      rollbackComplete: "Remplissage rétroactif des sessions annulé",
+      rollbackCounts: "{diary} entrées de journal et {staged} entrées mises en attente supprimées",
+      unavailable: "Le remplissage rétroactif des sessions n’est pas disponible sur ce Gateway.",
+    },
   },
   onboarding: {
     memoryImport: {
@@ -2110,6 +2148,14 @@ export const fr: TranslationMap = {
     sessionRestarted:
       "{error} OpenClaw a démarré une nouvelle session ; les messages précédents restent disponibles comme contexte.",
     unsupportedGateway: "Mettez à jour le Gateway pour poursuivre la configuration avec OpenClaw.",
+    panel: {
+      title: "OpenClaw",
+      toggle: "Demander à OpenClaw",
+      close: "Fermer Demander à OpenClaw",
+      resize: "Redimensionner Demander à OpenClaw",
+      dockBottom: "Ancrer Demander à OpenClaw en bas",
+      dockRight: "Ancrer Demander à OpenClaw à droite",
+    },
     history: {
       button: "Historique",
       title: "Modifications récentes",
@@ -2248,7 +2294,7 @@ export const fr: TranslationMap = {
     },
     dreaming: {
       intro:
-        "Le rêve s'exécute comme une seule tâche cron gérée sur tous les espaces de travail des agents, donc ces paramètres sont globaux. Ils sont gérés par le plugin {plugin}.",
+        "Le rêve s’exécute comme une automatisation gérée unique dans tous les espaces de travail des agents ; ces paramètres sont donc globaux. Ils sont gérés par le plugin {plugin}.",
       schedule: {
         title: "Planification",
         description: "Quand le balayage complet s'exécute et quel modèle le narre.",
@@ -2635,37 +2681,8 @@ export const fr: TranslationMap = {
   },
   profilePage: {
     offline: "Connectez-vous au Gateway pour rencontrer votre agent.",
-    loading: "Plongée à la recherche des statistiques…",
-    emptyTitle: "Une coquille toute neuve",
-    emptyBody:
-      "Aucune activité de jetons pour le moment. Envoyez un message à votre agent et regardez le récif s’illuminer.",
-    sinceChip: "Dans le récif depuis {date}",
-    channelChipTitle: "{tokens} jetons sur ce canal",
-    statLifetimeTokens: "Jetons à vie",
-    statPeakDay: "Jour de pic",
-    statLongestSession: "Session la plus longue",
-    statCurrentStreak: "Série actuelle",
-    statLongestStreak: "Série la plus longue",
-    streakDay: "{count} jour",
-    streakDays: "{count} jours",
-    heatmapTitle: "Activité des jetons",
-    heatmapSub:
-      "Une année dans le récif — plus le rouge est profond, plus les pinces sont actives.",
-    heatmapCellTokens: "{tokens} jetons",
-    legendLess: "Moins",
-    legendMore: "Plus",
-    insightsTitle: "Aperçus de l’activité",
-    insightModel: "Modèle le plus utilisé",
-    insightMessages: "Messages échangés",
-    insightToolCalls: "Appels d’outils",
-    insightUniqueTools: "Outils distincts",
-    insightAgents: "Agents dans le récif",
-    insightSessions: "Sessions suivies",
-    sessionsCapped: "{count}+",
-    toolsTitle: "Outils les plus utilisés",
-    toolsEmpty: "Aucune exécution d’outil enregistrée pour le moment.",
-    toolRun: "{count} exécution",
-    toolRuns: "{count} exécutions",
+    usageStatistics: "Statistiques d’utilisation",
+    usageStatisticsDescription: "Consultez l’activité, les coûts et les tendances d’utilisation.",
     identity: {
       title: "Identité",
       menuLabel: "Menu d'identité",
@@ -2721,7 +2738,7 @@ export const fr: TranslationMap = {
     },
     runtime: {
       subagent: "Sous-agent",
-      cron: "Cron",
+      cron: "Automatisation",
       acp: "ACP",
       cli: "CLI",
       unknown: "Tâche",
@@ -3341,8 +3358,8 @@ export const fr: TranslationMap = {
   },
   attention: {
     cronErrorUnknown: "Erreur inconnue",
-    cronFailed: "Échec de {count} tâche(s) cron",
-    cronOverdue: "{count} tâche(s) cron en retard",
+    cronFailed: "{count} automatisation(s) échouée(s)",
+    cronOverdue: "{count} automatisation(s) en retard",
     modelAuthExpired: "Authentification du modèle expirée : {providers}",
     pendingApproval: "{count} approbation en attente",
     pendingApprovals: "{count} approbations en attente",
@@ -3406,7 +3423,7 @@ export const fr: TranslationMap = {
     items: {
       apps: "Applications",
       sessions: "Sessions",
-      scheduled: "Planifié",
+      scheduled: "Automatisations",
       skills: "Skills",
       plugins: "Plugins",
       settings: "Paramètres",
@@ -3717,6 +3734,13 @@ export const fr: TranslationMap = {
       cost: "Coût",
       session: "session",
       sessions: "sessions",
+    },
+    heatmap: {
+      title: "Activité des jetons",
+      subtitle: "Intensité quotidienne des jetons pour la période sélectionnée, jusqu’à un an.",
+      cellTokens: "{tokens} jetons",
+      less: "Moins",
+      more: "Plus",
     },
     providerUsage: {
       title: "Forfaits et facturation des fournisseurs",
@@ -4470,6 +4494,12 @@ export const fr: TranslationMap = {
       reply: "Répondre",
       replyToMessage: "Répondre au message",
       replyingTo: "En réponse à {name}",
+      message: "message",
+      currentMessage: "message actuel",
+      actions: "Actions sur le message",
+      selectionActions: "Actions sur la sélection",
+      moreDetails: "Plus de détails",
+      askInSideChat: "Demander dans la discussion latérale",
       rewind: "Revenir en arrière",
       rewindConfirm: "Revenir avant ce message ?",
       rewindToHere: "Revenir ici",
@@ -4595,7 +4625,17 @@ export const fr: TranslationMap = {
       runDone: "Terminé",
       runInterrupted: "Interrompu",
       runStatus: "Statut d'exécution : {status}",
+      compactingContext: "Compression du contexte...",
+      contextCompacted: "Contexte compressé",
+      fallbackActive: "Modèle de secours actif : {model}",
+      fallbackCleared: "Modèle de secours désactivé : {model}",
+      fallbackSelected: "Sélectionné : {model}",
+      fallbackCurrent: "Actif : {model}",
+      fallbackPrevious: "Modèle de secours précédent : {model}",
+      fallbackReason: "Raison : {reason}",
+      fallbackAttempts: "Tentatives : {attempts}",
       cancelReply: "Annuler la réponse",
+      attachmentPreview: "Aperçu de la pièce jointe",
       compactRecommendedContext: "Compacter le contexte de session recommandé",
       removeAttachment: "Supprimer la pièce jointe",
       addAttachment: "Ajouter une pièce jointe",
@@ -4881,6 +4921,8 @@ export const fr: TranslationMap = {
     ru: "Русский (russe)",
   },
   cron: {
+    adminRequired:
+      "Consultation uniquement. Les modifications des automatisations nécessitent l’accès operator.admin.",
     tabs: {
       filterLabel: "État de l’automatisation",
       all: "Tous",

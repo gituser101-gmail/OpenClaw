@@ -2347,10 +2347,19 @@
       ]
     },
     {
+      "locale": "ru",
+      "source": "Details",
+      "translations": [
+        "Подробности",
+        "Сведения"
+      ]
+    },
+    {
       "locale": "uk",
       "source": "Details",
       "translations": [
         "Відомості",
+        "Деталі",
         "Докладно"
       ]
     },
@@ -7023,9 +7032,18 @@
       ]
     },
     {
+      "locale": "de",
+      "source": "Pause",
+      "translations": [
+        "Pause",
+        "Pausieren"
+      ]
+    },
+    {
       "locale": "fa",
       "source": "Pause",
       "translations": [
+        "توقف",
         "توقف موقت",
         "مکث"
       ]
@@ -7035,7 +7053,40 @@
       "source": "Pause",
       "translations": [
         "Mettre en pause",
+        "Pause",
         "Suspendre"
+      ]
+    },
+    {
+      "locale": "it",
+      "source": "Pause",
+      "translations": [
+        "Metti in pausa",
+        "Pausa"
+      ]
+    },
+    {
+      "locale": "ko",
+      "source": "Pause",
+      "translations": [
+        "일시 중지",
+        "일시정지"
+      ]
+    },
+    {
+      "locale": "ru",
+      "source": "Pause",
+      "translations": [
+        "Пауза",
+        "Приостановить"
+      ]
+    },
+    {
+      "locale": "uk",
+      "source": "Pause",
+      "translations": [
+        "Пауза",
+        "Призупинити"
       ]
     },
     {
@@ -10349,6 +10400,7 @@
       "source": "Voice note",
       "translations": [
         "Catatan suara",
+        "Pesan suara",
         "Voice note"
       ]
     },
@@ -10365,7 +10417,8 @@
       "source": "Voice note",
       "translations": [
         "Voice note",
-        "ボイスノート"
+        "ボイスノート",
+        "ボイスメモ"
       ]
     },
     {
@@ -10380,6 +10433,7 @@
       "locale": "nl",
       "source": "Voice note",
       "translations": [
+        "Spraakbericht",
         "Spraaknotitie",
         "Voice note"
       ]
@@ -10412,6 +10466,7 @@
       "locale": "sv",
       "source": "Voice note",
       "translations": [
+        "Röstanteckning",
         "Röstmeddelande",
         "Voice note"
       ]
@@ -10421,7 +10476,8 @@
       "source": "Voice note",
       "translations": [
         "Voice note",
-        "ข้อความเสียง"
+        "ข้อความเสียง",
+        "บันทึกเสียง"
       ]
     },
     {
@@ -10453,7 +10509,8 @@
       "source": "Voice note",
       "translations": [
         "Voice note",
-        "语音消息"
+        "语音消息",
+        "语音留言"
       ]
     },
     {
@@ -10461,6 +10518,7 @@
       "source": "Voice note",
       "translations": [
         "Voice note",
+        "語音備忘",
         "語音留言"
       ]
     },

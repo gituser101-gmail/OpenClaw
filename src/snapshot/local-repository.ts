@@ -1451,9 +1451,11 @@ async function assertTrustedWindowsStagingPath(rootPath: string): Promise<void> 
   }
   let security: z.infer<typeof WINDOWS_PATH_SECURITY_SCHEMA>;
   try {
-    security = await inspectWindowsPathSecurity(paths);
-  } catch {
-    throw new Error(`Unable to verify private Windows ACL for SQLite staging: ${rootPath}`);
+    security = await inspectWindowsPathSecurityWithRetry(paths);
+  } catch (error) {
+    throw new Error(`Unable to verify private Windows ACL for SQLite staging: ${rootPath}`, {
+      cause: error,
+    });
   }
   if (security.paths.length !== paths.length) {
     throw new Error(`Unable to verify private Windows ACL for SQLite staging: ${rootPath}`);
@@ -1535,6 +1537,19 @@ function windowsAclEntryPermitsUnsafeStagingAccess(
     (requirePrivate && (entry.canWrite || entry.canRead)) ||
     rights.some((right) => unsafeRights.has(right))
   );
+}
+
+async function inspectWindowsPathSecurityWithRetry(
+  pathnames: readonly string[],
+): Promise<z.infer<typeof WINDOWS_PATH_SECURITY_SCHEMA>> {
+  try {
+    return await inspectWindowsPathSecurity(pathnames);
+  } catch {
+    await new Promise((resolve) => {
+      setTimeout(resolve, 100);
+    });
+    return await inspectWindowsPathSecurity(pathnames);
+  }
 }
 
 async function inspectWindowsPathSecurity(

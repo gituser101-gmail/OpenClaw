@@ -60,6 +60,7 @@ import {
 } from "../../embedded-agent-utils.js";
 import { isExecLikeToolName, type ToolErrorSummary } from "../../tool-error-summary.js";
 import { isLikelyMutatingToolName } from "../../tool-mutation.js";
+import { hasVisibleOutboundDeliveryEvidence } from "../delivery-evidence.js";
 import { buildSourceReplyPayloadState } from "./source-reply-payloads.js";
 import { hasExplicitMutatingToolFailureAcknowledgement } from "./tool-failure-acknowledgement.js";
 
@@ -750,8 +751,17 @@ export function buildEmbeddedRunPayloads(params: {
                 ? [fallbackAnswerText]
                 : []
         ).filter((text) => !shouldSuppressRawErrorText(text));
+  // Output the agent already posted through the messaging tool is user-facing
+  // too: when a visible delivery exists, a stale tool-failure warning from an
+  // earlier recovered step must not fire after it (#114730).
+  const hasVisibleMessagingToolDelivery = hasVisibleOutboundDeliveryEvidence({
+    didSendViaMessagingTool: params.didSendViaMessagingTool,
+    messagingToolSentTargets: params.messagingToolSentTargets,
+  });
   let hasUserFacingAssistantReply =
-    completedSourceReplyViaMessageTool || params.heartbeatToolResponse?.notify === true;
+    completedSourceReplyViaMessageTool ||
+    hasVisibleMessagingToolDelivery ||
+    params.heartbeatToolResponse?.notify === true;
   const hasUserFacingErrorReply = replyItems.some((item) => item.isError === true);
   let hasUserFacingFailureAcknowledgement =
     params.heartbeatToolResponse?.notify === true &&

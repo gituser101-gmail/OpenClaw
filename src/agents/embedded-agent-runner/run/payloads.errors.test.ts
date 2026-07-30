@@ -761,6 +761,48 @@ describe("buildEmbeddedRunPayloads", () => {
     });
   });
 
+  it("does not warn for exec-like tool errors when the agent already delivered via the messaging tool", () => {
+    // #114730: the agent recovered from a failed exec step and posted the
+    // turn's summary through the message tool, so the stale failure trace
+    // must not fire after the visible delivery.
+    expectNoPayloads({
+      didSendViaMessagingTool: true,
+      lastToolError: {
+        toolName: "exec",
+        error: "command failed with exit code 1",
+        mutatingAction: true,
+        meta: "cd ~/.openclaw/workspace/vega && grep inventory | head -30 (agent)",
+      },
+    });
+  });
+
+  it("does not warn for exec-like tool errors when a visible messaging-tool target exists", () => {
+    expectNoPayloads({
+      messagingToolSentTargets: [
+        { tool: "message", provider: "slack", to: "C123", text: "Milestone summary posted." },
+      ],
+      lastToolError: {
+        toolName: "exec",
+        error: "command failed with exit code 1",
+        mutatingAction: true,
+        meta: "cd repo && grep foo (agent)",
+      },
+    });
+  });
+
+  it("keeps exec-like tool error warnings when messaging-tool targets show no visible delivery", () => {
+    const payloads = buildPayloads({
+      messagingToolSentTargets: [{ tool: "message", provider: "slack", to: "C123", text: " " }],
+      lastToolError: {
+        toolName: "exec",
+        error: "command failed with exit code 1",
+        mutatingAction: true,
+      },
+    });
+
+    expectSingleToolErrorPayload(payloads, { title: "Exec" });
+  });
+
   it("keeps exec-like tool error warnings for recoverable-looking errors when there is no reply", () => {
     const payloads = buildPayloads({
       lastToolError: {

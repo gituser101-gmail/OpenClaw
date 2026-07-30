@@ -390,6 +390,8 @@ export const de: TranslationMap = {
       "Update installiert, aber die laufende Version hat sich nicht geändert — der Neustart wurde möglicherweise blockiert. Erwartet v{expectedVersion}, läuft v{actualVersion}.",
     handoffTimeout:
       "Update-Übergabe gestartet, aber der Abschluss wurde nach der erneuten Verbindung nicht gemeldet. Führen Sie `openclaw update status` für das Endergebnis aus.",
+    outcomeUnknown:
+      "Die Update-Anfrage wurde möglicherweise angenommen, aber das Gateway hat nach der erneuten Verbindung kein Endergebnis gemeldet. Führen Sie `openclaw update status` aus, bevor Sie es erneut versuchen.",
     failureReasons: {
       dirty: "Änderungen committen oder stashen, dann erneut versuchen.",
       noUpstream: "Einen Upstream-Branch festlegen, dann erneut versuchen.",
@@ -2104,6 +2106,7 @@ export const de: TranslationMap = {
       title: "Ihre KI ist bereit",
       detail: "{modelRef} · {latencyMs} ms",
       openChat: "Chat öffnen",
+      continueSetup: "Einrichtung fortsetzen",
       configuredModel: "Konfiguriertes Modell",
     },
     failure: {
@@ -2296,6 +2299,11 @@ export const de: TranslationMap = {
       channelDegraded: "{channel} ist beeinträchtigt – frag mich, was passiert ist",
       channelFallback: "Ein Kanal",
       dismiss: "Dieses Update ausblenden",
+      channelSetupTitle: "OpenClaw außerhalb dieser App erreichen",
+      channelSetupBody:
+        "Die Web-App funktioniert bereits. Fügen Sie einen Kanal nur hinzu, wenn Sie OpenClaw über einen anderen Dienst kontaktieren möchten.",
+      channelSetupAction: "Kanal einrichten",
+      channelSetupDismiss: "Web-App weiter verwenden",
     },
   },
   mcpServers: {
@@ -2311,6 +2319,11 @@ export const de: TranslationMap = {
       "Servernamen verwenden Buchstaben, Zahlen, Punkte, Bindestriche oder Unterstriche.",
     targetInvalid:
       "Geben Sie eine URL für HTTP-Transporte oder eine gültige Befehlszeile für Stdio ein.",
+    sessionEnableFailed:
+      "Der Server wurde global deaktiviert gespeichert, aber die Aktivierung für diese Sitzung ist fehlgeschlagen: {error}",
+    sessionChanged: "Die aktive Sitzung hat sich geändert, bevor sie aktiviert werden konnte.",
+    sessionUnavailable:
+      "Die aktive Sitzung ist nicht verfügbar; aktualisieren Sie und versuchen Sie es erneut.",
     nameTaken: "Ein MCP-Server mit dem Namen „{name}“ existiert bereits.",
     missing: "MCP-Server „{name}“ wurde in der Konfiguration nicht gefunden.",
     missingTransport: "fehlender Transport",
@@ -2481,7 +2494,9 @@ export const de: TranslationMap = {
       description:
         "Genau ein Memory-Plugin belegt den Memory-Slot. Beim Auswählen einer Engine wird diese aktiviert und die anderen deaktiviert.",
       rowTitle: "Memory-Engine",
+      openClawMemory: "OpenClaw Memory",
       off: "Aus",
+      unavailable: "Nicht verfügbar",
       autoHint:
         "In der Konfiguration ist keine Engine fixiert, daher fällt der Slot auf seinen Standard-Besitzer zurück.",
       explicitHint: "Diese Engine ist in der Konfiguration unter plugins.slots.memory fixiert.",
@@ -2803,6 +2818,11 @@ export const de: TranslationMap = {
       title: "Tool-Suche",
       description:
         "Halten Sie ein begrenztes Tool-Verzeichnis sichtbar und verschieben Sie den Rest hinter die Suche, damit große MCP- und Plugin-Kataloge den Prompt nicht mehr überfüllen.",
+    },
+    loopDetection: {
+      title: "Tool-Schleifen-Erkennung",
+      description:
+        "Aktivieren Sie fortlaufende Verlaufsschutzmechanismen, die wiederholte Tool-Aufrufe warnen oder blockieren, wenn ein Agent keinen Fortschritt mehr macht.",
     },
     localModelLean: {
       title: "Schlanke Tools für lokale Modelle",
@@ -3843,12 +3863,12 @@ export const de: TranslationMap = {
       loadingPage: "Wiki-Seite wird geladen…",
       dreamsTab: "Träume",
       insightsTab: "Importierte Erkenntnisse",
-      palaceTab: "Gedächtnispalast",
+      wikiTab: "Memory-Wiki",
       dreamsExplainer:
         "Dies ist das rohe Traumtagebuch, das das System beim Wiedergeben und Konsolidieren des Gedächtnisses schreibt; nutze es, um zu überprüfen, was das Gedächtnissystem bemerkt und wo es noch verrauscht oder dünn wirkt.",
       insightsExplainer:
         "Dies sind importierte Erkenntnisse, die aus externem Verlauf geclustert wurden; nutze sie, um zu prüfen, was Importe aufgedeckt haben, bevor etwas davon zu dauerhaftem Gedächtnis wird.",
-      palaceExplainer:
+      wikiExplainer:
         "Dies ist die kompilierte Gedächtnis-Wiki-Fläche, die das System durchsuchen und verarbeiten kann; nutze sie, um tatsächliche Gedächtnisseiten, Aussagen, offene Fragen und Widersprüche zu untersuchen statt roher importierter Quell-Chats.",
       copyArchivePath: "Archivpfad kopieren",
       loadingInsights: "Importierte Erkenntnisse werden geladen…",
@@ -3864,9 +3884,9 @@ export const de: TranslationMap = {
       riskReasons: "Risikogründe:",
       labels: "Labels:",
       openSourcePage: "Quellseite öffnen",
-      loadingPalace: "Gedächtnispalast wird geladen…",
-      emptyPalace: "Der Gedächtnispalast ist noch nicht befüllt",
-      emptyPalaceHint:
+      loadingWiki: "Memory-Wiki wird geladen…",
+      emptyWiki: "Memory-Wiki ist noch nicht befüllt",
+      emptyWikiHint:
         "Derzeit enthält das Wiki hauptsächlich rohe Quellimporte und Betriebsberichte. Dieser Tab wird nützlich, sobald Synthesen, Entitäten oder Konzepte geschrieben werden.",
       claims: "Aussagen",
       openQuestions: "Offene Fragen",
@@ -3943,7 +3963,7 @@ export const de: TranslationMap = {
       tidyingKnowledgeGraph: "der Wissensgraph wird aufgeräumt…",
       replayingConversations: "die heutigen Gespräche werden erneut durchlaufen…",
       weavingShortTerm: "Kurzfristiges wird ins Langfristige eingewebt…",
-      defragmentingMindPalace: "der Gedächtnispalast wird defragmentiert…",
+      defragmentingMemoryLane: "defragmentiere Erinnerungspfad…",
       filingLooseThoughts: "lose Gedanken werden abgelegt…",
       connectingDots: "entfernte Punkte werden verbunden…",
       compostingContext: "alte Kontextfenster werden kompostiert…",
@@ -3968,6 +3988,7 @@ export const de: TranslationMap = {
     emptySubtitle: "Sign in to a provider or add an API key, then refresh.",
     status: {
       ok: "Verbunden",
+      ready: "Bereit",
       expiring: "Expiring",
       expired: "Abgelaufen",
       missing: "Not signed in",
@@ -4023,6 +4044,17 @@ export const de: TranslationMap = {
         unknown: "Verbindung fehlgeschlagen",
         no_model: "Kein Modell verfügbar",
       },
+    },
+    readiness: {
+      title: "KI-Einrichtung",
+      heading: "Verbinden Sie Ihre KI",
+      signedInNoModels:
+        "Sie sind angemeldet, aber dieses Konto stellt keine nutzbaren Modelle bereit. Wählen Sie einen anderen Anbieter oder ein anderes Konto, um fortzufahren.",
+      notConfigured:
+        "Wählen Sie einen Anbieter und überprüfen Sie das Modell, das OpenClaw verwenden wird.",
+      noModels: "Keine Modelle verfügbar",
+      modelRequired: "Modell erforderlich",
+      chooseProvider: "Anderen Anbieter wählen",
     },
     logout: {
       action: "Abmelden",
@@ -4981,6 +5013,7 @@ export const de: TranslationMap = {
       pause: "Pausieren",
       seek: "Medien durchsuchen",
       download: "{filename} herunterladen",
+      preparing: "Wiedergabe wird vorbereitet…",
       videoUnavailable: "Dieses Format kann nicht abgespielt werden – stattdessen herunterladen.",
     },
     modelControls: {
@@ -5155,7 +5188,22 @@ export const de: TranslationMap = {
         manageSkills: "Skills verwalten",
         browseConnectors: "Konnektoren durchsuchen",
         addMcpServer: "MCP-Server hinzufügen…",
-        toolAccess: "Tool-Zugriff",
+        addMcpServerTitle: "MCP-Server hinzufügen",
+        addMcpServerDescription: "Konfiguriere den Server und wähle, wo er aktiviert ist.",
+        scopeLabel: "Verfügbarkeit",
+        scopeSession: "Diese Sitzung",
+        scopeEverywhere: "Überall",
+        scopeSessionHint:
+          "Der Server wird global deaktiviert gespeichert und nur für diese Sitzung aktiviert.",
+        scopeEverywhereHint: "Der Server wird gespeichert und für jede Sitzung aktiviert.",
+        toolAccess: {
+          label: "Tool-Zugriff",
+          loading: "Tools werden geladen…",
+          loadFailed: "Tools konnten nicht geladen werden.",
+          noTools: "Keine Tools für diesen Connector verfügbar.",
+          summary: "{enabled} von {total} Tools aktiv",
+          summaryOne: "{enabled} von {total} Tool aktiv",
+        },
         enabledCount: "{count} aktiv",
         loadingSkills: "Skills werden geladen…",
         skillsLoadFailed: "Skills konnten nicht geladen werden.",

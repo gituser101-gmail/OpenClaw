@@ -596,7 +596,8 @@ function isOpenClawCronAddShellCommand(args: unknown): boolean {
   return (
     (isOpenClawExecutable(tokens[commandIndex]) ||
       (packageRunner.acceptsPackageSpec && isOpenClawPackageSpec(tokens[commandIndex]))) &&
-    normalizeOptionalLowercaseString(tokens[cliArgIndex]) === "cron" &&
+    (normalizeOptionalLowercaseString(tokens[cliArgIndex]) === "cron" ||
+      normalizeOptionalLowercaseString(tokens[cliArgIndex]) === "automations") &&
     (action === "add" || action === "create") &&
     !actionArgs.some((token) => token === "-h" || token === "--help")
   );

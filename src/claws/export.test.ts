@@ -27,6 +27,7 @@ async function installedFixture(
     extraWorkspaceFiles?: string[];
     soulContent?: string | Buffer;
     withPackage?: boolean;
+    policyRole?: "reference";
   } = {},
 ) {
   const root = tempDirs.make("openclaw-claw-export-");
@@ -111,6 +112,15 @@ async function installedFixture(
     openClawProfile,
     context: { workspace: join(root, "workspace-worker") },
   });
+  if (options.policyRole) {
+    const policyAction = plan.actions.find(
+      (action) => action.kind === "workspaceFile" && action.id === "reference/policy.md",
+    );
+    if (!policyAction) {
+      throw new Error("expected supporting-file action");
+    }
+    policyAction.details = { ...policyAction.details, role: options.policyRole };
+  }
   let config: OpenClawConfig = {};
   await applyClawAddPlan(plan, {
     consentPlanIntegrity: plan.planIntegrity,
@@ -272,6 +282,73 @@ describe("exportClawAgent", () => {
       "profile: coding",
     );
     await expect(readFile(join(out, "workspace", "SOUL.md"), "utf8")).rejects.toThrow();
+  });
+
+  it("exports extension plugins into profile v2 without duplicating manifest packages", async () => {
+    const fixture = await installedFixture({ policyRole: "reference" });
+    const integrity = `sha256:${"b".repeat(64)}`;
+    const extension = {
+      id: "coding-tools",
+      format: "claude" as const,
+      detectedFormat: "claude" as const,
+      mapped: ["commands", "skills"],
+      unavailable: ["agents"],
+      adapterIdentity: "openclaw/test",
+    };
+    persistClawPackageRef(
+      fixture.plan,
+      {
+        kind: "plugin",
+        source: "clawhub",
+        ref: "@acme/coding-tools",
+        version: "1.2.3",
+        integrity,
+        extension,
+      },
+      { env: fixture.env, relationship: "referenced" },
+    );
+
+    const result = await exportClawAgent("worker", join(fixture.root, "exported-extension"), {
+      env: fixture.env,
+      config: fixture.config,
+      sourceMcpServers: fixture.sourceMcpServers,
+      packageDeps: {
+        resolvePlugin: async () => ({
+          status: "found" as const,
+          pluginId: "coding-tools",
+          installedVersion: "1.2.3",
+          record: { integrity },
+        }),
+      },
+      packagePreflight: async () => ({
+        ok: true,
+        action: "reuse",
+        integrity,
+        installId: "coding-tools",
+        detectedFormat: "claude",
+        mapped: ["commands", "skills"],
+        unavailable: ["agents"],
+        adapterIdentity: "openclaw/test",
+      }),
+    });
+
+    expect(result.manifest.packages).toEqual([]);
+    expect(result.manifest.workspace.files).toContainEqual(
+      expect.objectContaining({ path: "reference/policy.md", role: "reference" }),
+    );
+    expect(result.openClawProfile).toMatchObject({
+      schemaVersion: 2,
+      extensions: [
+        {
+          id: "coding-tools",
+          kind: "plugin",
+          format: "claude",
+          source: "clawhub",
+          ref: "@acme/coding-tools",
+          version: "1.2.3",
+        },
+      ],
+    });
   });
 
   it("rejects modified managed content instead of silently creating a snapshot", async () => {

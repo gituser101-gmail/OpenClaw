@@ -24,6 +24,7 @@ import {
   type OpenClawStateDatabaseOptions,
 } from "../state/openclaw-state-db.js";
 import type { PersistedClawInstall } from "./provenance.js";
+import type { ClawWorkspaceFileRole } from "./types.js";
 import type { PersistedClawWorkspaceFile } from "./workspace.js";
 
 type WorkspaceFileRow = {
@@ -33,6 +34,7 @@ type WorkspaceFileRow = {
   target_path: string;
   source_path: string;
   content_digest: string;
+  role: ClawWorkspaceFileRole | null;
   status: PersistedClawWorkspaceFile["status"];
   created_at_ms: number | bigint;
   updated_at_ms: number | bigint;
@@ -64,6 +66,7 @@ function rowToWorkspaceFile(row: WorkspaceFileRow): PersistedClawWorkspaceFile {
     path: row.target_path,
     sourcePath: row.source_path,
     contentDigest: row.content_digest,
+    ...(row.role ? { role: row.role } : {}),
     status: row.status,
     createdAtMs: Number(row.created_at_ms),
     updatedAtMs: Number(row.updated_at_ms),
@@ -80,7 +83,7 @@ export function readAllClawWorkspaceFiles(
   const rows = database.db /* sqlite-allow-raw: read-only Claw workspace-file orphan inventory. */
     .prepare(
       `SELECT schema_version, agent_id, workspace, target_path, source_path,
-              content_digest, status, created_at_ms, updated_at_ms
+              content_digest, role, status, created_at_ms, updated_at_ms
          FROM claw_workspace_files
         ORDER BY agent_id, target_path`,
     )
@@ -385,6 +388,16 @@ export function releaseClawRemoveRows(
     if (clawStateTableExists(db, "claw_package_refs")) {
       db /* sqlite-allow-raw: release package refs for a removed Claw agent. */
         .prepare("DELETE FROM claw_package_refs WHERE agent_id = ?")
+        .run(agentId);
+    }
+    if (clawStateTableExists(db, "claw_setup_state")) {
+      db /* sqlite-allow-raw: remove setup answers only after full Claw cleanup succeeds. */
+        .prepare("DELETE FROM claw_setup_state WHERE agent_id = ?")
+        .run(agentId);
+    }
+    if (clawStateTableExists(db, "claw_setup_pending")) {
+      db /* sqlite-allow-raw: clear recoverable setup intent after full Claw cleanup succeeds. */
+        .prepare("DELETE FROM claw_setup_pending WHERE agent_id = ?")
         .run(agentId);
     }
     if (clawStateTableExists(db, "claw_installs")) {

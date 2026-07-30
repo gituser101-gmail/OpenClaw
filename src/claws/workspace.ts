@@ -9,7 +9,12 @@ import {
   type OpenClawStateDatabaseOptions,
 } from "../state/openclaw-state-db.js";
 import { parseClawMarkdown } from "./reader.js";
-import type { ClawAddPlan, ClawAddPlanAction, ClawDiagnostic } from "./types.js";
+import type {
+  ClawAddPlan,
+  ClawAddPlanAction,
+  ClawDiagnostic,
+  ClawWorkspaceFileRole,
+} from "./types.js";
 
 export const CLAW_WORKSPACE_FILE_RECORD_SCHEMA_VERSION =
   "openclaw.clawWorkspaceFileRecord.v1" as const;
@@ -23,6 +28,7 @@ export type PersistedClawWorkspaceFile = {
   path: string;
   sourcePath: string;
   contentDigest: string;
+  role?: ClawWorkspaceFileRole;
   status: "pending" | "complete" | "failed";
   createdAtMs: number;
   updatedAtMs: number;
@@ -47,6 +53,7 @@ type WorkspaceFileRow = {
   target_path: string;
   source_path: string;
   content_digest: string;
+  role: ClawWorkspaceFileRole | null;
   status: PersistedClawWorkspaceFile["status"];
   created_at_ms: number | bigint;
   updated_at_ms: number | bigint;
@@ -60,6 +67,7 @@ function rowToWorkspaceFile(row: WorkspaceFileRow): PersistedClawWorkspaceFile {
     path: row.target_path,
     sourcePath: row.source_path,
     contentDigest: row.content_digest,
+    ...(row.role ? { role: row.role } : {}),
     status: row.status,
     createdAtMs: Number(row.created_at_ms),
     updatedAtMs: Number(row.updated_at_ms),
@@ -131,10 +139,10 @@ function persistWorkspaceFile(
       .prepare(
         `INSERT INTO claw_workspace_files (
          agent_id, target_path, schema_version, workspace, source_path,
-         content_digest, status, created_at_ms, updated_at_ms
+         content_digest, role, status, created_at_ms, updated_at_ms
        ) VALUES (
          @agent_id, @target_path, @schema_version, @workspace, @source_path,
-         @content_digest, @status, @created_at_ms, @updated_at_ms
+         @content_digest, @role, @status, @created_at_ms, @updated_at_ms
        )`,
       )
       .run({
@@ -144,6 +152,7 @@ function persistWorkspaceFile(
         workspace: record.workspace,
         source_path: record.sourcePath,
         content_digest: record.contentDigest,
+        role: record.role ?? null,
         status: record.status,
         created_at_ms: record.createdAtMs,
         updated_at_ms: record.updatedAtMs,
@@ -158,6 +167,7 @@ type PersistedClawWorkspaceFileRow = {
   target_path: string;
   source_path: string;
   content_digest: string;
+  role: ClawWorkspaceFileRole | null;
   status: string;
   created_at_ms: number | bigint;
   updated_at_ms: number | bigint;
@@ -172,7 +182,7 @@ function readWorkspaceFile(
     const statement = db /* sqlite-allow-raw: one owned Claw state-table row */
       .prepare(
         `SELECT schema_version, agent_id, workspace, target_path, source_path,
-              content_digest, status, created_at_ms, updated_at_ms
+              content_digest, role, status, created_at_ms, updated_at_ms
          FROM claw_workspace_files
         WHERE agent_id = ? AND target_path = ?`,
       );
@@ -195,6 +205,7 @@ function readWorkspaceFile(
       path: row.target_path,
       sourcePath: row.source_path,
       contentDigest: row.content_digest,
+      ...(row.role ? { role: row.role } : {}),
       status: row.status,
       createdAtMs: Number(row.created_at_ms),
       updatedAtMs: Number(row.updated_at_ms),
@@ -212,7 +223,8 @@ function sameWorkspaceFileOwner(
     existing.workspace === expected.workspace &&
     existing.path === expected.path &&
     existing.sourcePath === expected.sourcePath &&
-    existing.contentDigest === expected.contentDigest
+    existing.contentDigest === expected.contentDigest &&
+    existing.role === expected.role
   );
 }
 
@@ -254,16 +266,17 @@ export function upsertClawWorkspaceFile(
       .prepare(
         `INSERT INTO claw_workspace_files (
          agent_id, target_path, schema_version, workspace, source_path,
-         content_digest, status, created_at_ms, updated_at_ms
+         content_digest, role, status, created_at_ms, updated_at_ms
        ) VALUES (
          @agent_id, @target_path, @schema_version, @workspace, @source_path,
-         @content_digest, @status, @created_at_ms, @updated_at_ms
+         @content_digest, @role, @status, @created_at_ms, @updated_at_ms
        )
        ON CONFLICT(agent_id, target_path) DO UPDATE SET
          schema_version = excluded.schema_version,
          workspace = excluded.workspace,
          source_path = excluded.source_path,
          content_digest = excluded.content_digest,
+         role = excluded.role,
          status = excluded.status,
          created_at_ms = excluded.created_at_ms,
          updated_at_ms = excluded.updated_at_ms`,
@@ -275,6 +288,7 @@ export function upsertClawWorkspaceFile(
         workspace: record.workspace,
         source_path: record.sourcePath,
         content_digest: record.contentDigest,
+        role: record.role ?? null,
         status: record.status,
         created_at_ms: record.createdAtMs,
         updated_at_ms: record.updatedAtMs,
@@ -295,7 +309,9 @@ export function deleteClawWorkspaceFileRecord(
 }
 
 function workspaceFileActions(plan: ClawAddPlan): ClawAddPlanAction[] {
-  return plan.actions.filter((action) => action.kind === "workspaceFile");
+  return plan.actions.filter(
+    (action) => action.kind === "workspaceFile" && action.sourceKind !== "personalizationSeed",
+  );
 }
 
 export function readClawWorkspaceFiles(
@@ -316,7 +332,7 @@ export function readClawWorkspaceFiles(
     database.db /* sqlite-allow-raw: read-only Claw workspace-file lookup with a closed agent-id filter. */
       .prepare(
         `SELECT schema_version, agent_id, workspace, target_path, source_path,
-              content_digest, status, created_at_ms, updated_at_ms
+              content_digest, role, status, created_at_ms, updated_at_ms
          FROM claw_workspace_files
         WHERE agent_id = ?
         ORDER BY target_path`,
@@ -402,6 +418,7 @@ export async function createClawWorkspaceFiles(
         path: targetRelative.replaceAll(sep, "/"),
         sourcePath: resolvedSource.sourceRelative.replaceAll(sep, "/"),
         contentDigest: digest,
+        ...(action.details?.role ? { role: action.details.role as ClawWorkspaceFileRole } : {}),
         status: "pending",
         createdAtMs: nowMs,
         updatedAtMs: nowMs,

@@ -4,7 +4,7 @@ import type { ClawUpdateCapabilityChange } from "./update-capability-changes.js"
 export const CLAW_UPDATE_PLAN_SCHEMA_VERSION = "openclaw.clawUpdatePlan.v1" as const;
 
 export type ClawUpdateAction = {
-  kind: "agent" | "workspaceFile" | "package" | "mcpServer" | "cronJob";
+  kind: "agent" | "workspaceFile" | "personalizationSeed" | "package" | "mcpServer" | "cronJob";
   id: string;
   action: "add" | "change" | "remove" | "release" | "unchanged" | "manual";
   target: string;
@@ -25,6 +25,15 @@ export type ClawUpdatePlan = {
   agentId: string;
   currentClaw?: { name: string; version: string; integrity: string };
   targetClaw?: Pick<ClawSourceIdentity, "name" | "version" | "integrity">;
+  setup?: {
+    currentSchemaDigest?: string;
+    targetSchemaDigest?: string;
+    answerDigest?: string;
+    createdSeeds: string[];
+    regeneratedSeeds: string[];
+    preservedSeeds: string[];
+    releasedSeeds: string[];
+  };
   summary: {
     totalActions: number;
     added: number;

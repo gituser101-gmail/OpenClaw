@@ -130,6 +130,72 @@ function targetSource(root: string, version: string, integrity: string): ClawSou
 }
 
 describe("buildClawUpdatePlan", () => {
+  it("relocates a v1 plugin package into a v2 extension edge without planning reinstall", async () => {
+    const current = await fixture();
+    const parsed = parseClawManifest({
+      ...current.manifest,
+      packages: current.manifest.packages.filter((pkg) => pkg.ref !== "obsolete"),
+    });
+    if (!parsed.ok) {
+      throw new Error(JSON.stringify(parsed.diagnostics));
+    }
+
+    const plan = await buildClawUpdatePlan({
+      agentId: "worker",
+      targetManifest: parsed.manifest,
+      targetOpenClawProfile: {
+        schemaVersion: 2,
+        agent: {},
+        extensions: [
+          {
+            id: "obsolete-tools",
+            kind: "plugin",
+            format: "claude",
+            source: "clawhub",
+            ref: "obsolete",
+            version: "1.0.0",
+          },
+        ],
+      },
+      targetSource: targetSource(current.root, "2.0.0", "sha256:target"),
+      config: current.config,
+      sourceMcpServers: current.config.mcp?.servers ?? {},
+      stateOptions: {
+        env: current.env,
+        packageDeps: {
+          resolvePlugin: async () => ({
+            status: "found" as const,
+            pluginId: "obsolete",
+            installedVersion: "1.0.0",
+            record: { integrity: `sha256:${"a".repeat(64)}` },
+          }),
+        },
+      },
+      packagePreflight: async () => ({
+        ok: true,
+        action: "reuse",
+        integrity: `sha256:${"a".repeat(64)}`,
+        installId: "obsolete",
+        detectedFormat: "claude",
+        mapped: ["skills"],
+        unavailable: ["agents"],
+        adapterIdentity: "openclaw/test",
+      }),
+    });
+
+    expect(plan.actions).toContainEqual(
+      expect.objectContaining({
+        kind: "package",
+        id: "plugin:obsolete",
+        action: "change",
+        reason: expect.stringContaining("without reinstalling"),
+      }),
+    );
+    expect(plan.actions).not.toContainEqual(
+      expect.objectContaining({ kind: "package", id: "plugin:obsolete", action: "release" }),
+    );
+  });
+
   it("plans missing package restoration without mutating state", async () => {
     const current = await fixture();
     const beforeConfig = structuredClone(current.config);
@@ -187,6 +253,81 @@ describe("buildClawUpdatePlan", () => {
     expect(plan.actions).toContainEqual(
       expect.objectContaining({ kind: "agent", id: "worker", action: "unchanged" }),
     );
+  });
+
+  it("plans setup personalization when upgrading to a setup schema target", async () => {
+    const current = await fixture();
+    await writeFile(join(current.root, "USER.md.tmpl"), "Seed once\n", "utf8");
+    const parsed = parseClawManifest({
+      ...current.manifest,
+      schemaVersion: 2,
+      packages: current.manifest.packages.filter((pkg) => pkg.kind === "skill"),
+      setup: { inputs: [] },
+      personalization: {
+        seeds: [{ source: "USER.md.tmpl", destination: "USER.md" }],
+      },
+    });
+    if (!parsed.ok) {
+      throw new Error(JSON.stringify(parsed.diagnostics));
+    }
+
+    const plan = await buildClawUpdatePlan({
+      agentId: "worker",
+      targetManifest: parsed.manifest,
+      targetSource: targetSource(current.root, "2.0.0", "sha256:target"),
+      config: current.config,
+      sourceMcpServers: current.config.mcp?.servers ?? {},
+      stateOptions: { env: current.env },
+      packagePreflight,
+    });
+
+    expect(plan.blockers).toEqual([]);
+    expect(plan.actions).toContainEqual(
+      expect.objectContaining({
+        kind: "personalizationSeed",
+        id: "USER.md",
+        action: "add",
+        blocked: false,
+      }),
+    );
+    expect(plan.setup?.createdSeeds).toEqual(["USER.md"]);
+  });
+
+  it("uses the profile extension path when update preflight fails", async () => {
+    const current = await fixture();
+    const plan = await buildClawUpdatePlan({
+      agentId: "worker",
+      targetManifest: current.manifest,
+      targetOpenClawProfile: {
+        schemaVersion: 2,
+        agent: {},
+        extensions: [
+          {
+            id: "reviewer",
+            format: "claude",
+            source: "clawhub",
+            ref: "reviewer",
+            version: "1.0.0",
+          },
+        ],
+      },
+      targetSource: current.source,
+      config: current.config,
+      sourceMcpServers: current.config.mcp?.servers ?? {},
+      stateOptions: { env: current.env },
+      packagePreflight: async (pkg) =>
+        pkg.ref === "reviewer"
+          ? { ok: false, code: "extension_unavailable", message: "Extension is unavailable." }
+          : packagePreflight(pkg),
+    });
+
+    expect(plan.blockers).toContainEqual(
+      expect.objectContaining({
+        code: "extension_unavailable",
+        path: "$.metadata.openclaw.config.extensions[0]",
+      }),
+    );
+    expect(plan.blockers.every((entry) => !entry.path.includes("[-1]"))).toBe(true);
   });
 
   it("plans restoration when the owned agent entry is missing", async () => {

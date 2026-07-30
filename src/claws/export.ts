@@ -21,9 +21,12 @@ import {
   CLAW_BOOTSTRAP_FILE_NAMES,
   CLAW_OUTPUT_STABILITY,
   CLAW_SCHEMA_VERSION,
+  CLAW_SETUP_SCHEMA_VERSION,
   type ClawManifest,
   type ClawMcpServer,
+  type ClawOpenClawExtension,
   type ClawOpenClawProfile,
+  type ClawPackagePreflight,
 } from "./types.js";
 
 export const CLAW_EXPORT_RESULT_SCHEMA_VERSION = "openclaw.clawExportResult.v1" as const;
@@ -75,7 +78,10 @@ function portableAgent(agent: AgentConfig, avatar: string | undefined): ClawMani
   };
 }
 
-function portableOpenClawProfile(agent: AgentConfig): ClawOpenClawProfile | undefined {
+function portableOpenClawProfile(
+  agent: AgentConfig,
+  extensions: ClawOpenClawExtension[],
+): ClawOpenClawProfile | undefined {
   const tools = {
     ...(agent.tools?.profile ? { profile: agent.tools.profile } : {}),
     ...(agent.tools?.allow?.length ? { allow: agent.tools.allow } : {}),
@@ -159,7 +165,11 @@ function portableOpenClawProfile(agent: AgentConfig): ClawOpenClawProfile | unde
         }
       : {}),
   };
-  return Object.keys(settings).length > 0 ? { schemaVersion: 1, agent: settings } : undefined;
+  return extensions.length > 0
+    ? { schemaVersion: 2, agent: settings, extensions }
+    : Object.keys(settings).length > 0
+      ? { schemaVersion: 1, agent: settings }
+      : undefined;
 }
 
 function normalizedRelativePath(value: string): string {
@@ -258,6 +268,7 @@ export async function exportClawAgent(
   options: OpenClawStateDatabaseOptions & {
     config: OpenClawConfig;
     packageDeps?: PackageRemovalDeps;
+    packagePreflight?: ClawPackagePreflight;
     sourceMcpServers?: Record<string, Record<string, unknown>>;
   },
 ): Promise<ClawExportResult> {
@@ -304,11 +315,16 @@ export async function exportClawAgent(
       `Cannot export drifted managed files: ${driftedFiles.map((file) => `${file.path} (${file.state})`).join(", ")}.`,
     );
   }
-  const driftedPackages = record.packages.filter((pkg) => pkg.state !== "present");
+  const driftedPackages = record.packages.filter(
+    (pkg) =>
+      pkg.state !== "present" ||
+      (pkg.extensionCompatibility !== undefined &&
+        pkg.extensionCompatibility.state !== "compatible"),
+  );
   if (driftedPackages.length > 0) {
     throw new ClawExportError(
       "packages_drifted",
-      `Cannot export drifted packages: ${driftedPackages.map((pkg) => `${pkg.kind}:${pkg.ref}@${pkg.version} (${pkg.state})`).join(", ")}.`,
+      `Cannot export drifted packages: ${driftedPackages.map((pkg) => `${pkg.kind}:${pkg.ref}@${pkg.version} (${pkg.extensionCompatibility?.state ?? pkg.state})`).join(", ")}.`,
     );
   }
   const unresolvedCronJobs = record.cronJobs.filter(
@@ -364,34 +380,55 @@ export async function exportClawAgent(
     if (isClawBootstrapFileName(file.path)) {
       bootstrapFiles[file.path] = { source };
     } else {
-      files.push({ source, path: file.path });
+      const role = record.workspaceFiles.find((managed) => managed.path === file.path)?.role;
+      files.push({ source, path: file.path, ...(role ? { role } : {}) });
     }
   }
   const configuredMcpServers = normalizeConfiguredMcpServers(
     options.sourceMcpServers ?? options.config.mcp?.servers,
   );
-  const openClawProfile = portableOpenClawProfile(agent);
+  const extensions = record.packages
+    .filter((pkg) => pkg.extension)
+    .map((pkg) => ({
+      id: pkg.extension!.id,
+      kind: "plugin" as const,
+      format: pkg.extension!.format,
+      source: pkg.source,
+      ref: pkg.ref,
+      version: pkg.version,
+    }))
+    .toSorted((left, right) => comparePortableText(left.id, right.id));
+  const openClawProfile = portableOpenClawProfile(agent, extensions);
   const openClawProfilePath = "profiles/openclaw.yml";
   const openClawProfileRaw = openClawProfile
     ? Buffer.from(stringifyYaml(openClawProfile))
     : undefined;
-  const manifest: ClawManifest = {
-    schemaVersion: CLAW_SCHEMA_VERSION,
+  const portablePackages = record.packages
+    .filter((pkg) => !pkg.extension)
+    .map((pkg) => ({
+      kind: pkg.kind,
+      source: pkg.source,
+      ref: pkg.ref,
+      version: pkg.version,
+    }))
+    .toSorted((left, right) => {
+      const leftIdentity = `${left.kind}:${left.ref}:${left.version}`;
+      const rightIdentity = `${right.kind}:${right.ref}:${right.version}`;
+      return comparePortableText(leftIdentity, rightIdentity);
+    });
+  const usesManifestV2 = extensions.length > 0 || files.some((file) => file.role !== undefined);
+  if (usesManifestV2 && portablePackages.some((pkg) => pkg.kind === "plugin")) {
+    throw new ClawExportError(
+      "legacy_plugin_not_relocated",
+      "Schema version 2 export requires plugin dependencies to have extension provenance.",
+    );
+  }
+  const manifest = {
+    schemaVersion: usesManifestV2 ? CLAW_SETUP_SCHEMA_VERSION : CLAW_SCHEMA_VERSION,
     agent: portableAgent(agent, avatar.source),
     ...(openClawProfile ? { metadata: { "openclaw.config": openClawProfilePath } } : {}),
     workspace: { bootstrapFiles, files },
-    packages: record.packages
-      .map((pkg) => ({
-        kind: pkg.kind,
-        source: pkg.source,
-        ref: pkg.ref,
-        version: pkg.version,
-      }))
-      .toSorted((left, right) => {
-        const leftIdentity = `${left.kind}:${left.ref}:${left.version}`;
-        const rightIdentity = `${right.kind}:${right.ref}:${right.version}`;
-        return comparePortableText(leftIdentity, rightIdentity);
-      }),
+    packages: portablePackages,
     mcpServers: Object.fromEntries(
       record.mcpServers.map((ref) => [
         ref.name,
@@ -401,7 +438,8 @@ export async function exportClawAgent(
     cronJobs: record.cronJobs
       .map((cron) => cron.job)
       .toSorted((left, right) => left.id.localeCompare(right.id)),
-  };
+    ...(usesManifestV2 ? { setup: { inputs: [] }, personalization: { seeds: [] } } : {}),
+  } as ClawManifest;
   const serializeClawMarkdown = (body: Buffer | undefined) =>
     Buffer.concat([Buffer.from(`---\n${stringifyYaml(manifest)}---\n`), ...(body ? [body] : [])]);
   let clawMarkdownRaw = serializeClawMarkdown(clawMarkdownBody);

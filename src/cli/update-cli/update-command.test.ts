@@ -232,11 +232,13 @@ describe("resolvePostInstallDoctorEnv", () => {
         OPENCLAW_STATE_DIR: "/wrong/state",
         OPENCLAW_CONFIG_PATH: "/wrong/openclaw.json",
         OPENCLAW_PROFILE: "wrong",
+        OPENCLAW_GATEWAY_PORT: "19111",
       },
       serviceEnv: {
         OPENCLAW_STATE_DIR: "daemon-state",
         OPENCLAW_CONFIG_PATH: "daemon-state/openclaw.json",
         OPENCLAW_PROFILE: "work",
+        OPENCLAW_GATEWAY_PORT: "19222",
       },
     });
 
@@ -247,6 +249,7 @@ describe("resolvePostInstallDoctorEnv", () => {
       path.join("/srv/openclaw", "daemon-state", "openclaw.json"),
     );
     expect(env.OPENCLAW_PROFILE).toBe("work");
+    expect(env.OPENCLAW_GATEWAY_PORT).toBe("19222");
   });
 
   it("keeps the caller env when no managed service env is available", () => {
@@ -255,6 +258,7 @@ describe("resolvePostInstallDoctorEnv", () => {
         PATH: "/bin",
         OPENCLAW_STATE_DIR: "/caller/state",
         OPENCLAW_PROFILE: "caller",
+        OPENCLAW_GATEWAY_PORT: "19111",
       },
     });
 
@@ -262,6 +266,7 @@ describe("resolvePostInstallDoctorEnv", () => {
     expect(env.NODE_DISABLE_COMPILE_CACHE).toBe("1");
     expect(env.OPENCLAW_STATE_DIR).toBe("/caller/state");
     expect(env.OPENCLAW_PROFILE).toBe("caller");
+    expect(env.OPENCLAW_GATEWAY_PORT).toBe("19111");
   });
 });
 

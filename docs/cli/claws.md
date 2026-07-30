@@ -241,6 +241,32 @@ workspace files, installs or reuses declared skill and plugin artifacts, and
 records package, MCP, and cron provenance. Existing files are not overwritten,
 and retries fail closed when owned content drifted.
 
+By default an existing workspace directory is a `workspace_collision` blocker.
+Pass `--adopt-existing-workspace` during both preview and apply to install into
+an existing directory instead:
+
+```bash
+openclaw claws add ./incident-triage.claw.json \
+  --workspace ~/agents/incident-triage \
+  --adopt-existing-workspace \
+  --dry-run --json
+```
+
+At plan time each declared file is compared against the existing content:
+identical files become `adopt` actions and are recorded as managed without
+being rewritten, missing files are written normally, and differing content is a
+`workspace_file_conflict` blocker — adoption never overwrites existing files.
+Apply re-verifies content digests and fails closed when an adoptable file
+changed after planning. Adoption is disclosed as a distinct capability change
+in the plan, and a workspace already configured for another agent still
+blocks.
+
+Adoption transfers lifecycle ownership of matching declared files to Claws.
+After adoption, `claws update` may replace an unchanged adopted file with the
+content from the reviewed target package, and `claws remove` may delete an
+unchanged adopted file. Locally modified adopted files are retained and must be
+reconciled explicitly. Preview update and removal plans before applying them.
+
 ## Inspect installed state
 
 ```bash

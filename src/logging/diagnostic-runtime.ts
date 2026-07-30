@@ -49,6 +49,7 @@ export function logMessageQueuedWithBacklogPolicy(
   state.generation = (state.generation ?? 0) + 1;
   state.lastStuckWarnAgeMs = undefined;
   state.lastLongRunningWarnAgeMs = undefined;
+  state.lastStalledWarnAgeMs = undefined;
   if (diag.isEnabled("debug")) {
     diag.debug(
       `message queued: sessionId=${state.sessionId ?? "unknown"} sessionKey=${

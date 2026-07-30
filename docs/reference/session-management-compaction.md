@@ -241,7 +241,9 @@ Set `enabled: false` to disable threshold-driven auto-compaction inside the embe
 
 Manual `/compact` uses `agents.defaults.compaction.keepRecentTokens` (default: `20000`) and keeps that recent-tail cut point.
 
-OpenClaw adopts an explicit successor identity returned by a context engine. The built-in SQLite compactor keeps the current session identity. Branch/restore checkpoint actions use a returned successor when present; legacy pre-compaction checkpoint files remain readable while referenced.
+`agents.defaults.compaction.turnMaintenanceTaskTimeoutMs` is disabled by default (opt-in); set a positive value (ms) to bound a deferred background turn-maintenance run. On timeout the maintenance lane is released so a queued user turn proceeds, and late maintenance side effects (transcript rewrite, task completion) are fenced off. Lower it to free queued messages sooner when maintenance wedges; raise it for engines whose background maintenance legitimately runs long.
+
+When `truncateAfterCompaction` is enabled, OpenClaw adopts an explicit successor identity returned by a context engine. The built-in SQLite compactor keeps the current session identity. Branch/restore checkpoint actions use a returned successor when present; legacy pre-compaction checkpoint files remain readable while referenced.
 
 ## Pluggable compaction providers
 

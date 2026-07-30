@@ -13,7 +13,7 @@ import {
   resolveAgentWorkspaceDir,
   resolveDefaultAgentId,
 } from "../agents/agent-scope.js";
-import { getRuntimeConfig } from "../config/config.js";
+import { getRuntimeConfig, readBestEffortConfig } from "../config/config.js";
 import { CLAWHUB_TRUST_ERROR_CODE } from "../infra/clawhub-install-trust.js";
 import {
   CLAWHUB_SKILLS_SH_TRUST_LABEL,
@@ -126,13 +126,15 @@ const GATEWAY_SKILLS_EVALUATION_TIMEOUT_MS = 650_000;
 // Apply can await evaluator, proposal-change, and skill-change hook phases.
 const GATEWAY_SKILLS_APPLY_TIMEOUT_MS = 1_850_000;
 
-function resolveSkillsWorkspace(options?: ResolveSkillsWorkspaceOptions): {
+function resolveSkillsWorkspaceFromConfig(
+  config: ReturnType<typeof getRuntimeConfig>,
+  options?: ResolveSkillsWorkspaceOptions,
+): {
   config: ReturnType<typeof getRuntimeConfig>;
   workspaceDir: string;
   agentId: string;
 } {
   // Prefer explicit --agent, then infer from cwd, then fall back to configured default agent.
-  const config = getRuntimeConfig();
   const explicitAgentId = normalizeOptionalString(options?.agentId);
   const inferredAgentId = explicitAgentId
     ? undefined
@@ -143,6 +145,23 @@ function resolveSkillsWorkspace(options?: ResolveSkillsWorkspaceOptions): {
     agentId,
     workspaceDir: resolveAgentWorkspaceDir(config, agentId),
   };
+}
+
+function resolveSkillsWorkspace(options?: ResolveSkillsWorkspaceOptions): {
+  config: ReturnType<typeof getRuntimeConfig>;
+  workspaceDir: string;
+  agentId: string;
+} {
+  return resolveSkillsWorkspaceFromConfig(getRuntimeConfig(), options);
+}
+
+async function resolveSkillsWorkspaceBestEffort(options?: ResolveSkillsWorkspaceOptions): Promise<{
+  config: ReturnType<typeof getRuntimeConfig>;
+  workspaceDir: string;
+  agentId: string;
+}> {
+  const config = await readBestEffortConfig();
+  return resolveSkillsWorkspaceFromConfig(config, options);
 }
 
 function resolveAgentOption(
@@ -171,9 +190,8 @@ async function loadGatewaySkillsStatusReport(
 }
 
 async function loadSkillsStatusReport(
-  options?: ResolveSkillsWorkspaceOptions,
+  resolved: ReturnType<typeof resolveSkillsWorkspace>,
 ): Promise<SkillStatusReport> {
-  const resolved = resolveSkillsWorkspace(options);
   const gatewayReport = await loadGatewaySkillsStatusReport(resolved);
   if (gatewayReport) {
     return gatewayReport;
@@ -190,7 +208,8 @@ async function runSkillsAction(
   options?: ResolveSkillsWorkspaceOptions,
 ): Promise<void> {
   try {
-    const report = await loadSkillsStatusReport(options);
+    const resolved = await resolveSkillsWorkspaceBestEffort(options);
+    const report = await loadSkillsStatusReport(resolved);
     defaultRuntime.writeStdout(render(report));
   } catch (err) {
     defaultRuntime.error(String(err));

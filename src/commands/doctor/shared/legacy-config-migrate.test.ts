@@ -4,6 +4,7 @@ import { expectDefined } from "@openclaw/normalization-core";
 import { describe, expect, it } from "vitest";
 import { findLegacyConfigIssues } from "../../../config/legacy.js";
 import type { OpenClawConfig } from "../../../config/types.js";
+import { validateConfigObjectRaw } from "../../../config/validation.js";
 import { legacyCodexProviderIdentityKey } from "./codex-route-model-ref.js";
 import { pruneBindingsForMissingAgents } from "./legacy-config-binding-repair.js";
 import { LEGACY_CONFIG_MIGRATIONS } from "./legacy-config-migrations.js";
@@ -4561,6 +4562,90 @@ describe("legacy flat memory search field migrate", () => {
     expect(res.changes).toContain(
       "Removed retired runtime tuning knobs; built-in defaults now apply.",
     );
+  });
+});
+
+describe("legacy modelPolicy allowlist migrate (issue #114964)", () => {
+  it("drops bare slashless provider keys when copying the legacy default model map", () => {
+    const res = migrateLegacyConfigForTest({
+      agents: {
+        defaults: {
+          models: {
+            openai: {},
+            "kimi/k3": {},
+          },
+        },
+      },
+    });
+
+    expect(res.config?.agents?.defaults?.modelPolicy).toEqual({
+      allow: ["kimi/k3"],
+    });
+    expect(res.changes).toContain(
+      "Copied the legacy default model map to agents.defaults.modelPolicy.allow.",
+    );
+  });
+
+  it("records the map as unrestricted when every legacy key is a bare slashless provider key", () => {
+    const res = migrateLegacyConfigForTest({
+      agents: {
+        defaults: {
+          models: {
+            openai: {},
+          },
+        },
+      },
+    });
+
+    expect(res.config?.agents?.defaults?.modelPolicy).toBeUndefined();
+    expect(res.changes).toContain(
+      "Recorded the legacy default model map as unrestricted without creating modelPolicy.allow.",
+    );
+  });
+
+  it("keeps legacy keys that carry an explicit alias alongside wildcard refs", () => {
+    const res = migrateLegacyConfigForTest({
+      agents: {
+        defaults: {
+          models: {
+            opus: { alias: "opus" },
+            "anthropic/*": {},
+          },
+        },
+      },
+    });
+
+    expect(res.config?.agents?.defaults?.modelPolicy).toEqual({
+      allow: ["opus", "anthropic/*"],
+    });
+  });
+
+  it("produces an allowlist that passes config write validation (the doctor --fix failure)", () => {
+    const res = migrateLegacyConfigForTest({
+      agents: {
+        list: [{ id: "main", default: true }],
+        defaults: {
+          models: {
+            openai: {},
+            "openai/*": {},
+            "anthropic/claude-sonnet-4-6": { alias: "sonnet" },
+          },
+        },
+      },
+    });
+
+    expect(res.config?.agents?.defaults?.modelPolicy).toEqual({
+      allow: ["openai/*", "anthropic/claude-sonnet-4-6"],
+    });
+    // Before the fix the bare "openai" key was copied verbatim and the config
+    // writer rejected the migrated allowlist, aborting the entire repair run.
+    // Assert the model-policy surface specifically: full-config validation can
+    // still flag unrelated legacy issues (that is doctor's documented contract).
+    const validated = validateConfigObjectRaw(structuredClone(res.config));
+    const modelPolicyIssues = validated.ok
+      ? []
+      : validated.issues.filter((issue) => issue.path.includes("modelPolicy"));
+    expect(modelPolicyIssues).toEqual([]);
   });
 });
 /* oxlint-disable max-lines -- TODO: split this grandfathered oversized file. */

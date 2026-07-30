@@ -428,7 +428,7 @@ export function registerCronAddCommand(cron: Command) {
                   ? "announce"
                   : hasNoDeliver
                     ? "none"
-                    : "announce"
+                    : "none"
                 : undefined;
 
             const optionName = normalizeOptionalString(opts.name);

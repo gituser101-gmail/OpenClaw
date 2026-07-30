@@ -45,6 +45,7 @@ export type ChannelHealthPolicy = {
   now: number;
   staleEventThresholdMs: number;
   channelConnectGraceMs: number;
+  busyStaleThresholdMs?: number;
 };
 
 type ChannelRestartReason =
@@ -59,7 +60,7 @@ function isManagedAccount(snapshot: ChannelHealthSnapshot): boolean {
   return snapshot.enabled !== false && snapshot.configured !== false && snapshot.linked !== false;
 }
 
-const BUSY_ACTIVITY_STALE_THRESHOLD_MS = 25 * 60_000;
+export const DEFAULT_CHANNEL_BUSY_STALE_THRESHOLD_MS = 25 * 60_000;
 // Keep these shared between the background health monitor and on-demand readiness
 // probes so both surfaces evaluate channel lifecycle windows consistently.
 export const DEFAULT_CHANNEL_STALE_EVENT_THRESHOLD_MS = 30 * 60_000;
@@ -128,7 +129,13 @@ export function evaluateChannelHealth(
           ? Math.max(0, policy.now - activeRunStartedAt)
           : 0;
       const busyAge = Math.max(runActivityAge, disconnectedRunStartAge);
-      if (busyAge < BUSY_ACTIVITY_STALE_THRESHOLD_MS) {
+      const busyStaleThresholdMs =
+        typeof policy.busyStaleThresholdMs === "number" &&
+        Number.isFinite(policy.busyStaleThresholdMs) &&
+        policy.busyStaleThresholdMs > 0
+          ? policy.busyStaleThresholdMs
+          : DEFAULT_CHANNEL_BUSY_STALE_THRESHOLD_MS;
+      if (busyAge < busyStaleThresholdMs) {
         return { healthy: true, reason: "busy" };
       }
       return { healthy: false, reason: "stuck" };

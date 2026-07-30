@@ -17,6 +17,8 @@ export {
   isCronSessionKey,
   isAcpSessionKey,
   isSubagentSessionKey,
+  isSharedChannelSessionKey,
+  isPrivateMemorySessionKey,
   parseAgentSessionKey,
   parseSessionDeliveryRoute,
   parseThreadSessionSuffix,

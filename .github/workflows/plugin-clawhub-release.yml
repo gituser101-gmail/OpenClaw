@@ -450,7 +450,7 @@ jobs:
       max-parallel: 32
       matrix:
         plugin: ${{ fromJson(needs.preview_plugins_clawhub.outputs.matrix) }}
-    uses: openclaw/clawhub/.github/workflows/package-publish.yml@c9bb13023598dcc547fdf4a93b9d42512b8c8854
+    uses: openclaw/clawhub/.github/workflows/package-publish.yml@79ef4af17f5219f0f919d964b0059402a37850e1
     with:
       dry_run: ${{ inputs.dry_run }}
       json: true

@@ -59,6 +59,24 @@ export function makeAttemptResult(
   const messagingToolSentTargets = overrides.messagingToolSentTargets ?? [];
   const successfulCronAdds = overrides.successfulCronAdds;
   const acceptedSessionSpawns = overrides.acceptedSessionSpawns ?? [];
+  const assistantTexts = overrides.assistantTexts ?? ["Hello!"];
+  const defaultAssistantText = assistantTexts.findLast((text) => text.trim().length > 0);
+  const defaultAssistant =
+    defaultAssistantText !== undefined
+      ? ({
+          role: "assistant",
+          content: [{ type: "text", text: defaultAssistantText }],
+          api: "messages",
+          provider: "anthropic",
+          model: "test-model",
+          usage: {},
+          timestamp: Date.now(),
+        } as EmbeddedRunAttemptResult["lastAssistant"])
+      : undefined;
+  const hasExplicitAssistant =
+    Object.hasOwn(overrides, "lastAssistant") ||
+    Object.hasOwn(overrides, "currentAttemptAssistant") ||
+    Object.hasOwn(overrides, "currentAttemptCompletedAssistant");
   const {
     aborted: _aborted,
     externalAbort: _externalAbort,
@@ -74,11 +92,15 @@ export function makeAttemptResult(
   return {
     terminal: resolveFixtureTerminal(overrides),
     sessionIdUsed: "test-session",
-    assistantTexts: ["Hello!"],
+    assistantTexts,
     acceptedSessionSpawns,
-    lastAssistant: undefined,
-    currentAttemptCompletedAssistant:
-      overrides.currentAttemptCompletedAssistant ?? overrides.currentAttemptAssistant,
+    lastAssistant: hasExplicitAssistant ? overrides.lastAssistant : defaultAssistant,
+    currentAttemptAssistant: hasExplicitAssistant
+      ? overrides.currentAttemptAssistant
+      : defaultAssistant,
+    currentAttemptCompletedAssistant: hasExplicitAssistant
+      ? (overrides.currentAttemptCompletedAssistant ?? overrides.currentAttemptAssistant)
+      : defaultAssistant,
     messagesSnapshot: [],
     replayMetadata:
       overrides.replayMetadata ??

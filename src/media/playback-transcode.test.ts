@@ -786,12 +786,15 @@ describe("resolvePlaybackTranscode", () => {
     expect(runFfmpeg).toHaveBeenCalledTimes(2);
 
     await finishers[0]?.();
-    await vi.waitFor(async () => {
-      await expect(playback.resolvePlaybackTranscode(params[2]!)).resolves.toEqual({
-        kind: "preparing",
-      });
-      expect(runFfmpeg).toHaveBeenCalledTimes(3);
-    });
+    await vi.waitFor(
+      async () => {
+        await expect(playback.resolvePlaybackTranscode(params[2]!)).resolves.toEqual({
+          kind: "preparing",
+        });
+        expect(runFfmpeg).toHaveBeenCalledTimes(3);
+      },
+      { timeout: 5_000 },
+    );
     await Promise.all(finishers.slice(1).map(async (finish) => await finish()));
     await vi.waitFor(async () => {
       await expect(

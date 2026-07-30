@@ -843,6 +843,16 @@ describe("resolveAgentConfig", () => {
             },
           },
           {
+            id: "metadata-only-subagent",
+            model: {
+              primary: "anthropic/claude-sonnet-4-6",
+              fallbacks: ["google/gemini-3-pro"],
+            },
+            subagents: {
+              model: {},
+            },
+          },
+          {
             id: "fallback-only-agent-model",
             model: {
               fallbacks: ["google/gemini-3-pro"],
@@ -873,8 +883,16 @@ describe("resolveAgentConfig", () => {
       "openai/gpt-5.4",
       "zai/glm-5",
     ]);
+    // Precedence (PR #58823): global defaults.subagents.model wins over the
+    // agent's own model, so agents without a per-agent subagents.model inherit
+    // the default-subagent fallbacks rather than the agent model fallbacks.
     expect(resolveSubagentModelFallbacksOverride(cfg, "agent-model")).toEqual([
-      "google/gemini-3-pro",
+      "openai/gpt-5.4",
+      "zai/glm-5",
+    ]);
+    expect(resolveSubagentModelFallbacksOverride(cfg, "metadata-only-subagent")).toEqual([
+      "openai/gpt-5.4",
+      "zai/glm-5",
     ]);
     expect(resolveSubagentModelFallbacksOverride(cfg, "fallback-only-agent-model")).toEqual([
       "openai/gpt-5.4",

@@ -430,6 +430,10 @@ function resolveFailoverSourceError(err: unknown): unknown {
   return hasPreservedTakeoverPromptError(err) ? err.promptError : err;
 }
 
+export function isEmbeddedAttemptSessionTakeoverError(err: unknown): boolean {
+  return isEmbeddedAttemptSessionTakeover(err);
+}
+
 function hasEmbeddedAttemptSessionTakeover(err: unknown, seen: Set<object> = new Set()): boolean {
   if (isEmbeddedAttemptSessionTakeover(err)) {
     return true;

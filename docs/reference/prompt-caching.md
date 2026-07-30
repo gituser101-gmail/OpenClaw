@@ -221,34 +221,19 @@ Why the assertions differ: Anthropic exposes explicit cache breakpoints and movi
 diagnostics:
   cacheTrace:
     enabled: true
-    filePath: "~/.openclaw/logs/cache-trace.jsonl" # optional
-    includeMessages: false # default true
-    includePrompt: false # default true
-    includeSystem: false # default true
 ```
+
+The `filePath` and content filters (`includeMessages`, `includePrompt`, `includeSystem`) were removed in a past release.
 
 Defaults:
 
-| Key               | Default                                      |
-| ----------------- | -------------------------------------------- |
-| `filePath`        | `$OPENCLAW_STATE_DIR/logs/cache-trace.jsonl` |
-| `includeMessages` | `true`                                       |
-| `includePrompt`   | `true`                                       |
-| `includeSystem`   | `true`                                       |
-
-### Env toggles (one-off debugging)
-
-| Variable                             | Effect                               |
-| ------------------------------------ | ------------------------------------ |
-| `OPENCLAW_CACHE_TRACE=1`             | Enables cache tracing                |
-| `OPENCLAW_CACHE_TRACE_FILE=path`     | Overrides output path                |
-| `OPENCLAW_CACHE_TRACE_MESSAGES=0\|1` | Toggles full message payload capture |
-| `OPENCLAW_CACHE_TRACE_PROMPT=0\|1`   | Toggles prompt text capture          |
-| `OPENCLAW_CACHE_TRACE_SYSTEM=0\|1`   | Toggles system prompt capture        |
+| Key       | Default                    |
+| --------- | -------------------------- |
+| `enabled` | `false`                    |
 
 ### What to inspect
 
-- Cache trace events are JSONL with staged snapshots like `session:loaded`, `prompt:before`, `stream:context`, and `session:after`.
+- Cache trace events track staged snapshots like `session:loaded`, `prompt:before`, `stream:context`, and `session:after`.
 - Per-turn cache token impact is visible in normal usage surfaces: `cacheRead` and `cacheWrite` show up in `/usage tokens`, `/status`, session usage summaries, and custom `messages.usageTemplate` layouts.
 - For Anthropic, expect both `cacheRead` and `cacheWrite` when caching is active.
 - For OpenAI, expect `cacheRead` on cache hits; `cacheWrite` is populated only on Responses API payloads that include it (see [OpenAI](#openai-direct-api) above).

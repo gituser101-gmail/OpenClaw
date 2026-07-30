@@ -166,6 +166,37 @@ export async function runClawsUpdateCommand(
     return;
   }
 
+  let answers: Record<string, unknown> | undefined;
+  if (opts.answers) {
+    try {
+      answers = await readClawAnswersDocument(opts.answers);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (opts.json) {
+        writeRuntimeJson(runtime, {
+          schemaVersion: CLAW_UPDATE_PLAN_SCHEMA_VERSION,
+          stability: CLAW_OUTPUT_STABILITY,
+          dryRun: true,
+          mutationAllowed: false,
+          valid: false,
+          diagnostics: [
+            {
+              level: "error",
+              code: error instanceof ClawAnswersError ? error.code : "setup_answers_read_failed",
+              phase: "plan",
+              path: "$.answers",
+              message,
+            },
+          ],
+        });
+      } else {
+        runtime.error(message);
+      }
+      runtime.exit(1);
+      return;
+    }
+  }
+
   const plan = await buildClawUpdatePlan({
     agentId: target,
     targetManifest: loaded.manifest,
@@ -176,6 +207,7 @@ export async function runClawsUpdateCommand(
     sourceMcpServers: listedMcpServers.mcpServers,
     packagePreflight: preflightClawPackage,
     diagnostics: loaded.diagnostics,
+    answers,
   });
   if (opts.dryRun || plan.blockers.length > 0 || plan.actions.some((action) => action.blocked)) {
     if (opts.json) {
@@ -202,6 +234,7 @@ export async function runClawsUpdateCommand(
         targetClawMarkdownBody: loaded.clawMarkdownBody,
         targetOpenClawProfile: loaded.openClawProfile,
         targetSource: loaded.source,
+        answers,
       },
       {
         config,
@@ -238,3 +271,4 @@ export async function runClawsUpdateCommand(
     runtime.exit(1);
   }
 }
+import { ClawAnswersError, readClawAnswersDocument } from "../claws/answers.js";

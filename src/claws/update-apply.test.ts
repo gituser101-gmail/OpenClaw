@@ -8,7 +8,12 @@ import {
   readClawInstallRecord,
   type PersistedClawInstall,
 } from "./provenance.js";
-import type { ClawAddPlan, ClawManifest, ClawSourceIdentity } from "./types.js";
+import type {
+  ClawAddPlan,
+  ClawManifest,
+  ClawOpenClawProfile,
+  ClawSourceIdentity,
+} from "./types.js";
 import { applyClawUpdatePlan } from "./update-apply.js";
 import type { ClawUpdatePlan } from "./update-plan.js";
 
@@ -369,6 +374,7 @@ describe("applyClawUpdatePlan", () => {
           integrity: packageDetails.integrity,
           installId: undefined,
           riskWarning: undefined,
+          extension: undefined,
         }),
       )
       .digest("hex")}`;
@@ -445,6 +451,7 @@ describe("applyClawUpdatePlan", () => {
           integrity: resolved.integrity,
           installId: resolved.installId,
           riskWarning: resolved.warning,
+          extension: undefined,
         }),
       )
       .digest("hex")}`;
@@ -498,6 +505,126 @@ describe("applyClawUpdatePlan", () => {
     );
 
     expect(packagePreflight).toHaveBeenCalledOnce();
+    expect(applyPackage).toHaveBeenCalledOnce();
+  });
+
+  it("validates and applies profile extension package updates", async () => {
+    const packageRoot = tempDirs.make("openclaw-claw-extension-update-");
+    const targetSource = {
+      ...source,
+      packageRoot,
+      manifestPath: join(packageRoot, "openclaw.claw.json"),
+    };
+    const extension = {
+      id: "github-tools",
+      kind: "plugin" as const,
+      format: "claude" as const,
+      source: "clawhub" as const,
+      ref: "github",
+      version: "2.0.0",
+    };
+    const extensionProvenance = {
+      id: extension.id,
+      format: extension.format,
+      detectedFormat: "claude" as const,
+      mapped: ["commands", "skills"],
+      unavailable: ["agents"],
+      adapterIdentity: "openclaw/current",
+    };
+    const targetPackage = {
+      kind: extension.kind,
+      source: extension.source,
+      ref: extension.ref,
+      version: extension.version,
+    };
+    const packageDetails = {
+      ...targetPackage,
+      integrity: `sha256:${"a".repeat(64)}`,
+      installId: "github",
+      ownerAction: "reuse" as const,
+      extension: extensionProvenance,
+    };
+    const desiredDigest = `sha256:${createHash("sha256")
+      .update(
+        stableStringify({
+          package: targetPackage,
+          integrity: packageDetails.integrity,
+          installId: packageDetails.installId,
+          riskWarning: undefined,
+          extension: extensionProvenance,
+        }),
+      )
+      .digest("hex")}`;
+    const updatePlan = plan([
+      {
+        kind: "package",
+        id: "plugin:github",
+        action: "change",
+        target: "clawhub:github@2.0.0",
+        blocked: false,
+        reason: "target profile changes the extension package",
+        desiredDigest,
+      },
+    ]);
+    const targetManifest: ClawManifest = {
+      ...manifest,
+      schemaVersion: 2,
+      packages: [],
+      setup: { inputs: [] },
+      personalization: { seeds: [] },
+    };
+    const targetOpenClawProfile: ClawOpenClawProfile = {
+      schemaVersion: 2,
+      agent: {},
+      extensions: [extension],
+    };
+    const targetAddPlan: ClawAddPlan = {
+      ...addPlan,
+      manifestSchemaVersion: 2,
+      actions: [
+        {
+          kind: "package",
+          id: "plugin:github",
+          action: "reuse",
+          target: "clawhub:github@2.0.0",
+          details: packageDetails,
+          blocked: false,
+        },
+      ],
+    };
+    const applyPackage = vi.fn(async () => ({
+      appliedIds: ["plugin:github"],
+      rollback: vi.fn(async () => undefined),
+    }));
+
+    await applyClawUpdatePlan(
+      updatePlan,
+      { targetManifest, targetOpenClawProfile, targetSource },
+      {
+        config: {},
+        ...consent(updatePlan),
+        rebuildPlan: vi.fn(async () => updatePlan),
+        buildAddPlan: vi.fn(async () => targetAddPlan),
+        readInstall: vi.fn(() => install),
+        persistInstall: vi.fn(() => ({ ...install, claw: source })),
+        applyWorkspace: vi.fn(async () => ({
+          appliedPaths: [],
+          rollback: vi.fn(async () => undefined),
+        })),
+        applyMcp: vi.fn(async () => ({
+          appliedNames: [],
+          rollback: vi.fn(async () => undefined),
+        })),
+        applyCron: vi.fn(async () => ({
+          appliedIds: [],
+          rollback: vi.fn(async () => undefined),
+        })),
+        applyPackage,
+        applySetup: vi.fn(async () => undefined),
+        finalizeSetup: vi.fn(),
+      },
+    );
+
     expect(applyPackage).toHaveBeenCalledOnce();
   });
 

@@ -1405,7 +1405,9 @@ Do not edit it by hand; run `pnpm docs:map:gen`.
 - Headings:
   - H1: openclaw claws
   - H2: Create a Claw package
+  - H3: Personalization setup
   - H2: Inspect and preview
+  - H2: Configure personalization
   - H2: Inspect installed state
   - H2: Update an installed Claw
   - H2: Remove an installed Claw

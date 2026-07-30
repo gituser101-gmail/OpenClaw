@@ -126,6 +126,34 @@ describe("Claw root install provenance", () => {
     expect(readClawPackageRefs({ env: stateEnv(root) })).toEqual([replayed]);
   });
 
+  it("round-trips canonical extension inventory on the shared plugin dependency edge", async () => {
+    const { root, plan } = await makePlan();
+    const extension = {
+      id: "coding-tools",
+      format: "claude" as const,
+      detectedFormat: "claude" as const,
+      mapped: ["commands", "skills"],
+      unavailable: ["agents"],
+      adapterIdentity: "openclaw/test",
+    };
+
+    const persisted = persistClawPackageRef(
+      plan,
+      {
+        kind: "plugin",
+        source: "clawhub",
+        ref: "@acme/coding-tools",
+        version: "1.2.3",
+        integrity: `sha256:${"b".repeat(64)}`,
+        extension,
+      },
+      { env: stateEnv(root), nowMs: 42, relationship: "referenced" },
+    );
+
+    expect(persisted.extension).toEqual(extension);
+    expect(readClawPackageRefs({ env: stateEnv(root) })).toEqual([persisted]);
+  });
+
   it("persists package identity, agent ownership, workspace, and config digest", async () => {
     const { root, plan } = await makePlan();
 

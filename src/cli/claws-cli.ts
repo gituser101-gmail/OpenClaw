@@ -14,15 +14,25 @@ export type ClawsAddOptions = {
   json?: boolean;
   agentId?: string;
   workspace?: string;
+  answers?: string;
 };
 
 export type ClawsStatusOptions = { json?: boolean };
+export type ClawsConfigureOptions = {
+  dryRun?: boolean;
+  yes?: boolean;
+  planIntegrity?: string;
+  answers?: string;
+  regenerate?: string[];
+  json?: boolean;
+};
 export type ClawsUpdateOptions = {
   from?: string;
   dryRun?: boolean;
   yes?: boolean;
   planIntegrity?: string;
   json?: boolean;
+  answers?: string;
 };
 export type ClawsRemoveOptions = {
   dryRun?: boolean;
@@ -33,7 +43,7 @@ export type ClawsRemoveOptions = {
   forceReferenced?: boolean;
   json?: boolean;
 };
-export type ClawsExportOptions = { out: string; json?: boolean };
+export type ClawsExportOptions = { out: string; authorSetup?: string; json?: boolean };
 
 function collectOption(value: string, previous: string[]): string[] {
   return [...previous, value];
@@ -64,6 +74,7 @@ export function registerClawsCli(program: Command) {
     .option("--plan-integrity <digest>", "Bind consent to an exact dry-run plan")
     .option("--agent-id <id>", "Override the requested id with an unused local agent id")
     .option("--workspace <path>", "Override the derived new workspace path")
+    .option("--answers <path>", "Read non-secret setup answers from a JSON file or - for stdin")
     .option("--json", "Print JSON", false)
     .action(async (source: string, opts: ClawsAddOptions) => {
       const { runClawsAddCommand } = await import("./claws-cli.runtime.js");
@@ -81,6 +92,26 @@ export function registerClawsCli(program: Command) {
     });
 
   claws
+    .command("configure")
+    .description("Preview or apply explicit Claw personalization effects")
+    .argument("<claw-or-agent>", "Installed package name or final agent id")
+    .option("--dry-run", "Preview personalization without mutating state", false)
+    .option("--yes", "Confirm the exact configure plan", false)
+    .option("--plan-integrity <digest>", "Bind consent to an exact configure plan")
+    .option("--answers <path>", "Read non-secret setup answers from JSON or -")
+    .option(
+      "--regenerate <destination>",
+      "Explicitly regenerate one user-owned seed (repeatable)",
+      collectOption,
+      [],
+    )
+    .option("--json", "Print JSON", false)
+    .action(async (target: string, opts: ClawsConfigureOptions) => {
+      const { runClawsConfigureCommand } = await import("./claws-configure-cli.runtime.js");
+      await runClawsConfigureCommand(target, opts);
+    });
+
+  claws
     .command("update")
     .description("Plan changes to one installed Claw agent")
     .argument("<claw-or-agent>", "Installed package name or final agent id")
@@ -88,6 +119,7 @@ export function registerClawsCli(program: Command) {
     .option("--dry-run", "Preview update actions without mutating state", false)
     .option("--yes", "Confirm the exact supported update plan", false)
     .option("--plan-integrity <digest>", "Bind consent to an exact update plan")
+    .option("--answers <path>", "Read non-secret answers for new setup effects from JSON or -")
     .option("--json", "Print JSON", false)
     .action(async (target: string, opts: ClawsUpdateOptions) => {
       const { runClawsUpdateCommand } = await import("./claws-cli.runtime.js");
@@ -128,6 +160,10 @@ export function registerClawsCli(program: Command) {
     .description("Export portable state for one installed Claw agent")
     .argument("<agent>", "Final id of the installed Claw agent")
     .requiredOption("--out <path>", "New package directory to create")
+    .option(
+      "--author-setup <path>",
+      "Generate schema v2 setup from an explicit local authoring document",
+    )
     .option("--json", "Print JSON", false)
     .action(async (agent: string, opts: ClawsExportOptions) => {
       const { runClawsExportCommand } = await import("./claws-cli.runtime.js");

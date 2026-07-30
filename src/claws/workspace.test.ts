@@ -80,6 +80,7 @@ type WorkspaceFileRow = {
   target_path: string;
   source_path: string;
   content_digest: string;
+  role: "reference" | null;
   status: "pending" | "complete" | "failed";
   created_at_ms: number | bigint;
   updated_at_ms: number | bigint;
@@ -89,7 +90,7 @@ function readWorkspaceFileRows(agentId: string, root: string) {
   const rows = openOpenClawStateDatabase({ env: stateEnv(root) })
     .db.prepare(
       `SELECT schema_version, agent_id, workspace, target_path, source_path,
-              content_digest, status, created_at_ms, updated_at_ms
+              content_digest, role, status, created_at_ms, updated_at_ms
          FROM claw_workspace_files
         WHERE agent_id = ?
         ORDER BY target_path`,
@@ -102,6 +103,7 @@ function readWorkspaceFileRows(agentId: string, root: string) {
     path: row.target_path,
     sourcePath: row.source_path,
     contentDigest: row.content_digest,
+    role: row.role ?? undefined,
     status: row.status,
     createdAtMs: Number(row.created_at_ms),
     updatedAtMs: Number(row.updated_at_ms),
@@ -159,6 +161,13 @@ describe("createClawWorkspaceFiles", () => {
 
   it("creates canonical bootstrap and supporting files and records their hashes", async () => {
     const { root, workspace, plan } = await makePlan();
+    const policyAction = plan.actions.find(
+      (action) => action.kind === "workspaceFile" && action.id === "reference/policy.md",
+    );
+    if (!policyAction) {
+      throw new Error("expected supporting-file action");
+    }
+    policyAction.details = { ...policyAction.details, role: "reference" };
 
     const records = await createClawWorkspaceFiles(plan, { env: stateEnv(root), nowMs: 10 });
 
@@ -180,6 +189,7 @@ describe("createClawWorkspaceFiles", () => {
       expect.objectContaining({
         agentId: "workspace-agent",
         path: "reference/policy.md",
+        role: "reference",
       }),
     ]);
     expect(readWorkspaceFileRows("workspace-agent", root)).toEqual(records);

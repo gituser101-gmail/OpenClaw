@@ -160,6 +160,9 @@ export async function applyClawWorkspaceUpdate(
         path,
         sourcePath: resolvedSource.sourceRelative.replaceAll(sep, "/"),
         contentDigest: target.digest,
+        ...(target.details?.role
+          ? { role: target.details.role as PersistedClawWorkspaceFile["role"] }
+          : {}),
         status: "complete",
         createdAtMs: previousRef?.createdAtMs ?? nowMs,
         updatedAtMs: nowMs,

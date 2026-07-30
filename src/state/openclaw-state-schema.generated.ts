@@ -2115,6 +2115,33 @@ CREATE TABLE IF NOT EXISTS claw_installs (
   updated_at_ms INTEGER NOT NULL
 ) STRICT;
 
+CREATE TABLE IF NOT EXISTS claw_setup_state (
+  agent_id TEXT NOT NULL PRIMARY KEY,
+  record_version TEXT NOT NULL,
+  claw_name TEXT NOT NULL,
+  claw_version TEXT NOT NULL,
+  setup_schema_digest TEXT NOT NULL,
+  answer_digest TEXT NOT NULL,
+  answers_json TEXT NOT NULL,
+  seeds_json TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('pending', 'complete', 'partial')),
+  applied_at_ms INTEGER,
+  updated_at_ms INTEGER NOT NULL
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS claw_setup_pending (
+  agent_id TEXT NOT NULL PRIMARY KEY,
+  record_version TEXT NOT NULL,
+  claw_name TEXT NOT NULL,
+  claw_version TEXT NOT NULL,
+  setup_schema_digest TEXT NOT NULL,
+  answer_digest TEXT NOT NULL,
+  answers_json TEXT NOT NULL,
+  seeds_json TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('pending', 'partial')),
+  updated_at_ms INTEGER NOT NULL
+) STRICT;
+
 CREATE TABLE IF NOT EXISTS claw_workspace_files (
   agent_id TEXT NOT NULL,
   target_path TEXT NOT NULL,
@@ -2122,6 +2149,7 @@ CREATE TABLE IF NOT EXISTS claw_workspace_files (
   workspace TEXT NOT NULL,
   source_path TEXT NOT NULL,
   content_digest TEXT NOT NULL,
+  role TEXT CHECK (role IN ('reference', 'schema', 'template', 'example', 'fixture', 'asset')),
   status TEXT NOT NULL,
   created_at_ms INTEGER NOT NULL,
   updated_at_ms INTEGER NOT NULL,
@@ -2141,6 +2169,12 @@ CREATE TABLE IF NOT EXISTS claw_package_refs (
   relationship TEXT NOT NULL CHECK (relationship IN ('managed', 'referenced')),
   origin TEXT NOT NULL CHECK (origin IN ('claw-introduced', 'pre-existing')),
   independent_owner INTEGER NOT NULL CHECK (independent_owner IN (0, 1)),
+  extension_id TEXT,
+  extension_format TEXT,
+  extension_detected_format TEXT,
+  extension_mapped_json TEXT,
+  extension_unavailable_json TEXT,
+  extension_adapter_identity TEXT,
   installed_at_ms INTEGER NOT NULL,
   updated_at_ms INTEGER NOT NULL,
   PRIMARY KEY (agent_id, package_kind, package_source, package_ref, package_version)

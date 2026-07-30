@@ -27,6 +27,7 @@ async function installedFixture(
     extraWorkspaceFiles?: string[];
     soulContent?: string | Buffer;
     withPackage?: boolean;
+    policyRole?: "reference";
   } = {},
 ) {
   const root = tempDirs.make("openclaw-claw-export-");
@@ -111,6 +112,15 @@ async function installedFixture(
     openClawProfile,
     context: { workspace: join(root, "workspace-worker") },
   });
+  if (options.policyRole) {
+    const policyAction = plan.actions.find(
+      (action) => action.kind === "workspaceFile" && action.id === "reference/policy.md",
+    );
+    if (!policyAction) {
+      throw new Error("expected supporting-file action");
+    }
+    policyAction.details = { ...policyAction.details, role: options.policyRole };
+  }
   let config: OpenClawConfig = {};
   await applyClawAddPlan(plan, {
     consentPlanIntegrity: plan.planIntegrity,
@@ -272,6 +282,309 @@ describe("exportClawAgent", () => {
       "profile: coding",
     );
     await expect(readFile(join(out, "workspace", "SOUL.md"), "utf8")).rejects.toThrow();
+  });
+
+  it("exports extension plugins into profile v2 without duplicating manifest packages", async () => {
+    const fixture = await installedFixture({ policyRole: "reference" });
+    const integrity = `sha256:${"b".repeat(64)}`;
+    const extension = {
+      id: "coding-tools",
+      format: "claude" as const,
+      detectedFormat: "claude" as const,
+      mapped: ["commands", "skills"],
+      unavailable: ["agents"],
+      adapterIdentity: "openclaw/test",
+    };
+    persistClawPackageRef(
+      fixture.plan,
+      {
+        kind: "plugin",
+        source: "clawhub",
+        ref: "@acme/coding-tools",
+        version: "1.2.3",
+        integrity,
+        extension,
+      },
+      { env: fixture.env, relationship: "referenced" },
+    );
+
+    const result = await exportClawAgent("worker", join(fixture.root, "exported-extension"), {
+      env: fixture.env,
+      config: fixture.config,
+      sourceMcpServers: fixture.sourceMcpServers,
+      packageDeps: {
+        resolvePlugin: async () => ({
+          status: "found" as const,
+          pluginId: "coding-tools",
+          installedVersion: "1.2.3",
+          record: { integrity },
+        }),
+      },
+      packagePreflight: async () => ({
+        ok: true,
+        action: "reuse",
+        integrity,
+        installId: "coding-tools",
+        detectedFormat: "claude",
+        mapped: ["commands", "skills"],
+        unavailable: ["agents"],
+        adapterIdentity: "openclaw/test",
+      }),
+    });
+
+    expect(result.manifest.packages).toEqual([]);
+    expect(result.manifest.workspace.files).toContainEqual(
+      expect.objectContaining({ path: "reference/policy.md", role: "reference" }),
+    );
+    expect(result.openClawProfile).toMatchObject({
+      schemaVersion: 2,
+      extensions: [
+        {
+          id: "coding-tools",
+          kind: "plugin",
+          format: "claude",
+          source: "clawhub",
+          ref: "@acme/coding-tools",
+          version: "1.2.3",
+        },
+      ],
+    });
+  });
+
+  it("authors a standard schema v2 package from explicitly selected user-owned content", async () => {
+    const fixture = await installedFixture({ withPackage: true });
+    const extensionIntegrity = `sha256:${"b".repeat(64)}`;
+    const extension = {
+      id: "coding-tools",
+      format: "claude" as const,
+      detectedFormat: "claude" as const,
+      mapped: ["commands", "skills"],
+      unavailable: ["agents"],
+      adapterIdentity: "openclaw/test",
+    };
+    persistClawPackageRef(
+      fixture.plan,
+      {
+        kind: "plugin",
+        source: "clawhub",
+        ref: "@acme/coding-tools",
+        version: "1.2.3",
+        integrity: extensionIntegrity,
+        extension,
+      },
+      { env: fixture.env, relationship: "referenced" },
+    );
+    const authorSource = join(fixture.plan.agent.workspace, "USER.md");
+    const authoringPath = join(fixture.root, "author-setup.json");
+    const out = join(fixture.root, "exported-guided");
+    await writeFile(
+      authorSource,
+      "# User\n\nName: Gio Private\nTimezone: America/Los_Angeles\n",
+      "utf8",
+    );
+    await writeFile(
+      authoringPath,
+      JSON.stringify({
+        schemaVersion: 1,
+        inputs: [
+          {
+            definition: {
+              id: "owner_name",
+              label: "Your name",
+              type: "string",
+              required: true,
+              maxLength: 200,
+            },
+            valuePolicy: "private",
+            sample: "Sample Operator",
+          },
+          {
+            definition: {
+              id: "timezone",
+              label: "Timezone",
+              type: "string",
+              format: "timezone",
+              required: true,
+              default: "America/Los_Angeles",
+            },
+            valuePolicy: "reusable-default",
+            sample: "America/Los_Angeles",
+          },
+        ],
+        files: [
+          {
+            source: "USER.md",
+            destination: "USER.md",
+            replacements: [
+              { literal: "Gio Private", occurrence: 1, input: "owner_name" },
+              { literal: "America/Los_Angeles", occurrence: 1, input: "timezone" },
+            ],
+          },
+        ],
+      }),
+      "utf8",
+    );
+
+    const result = await exportClawAgent("worker", out, {
+      env: fixture.env,
+      config: fixture.config,
+      packageDeps: {
+        ...fixture.packageDeps,
+        resolvePlugin: async () => ({
+          status: "found" as const,
+          pluginId: "coding-tools",
+          installedVersion: "1.2.3",
+          record: { integrity: extensionIntegrity },
+        }),
+      },
+      packagePreflight: async () => ({
+        ok: true,
+        action: "reuse",
+        integrity: extensionIntegrity,
+        installId: "coding-tools",
+        detectedFormat: "claude",
+        mapped: ["commands", "skills"],
+        unavailable: ["agents"],
+        adapterIdentity: "openclaw/test",
+      }),
+      sourceMcpServers: fixture.sourceMcpServers,
+      authorSetupPath: authoringPath,
+    });
+
+    expect(result.manifest).toMatchObject({
+      schemaVersion: 2,
+      setup: {
+        inputs: [
+          { id: "owner_name", type: "string" },
+          { id: "timezone", default: "America/Los_Angeles" },
+        ],
+      },
+      personalization: {
+        seeds: [{ source: "setup/seed-001.tmpl", destination: "USER.md" }],
+      },
+    });
+    expect(result.openClawProfile).toMatchObject({
+      schemaVersion: 2,
+      extensions: [expect.objectContaining({ id: "coding-tools", ref: "@acme/coding-tools" })],
+    });
+    expect(result.authoring).toMatchObject({
+      inputs: [
+        { id: "owner_name", valuePolicy: "private" },
+        { id: "timezone", valuePolicy: "reusable-default" },
+      ],
+      privateValuesChecked: 1,
+      seeds: [
+        {
+          destination: "USER.md",
+          templateDigest: expect.stringMatching(/^sha256:[0-9a-f]{64}$/),
+          sampleDigest: expect.stringMatching(/^sha256:[0-9a-f]{64}$/),
+          sampleByteLength: expect.any(Number),
+        },
+      ],
+    });
+    expect(JSON.stringify(result.authoring)).not.toContain("Sample Operator");
+    expect(result.authoring?.cleanAddPlanIntegrity).toMatch(/^sha256:[0-9a-f]{64}$/);
+    const template = await readFile(join(out, "setup", "seed-001.tmpl"), "utf8");
+    expect(template).toContain("{{ input.owner_name }}");
+    expect(template).toContain("{{ input.timezone }}");
+    expect(template).not.toContain("Gio Private");
+    await expect(readFile(join(out, "CLAW.md"), "utf8")).resolves.not.toContain("Sample Operator");
+    await expect(readFile(join(out, "workspace", "USER.md"), "utf8")).rejects.toThrow();
+
+    const exported = await readClawManifestFile(out);
+    expect(exported.ok).toBe(true);
+    if (!exported.ok) {
+      throw new Error(JSON.stringify(exported.diagnostics));
+    }
+    const plan = await buildClawAddPlan({
+      manifest: exported.manifest,
+      source: exported.source,
+      answers: { owner_name: "Recipient", timezone: "America/New_York" },
+      context: { workspace: join(fixture.root, "clean-recipient-workspace") },
+    });
+    expect(plan.setup).toMatchObject({ valid: true, providedInputIds: ["owner_name", "timezone"] });
+  });
+
+  it("blocks guided export when an unselected private occurrence would leak", async () => {
+    const fixture = await installedFixture();
+    const authoringPath = join(fixture.root, "author-setup-leak.json");
+    const out = join(fixture.root, "exported-leak");
+    await writeFile(
+      join(fixture.plan.agent.workspace, "USER.md"),
+      "Gio Private appears twice: Gio Private\n",
+      "utf8",
+    );
+    await writeFile(
+      authoringPath,
+      JSON.stringify({
+        schemaVersion: 1,
+        inputs: [
+          {
+            definition: {
+              id: "owner_name",
+              label: "Your name",
+              type: "string",
+              required: true,
+            },
+            valuePolicy: "private",
+            sample: "Sample Operator",
+          },
+        ],
+        files: [
+          {
+            source: "USER.md",
+            destination: "USER.md",
+            replacements: [{ literal: "Gio Private", occurrence: 1, input: "owner_name" }],
+          },
+        ],
+      }),
+      "utf8",
+    );
+
+    await expect(
+      exportClawAgent("worker", out, {
+        env: fixture.env,
+        config: fixture.config,
+        sourceMcpServers: fixture.sourceMcpServers,
+        authorSetupPath: authoringPath,
+      }),
+    ).rejects.toMatchObject({ code: "author_setup_private_value_leaked" });
+    await expect(readFile(join(out, "CLAW.md"), "utf8")).rejects.toThrow();
+  });
+
+  it("keeps managed workspace files out of guided personalization authoring", async () => {
+    const fixture = await installedFixture();
+    const authoringPath = join(fixture.root, "author-setup-managed.json");
+    await writeFile(
+      authoringPath,
+      JSON.stringify({
+        schemaVersion: 1,
+        inputs: [
+          {
+            definition: { id: "policy", label: "Policy", type: "string" },
+            valuePolicy: "private",
+            sample: "sample",
+          },
+        ],
+        files: [
+          {
+            source: "reference/policy.md",
+            destination: "POLICY.md",
+            replacements: [{ literal: "managed", occurrence: 1, input: "policy" }],
+          },
+        ],
+      }),
+      "utf8",
+    );
+
+    await expect(
+      exportClawAgent("worker", join(fixture.root, "exported-managed-authoring"), {
+        env: fixture.env,
+        config: fixture.config,
+        sourceMcpServers: fixture.sourceMcpServers,
+        authorSetupPath: authoringPath,
+      }),
+    ).rejects.toMatchObject({ code: "author_setup_source_managed" });
   });
 
   it("rejects modified managed content instead of silently creating a snapshot", async () => {

@@ -1,3 +1,6 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { runPluginInstallCommand } from "../cli/plugins-install-command.js";
 import { runPluginUninstallCommand } from "../cli/plugins-uninstall-command.js";
 import { normalizeClawHubSha256Integrity } from "../infra/clawhub.js";
@@ -17,6 +20,7 @@ import {
   type MaintainedClawPackageLifecycleLease,
 } from "../state/claw-package-lifecycle-lease.js";
 import type { OpenClawStateDatabaseOptions } from "../state/openclaw-state-db.js";
+import { VERSION } from "../version.js";
 import {
   persistClawPackageRef,
   readClawPackageRefs,
@@ -28,6 +32,7 @@ import type {
   ClawAddPlanAction,
   ClawLocalPrerequisite,
   ClawPackage,
+  ClawPackagePreflightResult,
   ResolvedClawPackage,
 } from "./types.js";
 
@@ -96,6 +101,7 @@ function packageFromAction(action: ClawAddPlanAction): PlannedClawPackage {
     version: details.version,
     integrity: details.integrity,
     ownerAction: details.ownerAction,
+    ...(details.extension ? { extension: details.extension } : {}),
     ...(details.installId ? { installId: details.installId } : {}),
     ...(details.riskWarning ? { riskWarning: details.riskWarning } : {}),
   };
@@ -122,25 +128,6 @@ function ownerInstallIsNewerThanRefs(
     refs.every((candidate) => timestamp > candidate.updatedAtMs)
   );
 }
-
-type ClawPackagePreflightResult =
-  | {
-      ok: true;
-      action: "install" | "reuse";
-      integrity: string;
-      installId?: string;
-      warning?: string;
-      requirements?: ClawLocalPrerequisite[];
-    }
-  | {
-      ok: false;
-      code: string;
-      message: string;
-      installedVersion?: string;
-      integrity?: string;
-      installId?: string;
-      warning?: string;
-    };
 
 function resolveClawPluginSetupRequirements(params: {
   pluginId: string;
@@ -178,12 +165,50 @@ function resolveClawPluginSetupRequirements(params: {
   });
 }
 
+type ClawPluginProbeDeps = {
+  probePlugin?: typeof installPluginFromClawHub;
+  createProbeExtensionsDir?: () => Promise<string>;
+  removeProbeExtensionsDir?: (path: string) => Promise<void>;
+};
+
+async function probeClawPluginArtifact(
+  pkg: ClawPackage,
+  isolateFromLiveExtensions: boolean,
+  deps: ClawPluginProbeDeps,
+): Promise<Awaited<ReturnType<typeof installPluginFromClawHub>>> {
+  const probePlugin = deps.probePlugin ?? installPluginFromClawHub;
+  const request = {
+    spec: `clawhub:${pkg.ref}@${pkg.version}`,
+    dryRun: true,
+    acknowledgeClawHubRisk: true,
+  } as const;
+  if (!isolateFromLiveExtensions) {
+    return await probePlugin(request);
+  }
+  const probeExtensionsDir = await (
+    deps.createProbeExtensionsDir ??
+    (async () => await mkdtemp(join(tmpdir(), "openclaw-claw-plugin-probe-")))
+  )();
+  try {
+    return await probePlugin({ ...request, extensionsDir: probeExtensionsDir });
+  } finally {
+    try {
+      await (
+        deps.removeProbeExtensionsDir ??
+        (async (path: string) => await rm(path, { recursive: true, force: true }))
+      )(probeExtensionsDir);
+    } catch {
+      // Temporary probe cleanup must not replace the canonical preflight result.
+    }
+  }
+}
+
 export async function preflightClawPackage(
   pkg: ClawPackage,
   workspaceDir: string,
   options: {
     env?: NodeJS.ProcessEnv;
-    deps?: Pick<PackageInstallerDeps, "preflightPlugin" | "probePlugin">;
+    deps?: Pick<PackageInstallerDeps, "preflightPlugin"> & ClawPluginProbeDeps;
   } = {},
 ): Promise<ClawPackagePreflightResult> {
   if (pkg.kind === "skill") {
@@ -207,13 +232,20 @@ export async function preflightClawPackage(
       message: result.error,
     };
   }
-  const probe = await (options.deps?.probePlugin ?? installPluginFromClawHub)({
-    spec: `clawhub:${pkg.ref}@${pkg.version}`,
-    dryRun: true,
-    acknowledgeClawHubRisk: true,
-  });
+  const probe = await probeClawPluginArtifact(
+    pkg,
+    !(result.ok && result.action === "install"),
+    options.deps ?? {},
+  );
   if (!probe.ok) {
     return { ok: false, code: probe.code ?? "plugin_preflight_failed", message: probe.error };
+  }
+  if (!probe.artifactInspection) {
+    return {
+      ok: false,
+      code: "plugin_artifact_inspection_unavailable",
+      message: `Plugin ${pkg.ref}@${pkg.version} did not return canonical artifact inspection.`,
+    };
   }
   const integrity = probe.clawhub.integrity
     ? normalizeClawHubSha256Integrity(probe.clawhub.integrity)
@@ -259,6 +291,10 @@ export async function preflightClawPackage(
     integrity,
     installId: probe.pluginId,
     ...(requirements.length > 0 ? { requirements } : {}),
+    detectedFormat: probe.artifactInspection.format,
+    mapped: probe.artifactInspection.mapped,
+    unavailable: probe.artifactInspection.unavailable,
+    adapterIdentity: `openclaw/${VERSION}`,
     ...(probe.warning ? { warning: probe.warning } : {}),
   };
 }
@@ -396,28 +432,6 @@ async function installClawPackagesUnlocked(
         continue;
       }
 
-      const probe = await probePlugin({
-        spec: `clawhub:${pkg.ref}@${pkg.version}`,
-        dryRun: true,
-        acknowledgeClawHubRisk: true,
-      });
-      if (!probe.ok) {
-        throw new Error(probe.error);
-      }
-      const probeIntegrity = probe.clawhub.integrity
-        ? normalizeClawHubSha256Integrity(probe.clawhub.integrity)
-        : null;
-      if (
-        probe.pluginId !== pkg.installId ||
-        probeIntegrity !== normalizeClawHubSha256Integrity(pkg.integrity) ||
-        probe.warning !== pkg.riskWarning
-      ) {
-        throw new ClawPackageInstallError(
-          "package_owner_state_changed",
-          `Plugin ${pkg.ref}@${pkg.version} identity or trust state changed after planning; run add --dry-run again.`,
-          installedPackages,
-        );
-      }
       const preflight = await preflightPlugin({
         clawhubPackage: pkg.ref,
         rawSpec: `clawhub:${pkg.ref}@${pkg.version}`,
@@ -435,6 +449,27 @@ async function installClawPackagesUnlocked(
         throw new ClawPackageInstallError(
           "package_owner_state_changed",
           `Plugin ${pkg.ref}@${pkg.version} owner state changed from ${pkg.ownerAction} to ${preflight.action}; run add --dry-run again.`,
+          installedPackages,
+        );
+      }
+      const probe = await probeClawPluginArtifact(pkg, preflight.action === "reuse", {
+        probePlugin,
+      });
+      packageLease.assertCurrent();
+      if (!probe.ok) {
+        throw new Error(probe.error);
+      }
+      const probeIntegrity = probe.clawhub.integrity
+        ? normalizeClawHubSha256Integrity(probe.clawhub.integrity)
+        : null;
+      if (
+        probe.pluginId !== pkg.installId ||
+        probeIntegrity !== normalizeClawHubSha256Integrity(pkg.integrity) ||
+        probe.warning !== pkg.riskWarning
+      ) {
+        throw new ClawPackageInstallError(
+          "package_owner_state_changed",
+          `Plugin ${pkg.ref}@${pkg.version} identity or trust state changed after planning; run add --dry-run again.`,
           installedPackages,
         );
       }

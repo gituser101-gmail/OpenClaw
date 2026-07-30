@@ -12,18 +12,33 @@ import { root as fsSafeRoot } from "../infra/fs-safe.js";
 import { AVATAR_MAX_BYTES, isAvatarDataUrl, isAvatarHttpUrl } from "../shared/avatar-policy.js";
 import type { OpenClawStateDatabaseOptions } from "../state/openclaw-state-db.js";
 import { resolveUserPath } from "../utils.js";
+import {
+  assertPrivateAuthorValuesAbsent,
+  buildClawExportAuthoring,
+  buildGuidedManifestSetup,
+  ClawExportAuthoringError,
+  digestAuthoringContent,
+  readClawExportAuthoringDocument,
+  type ClawExportAuthoringResult,
+} from "./export-authoring.js";
+import { portableOpenClawProfile } from "./export-profile.js";
 import { readClawStatus } from "./lifecycle-state.js";
+import { buildClawAddPlan } from "./lifecycle.js";
 import type { PackageRemovalDeps } from "./package-remove.js";
-import { isPortableClawAvatar } from "./schema-portability.js";
+import { readClawManifestFile } from "./reader.js";
+import { isPortableClawAvatar, portableClawPathKey } from "./schema-portability.js";
 import { parseClawManifest, parseClawOpenClawProfile } from "./schema.js";
+import { buildClawSetupPlan } from "./setup.js";
 import { MAX_CLAW_MANIFEST_BYTES, MAX_MANAGED_WORKSPACE_BYTES } from "./source-limits.js";
 import {
   CLAW_BOOTSTRAP_FILE_NAMES,
   CLAW_OUTPUT_STABILITY,
   CLAW_SCHEMA_VERSION,
+  CLAW_SETUP_SCHEMA_VERSION,
   type ClawManifest,
   type ClawMcpServer,
   type ClawOpenClawProfile,
+  type ClawPackagePreflight,
 } from "./types.js";
 
 export const CLAW_EXPORT_RESULT_SCHEMA_VERSION = "openclaw.clawExportResult.v1" as const;
@@ -48,6 +63,19 @@ type ClawExportResult = {
   manifest: ClawManifest;
   openClawProfile?: ClawOpenClawProfile;
   filesWritten: string[];
+  authoring?: {
+    inputs: Array<{ id: string; valuePolicy: "private" | "reusable-default" }>;
+    seeds: Array<{
+      source: string;
+      destination: string;
+      inputIds: string[];
+      templateDigest: string;
+      sampleDigest: string;
+      sampleByteLength: number;
+    }>;
+    privateValuesChecked: number;
+    cleanAddPlanIntegrity: string;
+  };
 };
 
 export class ClawExportError extends Error {
@@ -73,93 +101,6 @@ function portableAgent(agent: AgentConfig, avatar: string | undefined): ClawMani
     ...(agent.description ? { description: agent.description } : {}),
     ...(Object.keys(identity).length > 0 ? { identity } : {}),
   };
-}
-
-function portableOpenClawProfile(agent: AgentConfig): ClawOpenClawProfile | undefined {
-  const tools = {
-    ...(agent.tools?.profile ? { profile: agent.tools.profile } : {}),
-    ...(agent.tools?.allow?.length ? { allow: agent.tools.allow } : {}),
-    ...(agent.tools?.alsoAllow?.length ? { alsoAllow: agent.tools.alsoAllow } : {}),
-    ...(agent.tools?.deny?.length ? { deny: agent.tools.deny } : {}),
-    ...(agent.tools?.fs?.workspaceOnly === true ? { fs: { workspaceOnly: true as const } } : {}),
-  };
-  const settings = {
-    ...(agent.groupChat?.mentionPatterns?.length
-      ? { groupChat: { mentionPatterns: agent.groupChat.mentionPatterns } }
-      : {}),
-    ...(agent.sandbox
-      ? {
-          sandbox: {
-            ...(agent.sandbox.mode ? { mode: agent.sandbox.mode } : {}),
-            ...(agent.sandbox.scope ? { scope: agent.sandbox.scope } : {}),
-            ...(agent.sandbox.workspaceAccess
-              ? { workspaceAccess: agent.sandbox.workspaceAccess }
-              : {}),
-          },
-        }
-      : {}),
-    ...(Object.keys(tools).length > 0 ? { tools } : {}),
-    ...(agent.memory?.search
-      ? {
-          memory: {
-            search: {
-              ...(agent.memory.search.enabled !== undefined
-                ? { enabled: agent.memory.search.enabled }
-                : {}),
-              ...(agent.memory.search.rememberAcrossConversations !== undefined
-                ? {
-                    rememberAcrossConversations: agent.memory.search.rememberAcrossConversations,
-                  }
-                : {}),
-              ...(agent.memory.search.sources?.length
-                ? { sources: agent.memory.search.sources }
-                : {}),
-            },
-          },
-        }
-      : {}),
-    ...(agent.heartbeat
-      ? {
-          heartbeat: {
-            ...(agent.heartbeat.every ? { every: agent.heartbeat.every } : {}),
-            ...(agent.heartbeat.activeHours
-              ? {
-                  activeHours: {
-                    ...(agent.heartbeat.activeHours.start
-                      ? { start: agent.heartbeat.activeHours.start }
-                      : {}),
-                    ...(agent.heartbeat.activeHours.end
-                      ? { end: agent.heartbeat.activeHours.end }
-                      : {}),
-                    ...(agent.heartbeat.activeHours.timezone
-                      ? { timezone: agent.heartbeat.activeHours.timezone }
-                      : {}),
-                  },
-                }
-              : {}),
-            ...(agent.heartbeat.lightContext !== undefined
-              ? { lightContext: agent.heartbeat.lightContext }
-              : {}),
-            ...(agent.heartbeat.isolatedSession !== undefined
-              ? { isolatedSession: agent.heartbeat.isolatedSession }
-              : {}),
-            ...(agent.heartbeat.timeoutSeconds !== undefined
-              ? { timeoutSeconds: agent.heartbeat.timeoutSeconds }
-              : {}),
-          },
-        }
-      : {}),
-    ...(agent.humanDelay
-      ? {
-          humanDelay: {
-            ...(agent.humanDelay.mode ? { mode: agent.humanDelay.mode } : {}),
-            ...(agent.humanDelay.minMs !== undefined ? { minMs: agent.humanDelay.minMs } : {}),
-            ...(agent.humanDelay.maxMs !== undefined ? { maxMs: agent.humanDelay.maxMs } : {}),
-          },
-        }
-      : {}),
-  };
-  return Object.keys(settings).length > 0 ? { schemaVersion: 1, agent: settings } : undefined;
 }
 
 function normalizedRelativePath(value: string): string {
@@ -258,7 +199,9 @@ export async function exportClawAgent(
   options: OpenClawStateDatabaseOptions & {
     config: OpenClawConfig;
     packageDeps?: PackageRemovalDeps;
+    packagePreflight?: ClawPackagePreflight;
     sourceMcpServers?: Record<string, Record<string, unknown>>;
+    authorSetupPath?: string;
   },
 ): Promise<ClawExportResult> {
   const status = await readClawStatus(agentId, options);
@@ -304,11 +247,16 @@ export async function exportClawAgent(
       `Cannot export drifted managed files: ${driftedFiles.map((file) => `${file.path} (${file.state})`).join(", ")}.`,
     );
   }
-  const driftedPackages = record.packages.filter((pkg) => pkg.state !== "present");
+  const driftedPackages = record.packages.filter(
+    (pkg) =>
+      pkg.state !== "present" ||
+      (pkg.extensionCompatibility !== undefined &&
+        pkg.extensionCompatibility.state !== "compatible"),
+  );
   if (driftedPackages.length > 0) {
     throw new ClawExportError(
       "packages_drifted",
-      `Cannot export drifted packages: ${driftedPackages.map((pkg) => `${pkg.kind}:${pkg.ref}@${pkg.version} (${pkg.state})`).join(", ")}.`,
+      `Cannot export drifted packages: ${driftedPackages.map((pkg) => `${pkg.kind}:${pkg.ref}@${pkg.version} (${pkg.extensionCompatibility?.state ?? pkg.state})`).join(", ")}.`,
     );
   }
   const unresolvedCronJobs = record.cronJobs.filter(
@@ -343,6 +291,26 @@ export async function exportClawAgent(
       content: await workspace.readBytes(file.path, { maxBytes: MAX_EXPORT_FILE_BYTES }),
     })),
   );
+  let authoring: ClawExportAuthoringResult | undefined;
+  if (options.authorSetupPath) {
+    try {
+      const document = await readClawExportAuthoringDocument(
+        resolve(resolveUserPath(options.authorSetupPath)),
+      );
+      authoring = await buildClawExportAuthoring({
+        document,
+        workspace: record.install.workspace,
+        managedWorkspacePaths: new Set(
+          record.workspaceFiles.map((file) => portableClawPathKey(file.path)),
+        ),
+      });
+    } catch (error) {
+      if (error instanceof ClawExportAuthoringError) {
+        throw new ClawExportError(error.code, error.message);
+      }
+      throw error;
+    }
+  }
   const soul = allContents.find((file) => file.path === "SOUL.md");
   const decodedSoul = soul ? decodeUtf8(soul.content) : undefined;
   let clawMarkdownBody =
@@ -364,34 +332,59 @@ export async function exportClawAgent(
     if (isClawBootstrapFileName(file.path)) {
       bootstrapFiles[file.path] = { source };
     } else {
-      files.push({ source, path: file.path });
+      const role = record.workspaceFiles.find((managed) => managed.path === file.path)?.role;
+      files.push({ source, path: file.path, ...(role ? { role } : {}) });
     }
   }
   const configuredMcpServers = normalizeConfiguredMcpServers(
     options.sourceMcpServers ?? options.config.mcp?.servers,
   );
-  const openClawProfile = portableOpenClawProfile(agent);
+  const extensions = record.packages
+    .filter((pkg) => pkg.extension)
+    .map((pkg) => ({
+      id: pkg.extension!.id,
+      kind: "plugin" as const,
+      format: pkg.extension!.format,
+      source: pkg.source,
+      ref: pkg.ref,
+      version: pkg.version,
+    }))
+    .toSorted((left, right) => comparePortableText(left.id, right.id));
+  const openClawProfile = portableOpenClawProfile(agent, extensions);
   const openClawProfilePath = "profiles/openclaw.yml";
   const openClawProfileRaw = openClawProfile
     ? Buffer.from(stringifyYaml(openClawProfile))
     : undefined;
-  const manifest: ClawManifest = {
-    schemaVersion: CLAW_SCHEMA_VERSION,
+  const portablePackages = record.packages
+    .filter((pkg) => !pkg.extension)
+    .map((pkg) => ({
+      kind: pkg.kind,
+      source: pkg.source,
+      ref: pkg.ref,
+      version: pkg.version,
+    }))
+    .toSorted((left, right) => {
+      const leftIdentity = `${left.kind}:${left.ref}:${left.version}`;
+      const rightIdentity = `${right.kind}:${right.ref}:${right.version}`;
+      return comparePortableText(leftIdentity, rightIdentity);
+    });
+  const usesManifestV2 =
+    authoring !== undefined ||
+    extensions.length > 0 ||
+    files.some((file) => file.role !== undefined);
+  const portableSkills = portablePackages.filter(
+    (pkg): pkg is typeof pkg & { kind: "skill" } => pkg.kind === "skill",
+  );
+  if (usesManifestV2 && portableSkills.length !== portablePackages.length) {
+    throw new ClawExportError(
+      "legacy_plugin_not_relocated",
+      "Schema version 2 export requires plugin dependencies to have extension provenance.",
+    );
+  }
+  const manifestCommon = {
     agent: portableAgent(agent, avatar.source),
     ...(openClawProfile ? { metadata: { "openclaw.config": openClawProfilePath } } : {}),
     workspace: { bootstrapFiles, files },
-    packages: record.packages
-      .map((pkg) => ({
-        kind: pkg.kind,
-        source: pkg.source,
-        ref: pkg.ref,
-        version: pkg.version,
-      }))
-      .toSorted((left, right) => {
-        const leftIdentity = `${left.kind}:${left.ref}:${left.version}`;
-        const rightIdentity = `${right.kind}:${right.ref}:${right.version}`;
-        return comparePortableText(leftIdentity, rightIdentity);
-      }),
     mcpServers: Object.fromEntries(
       record.mcpServers.map((ref) => [
         ref.name,
@@ -402,6 +395,22 @@ export async function exportClawAgent(
       .map((cron) => cron.job)
       .toSorted((left, right) => left.id.localeCompare(right.id)),
   };
+  const manifest: ClawManifest = authoring
+    ? {
+        schemaVersion: CLAW_SETUP_SCHEMA_VERSION,
+        ...manifestCommon,
+        packages: portableSkills,
+        ...buildGuidedManifestSetup(authoring),
+      }
+    : usesManifestV2
+      ? {
+          schemaVersion: CLAW_SETUP_SCHEMA_VERSION,
+          ...manifestCommon,
+          packages: portableSkills,
+          setup: { inputs: [] },
+          personalization: { seeds: [] },
+        }
+      : { schemaVersion: CLAW_SCHEMA_VERSION, ...manifestCommon, packages: portablePackages };
   const serializeClawMarkdown = (body: Buffer | undefined) =>
     Buffer.concat([Buffer.from(`---\n${stringifyYaml(manifest)}---\n`), ...(body ? [body] : [])]);
   let clawMarkdownRaw = serializeClawMarkdown(clawMarkdownBody);
@@ -442,6 +451,11 @@ export async function exportClawAgent(
       );
     }
   }
+  const authoringContents: ExportContent[] =
+    authoring?.templates.map((template) => ({
+      path: template.source,
+      content: template.content,
+    })) ?? [];
   const target = resolve(resolveUserPath(outputDirectory));
   await mkdir(dirname(target), { recursive: true });
   try {
@@ -471,17 +485,44 @@ export async function exportClawAgent(
       });
       filesWritten.push(openClawProfilePath);
     }
+    for (const file of authoringContents) {
+      await output.write(file.path, file.content, { mkdir: true, overwrite: false });
+      filesWritten.push(file.path);
+    }
     const packageJson = {
       name: `openclaw-claw-${record.install.agentId}`,
       version: derivativePackageVersion(manifest, [
         ...contents,
+        ...authoringContents,
         ...(clawMarkdownBody ? [{ path: "CLAW.md#body", content: clawMarkdownBody }] : []),
         ...(openClawProfileRaw ? [{ path: openClawProfilePath, content: openClawProfileRaw }] : []),
       ]),
       type: "module",
       openclaw: { claw: "CLAW.md" },
     };
-    await output.write("package.json", Buffer.from(`${JSON.stringify(packageJson, null, 2)}\n`), {
+    const packageJsonRaw = Buffer.from(`${JSON.stringify(packageJson, null, 2)}\n`);
+    if (authoring) {
+      try {
+        assertPrivateAuthorValuesAbsent({
+          privateLiterals: authoring.privateLiterals,
+          files: [
+            ...contents.map((file) => ({ path: `workspace/${file.path}`, content: file.content })),
+            ...authoringContents,
+            ...(openClawProfileRaw
+              ? [{ path: openClawProfilePath, content: openClawProfileRaw }]
+              : []),
+            { path: "CLAW.md", content: clawMarkdownRaw },
+            { path: "package.json", content: packageJsonRaw },
+          ],
+        });
+      } catch (error) {
+        if (error instanceof ClawExportAuthoringError) {
+          throw new ClawExportError(error.code, error.message);
+        }
+        throw error;
+      }
+    }
+    await output.write("package.json", packageJsonRaw, {
       overwrite: false,
     });
     filesWritten.push("package.json");
@@ -489,10 +530,119 @@ export async function exportClawAgent(
     filesWritten.push("CLAW.md");
   } catch (error) {
     await rm(target, { recursive: true, force: true }).catch(() => undefined);
+    if (error instanceof ClawExportError) {
+      throw error;
+    }
     throw new ClawExportError(
       "export_write_failed",
       error instanceof Error ? error.message : String(error),
     );
+  }
+  let authoringReview: ClawExportResult["authoring"];
+  if (authoring) {
+    try {
+      const read = await readClawManifestFile(target);
+      if (!read.ok) {
+        throw new ClawExportError(
+          "author_setup_package_invalid",
+          read.diagnostics.map((diagnostic) => diagnostic.message).join("; "),
+        );
+      }
+      const plan = await buildClawAddPlan({
+        manifest: read.manifest,
+        ...(read.clawMarkdownBody ? { clawMarkdownBody: read.clawMarkdownBody } : {}),
+        ...(read.openClawProfile ? { openClawProfile: read.openClawProfile } : {}),
+        source: read.source,
+        answers: authoring.samples,
+        context: {
+          workspace: resolve(target, ".openclaw-clean-preview"),
+          packagePreflight: async (pkg) => {
+            const installed = record.packages.find(
+              (candidate) =>
+                candidate.kind === pkg.kind &&
+                candidate.source === pkg.source &&
+                candidate.ref === pkg.ref &&
+                candidate.version === pkg.version,
+            );
+            return installed
+              ? {
+                  ok: true,
+                  action: "install",
+                  integrity: installed.integrity,
+                  ...(installed.extension
+                    ? {
+                        installId: installed.extension.id,
+                        detectedFormat: installed.extension.detectedFormat,
+                        mapped: installed.extension.mapped,
+                        unavailable: installed.extension.unavailable,
+                        adapterIdentity: installed.extension.adapterIdentity,
+                      }
+                    : {}),
+                }
+              : {
+                  ok: false,
+                  code: "author_setup_package_unavailable",
+                  message: `Exported package ${pkg.kind}:${pkg.ref}@${pkg.version} is unavailable for clean preview.`,
+                };
+          },
+        },
+      });
+      if (plan.blockers.length > 0 || !plan.setup?.valid) {
+        throw new ClawExportError(
+          "author_setup_preview_blocked",
+          [...plan.blockers, ...(plan.setup?.diagnostics ?? [])]
+            .map((diagnostic) => diagnostic.message)
+            .join("; "),
+        );
+      }
+      if (read.manifest.schemaVersion !== CLAW_SETUP_SCHEMA_VERSION) {
+        throw new ClawExportError(
+          "author_setup_package_invalid",
+          "Guided export did not produce a schema version 2 package.",
+        );
+      }
+      const setupMaterialization = await buildClawSetupPlan({
+        manifest: read.manifest,
+        packageRoot: read.source.packageRoot,
+        answers: authoring.samples,
+      });
+      if (!setupMaterialization.materialization) {
+        throw new ClawExportError(
+          "author_setup_preview_incomplete",
+          "Clean-state preview did not produce canonical sample renderings.",
+        );
+      }
+      authoringReview = {
+        inputs: authoring.inputReview,
+        seeds: authoring.templates.map((template) => {
+          const seed = plan.setup!.seeds.find(
+            (candidate) => candidate.destination === template.destination,
+          );
+          const rendered = setupMaterialization.materialization!.seeds.find(
+            (candidate) => candidate.destination === template.destination,
+          );
+          if (!seed?.digest || seed.renderedByteLength === undefined || !rendered) {
+            throw new ClawExportError(
+              "author_setup_preview_incomplete",
+              `Clean-state preview did not render ${JSON.stringify(template.destination)}.`,
+            );
+          }
+          return {
+            source: template.source,
+            destination: template.destination,
+            inputIds: template.inputIds,
+            templateDigest: digestAuthoringContent(template.content),
+            sampleDigest: seed.digest,
+            sampleByteLength: seed.renderedByteLength,
+          };
+        }),
+        privateValuesChecked: authoring.privateLiterals.length,
+        cleanAddPlanIntegrity: plan.planIntegrity,
+      };
+    } catch (error) {
+      await rm(target, { recursive: true, force: true }).catch(() => undefined);
+      throw error;
+    }
   }
   return {
     schemaVersion: CLAW_EXPORT_RESULT_SCHEMA_VERSION,
@@ -502,5 +652,6 @@ export async function exportClawAgent(
     manifest,
     ...(openClawProfile ? { openClawProfile } : {}),
     filesWritten,
+    ...(authoringReview ? { authoring: authoringReview } : {}),
   };
 }

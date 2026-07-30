@@ -15,8 +15,10 @@ import { digestClawMcpServer, readClawMcpServerRefsByName } from "./mcp.js";
 import type { PackageRemovalDeps } from "./package-remove.js";
 import { digestClawPackageRef } from "./package-update-provenance.js";
 import { readClawPackageRefs } from "./provenance.js";
+import { clawSetupUpdateMutationUnavailableDiagnostic } from "./setup-mutation-guard.js";
 import {
   CLAW_OUTPUT_STABILITY,
+  CLAW_SETUP_SCHEMA_VERSION,
   type ClawDiagnostic,
   type ClawManifest,
   type ClawOpenClawProfile,
@@ -225,12 +227,17 @@ export async function buildClawUpdatePlan(params: {
         },
       },
     });
+    const setupPreviewOnly = params.targetManifest.schemaVersion === CLAW_SETUP_SCHEMA_VERSION;
     const blockers = targetPlan.blockers.filter(
       (entry) =>
         entry.code !== "workspace_collision" &&
         entry.code !== "agent_id_collision" &&
+        !(setupPreviewOnly && entry.code === "setup_mutation_unavailable") &&
         !entry.path.startsWith("$.packages"),
     );
+    if (setupPreviewOnly) {
+      blockers.push(clawSetupUpdateMutationUnavailableDiagnostic());
+    }
     const actions: ClawUpdateAction[] = [];
     const capabilityChanges: ClawUpdateCapabilityChange[] = [];
 
@@ -271,7 +278,10 @@ export async function buildClawUpdatePlan(params: {
 
     const targetFiles = new Map(
       targetPlan.actions
-        .filter((action) => action.kind === "workspaceFile")
+        .filter(
+          (action) =>
+            action.kind === "workspaceFile" && action.sourceKind !== "personalizationSeed",
+        )
         .map((action) => [action.id, action] as const),
     );
     const currentFiles = new Map(record.workspaceFiles.map((file) => [file.path, file] as const));

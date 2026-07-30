@@ -95,6 +95,12 @@ Grouped JSON uses the same `metadata.openclaw.config` pointer rather than
 embedding a second copy of the OpenClaw profile. The remaining schema fragments
 on this page use JSON, with equivalent keys available in `CLAW.md` frontmatter.
 
+Schema version 2 adds declarative, non-secret setup inputs and seed-once
+personalization. Version 1 remains strict and rejects these fields. Version 2
+is currently available for inspection and dry-run planning only; mutation is
+enabled only after OpenClaw can persist setup state and hand generated files to
+the user safely.
+
 The OpenClaw package profile may select any built-in tool profile registered by
 the running OpenClaw version, then refine it with `alsoAllow`, `deny`, and
 `tools.fs.workspaceOnly: true`. A Claw cannot set that field to `false` and
@@ -134,6 +140,69 @@ workspace-relative targets:
   }
 }
 ```
+
+### Personalization setup
+
+A schema version 2 Claw can ask bounded questions and render package-local
+templates into new user-owned workspace files:
+
+```yaml
+schemaVersion: 2
+agent:
+  id: executive-assistant
+setup:
+  inputs:
+    - id: principal_name
+      label: Your name
+      type: string
+      required: true
+      maxLength: 120
+    - id: timezone
+      label: Timezone
+      type: string
+      format: timezone
+      required: true
+personalization:
+  seeds:
+    - source: setup/USER.md.tmpl
+      destination: USER.md
+```
+
+The template supports only scalar input interpolation:
+
+```md
+# User
+
+Name: {{ input.principal_name }}
+Timezone: {{ input.timezone }}
+```
+
+There are no expressions, loops, includes, environment reads, executable
+hooks, or secret input types. Every input must be used by at least one seed.
+Templates and rendered output are bounded, package-local UTF-8 files. Root
+`BOOTSTRAP.md` cannot be managed or seeded by schema version 2.
+
+Pass answers as a local JSON object during dry-run:
+
+```json
+{
+  "principal_name": "Avery",
+  "timezone": "America/Los_Angeles"
+}
+```
+
+```bash
+openclaw claws add ./executive-assistant \
+  --dry-run \
+  --answers ./answers.json \
+  --json
+```
+
+Use `--answers -` to read the same bounded JSON document from standard input.
+Answers are ordinary local personalization data, not credential storage. The
+plan returns field diagnostics, input and seed descriptors, rendered digests,
+and an answer-bound `planIntegrity` without returning answer values. Plugin and
+MCP credentials continue through their existing owner-specific setup paths.
 
 Skills and plugins use exact ClawHub versions:
 

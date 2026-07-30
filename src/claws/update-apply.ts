@@ -28,8 +28,10 @@ import {
   updateClawInstallRecordStatus,
   type PersistedClawInstall,
 } from "./provenance.js";
+import { CLAW_SETUP_UPDATE_MUTATION_UNAVAILABLE_MESSAGE } from "./setup-mutation-guard.js";
 import {
   CLAW_OUTPUT_STABILITY,
+  CLAW_SETUP_SCHEMA_VERSION,
   type ClawManifest,
   type ClawOpenClawProfile,
   type ClawPackage,
@@ -114,6 +116,12 @@ export async function applyClawUpdatePlan(
     throw new ClawUpdateMutationError(
       "plan_integrity_mismatch",
       "Consent does not match the current Claw update plan; run update --dry-run again.",
+    );
+  }
+  if (params.targetManifest.schemaVersion === CLAW_SETUP_SCHEMA_VERSION) {
+    throw new ClawUpdateMutationError(
+      "setup_mutation_unavailable",
+      CLAW_SETUP_UPDATE_MUTATION_UNAVAILABLE_MESSAGE,
     );
   }
   if (!plan.found || plan.blockers.length > 0 || plan.actions.some((action) => action.blocked)) {

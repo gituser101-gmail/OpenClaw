@@ -3,6 +3,7 @@ import type { ToolProfileId } from "../agents/tool-policy-shared.js";
 import type { AgentConfig } from "../config/types.agents.js";
 
 export const CLAW_SCHEMA_VERSION = 1 as const;
+export const CLAW_SETUP_SCHEMA_VERSION = 2 as const;
 export const CLAW_ADD_PLAN_SCHEMA_VERSION = "openclaw.clawAddPlan.v1" as const;
 export const CLAW_INSPECT_RESULT_SCHEMA_VERSION = "openclaw.clawInspect.v1" as const;
 export const CLAW_OUTPUT_STABILITY = "experimental" as const;
@@ -95,6 +96,72 @@ type ClawWorkspace = {
   files: ClawWorkspaceFile[];
 };
 
+type ClawSetupInputCommon = {
+  id: string;
+  label: string;
+  description?: string;
+  required?: boolean;
+};
+
+type ClawSetupStringInput = ClawSetupInputCommon & {
+  type: "string";
+  default?: string;
+  minLength?: number;
+  maxLength: number;
+  format?: "timezone" | "language-tag";
+};
+
+type ClawSetupMultilineInput = ClawSetupInputCommon & {
+  type: "multiline";
+  default?: string;
+  minLength?: number;
+  maxLength: number;
+};
+
+type ClawSetupIntegerInput = ClawSetupInputCommon & {
+  type: "integer";
+  default?: number;
+  minimum?: number;
+  maximum?: number;
+};
+
+type ClawSetupBooleanInput = ClawSetupInputCommon & {
+  type: "boolean";
+  default?: boolean;
+};
+
+export type ClawSetupChoiceOption = {
+  value: string;
+  label: string;
+};
+
+type ClawSetupChoiceInput = ClawSetupInputCommon & {
+  type: "choice";
+  default?: string;
+  options: ClawSetupChoiceOption[];
+};
+
+type ClawSetupMultiChoiceInput = ClawSetupInputCommon & {
+  type: "multiChoice";
+  default?: string[];
+  options: ClawSetupChoiceOption[];
+  minItems?: number;
+  maxItems?: number;
+};
+
+export type ClawSetupInput =
+  | ClawSetupStringInput
+  | ClawSetupMultilineInput
+  | ClawSetupIntegerInput
+  | ClawSetupBooleanInput
+  | ClawSetupChoiceInput
+  | ClawSetupMultiChoiceInput;
+
+export type ClawPersonalizationSeed = {
+  source: string;
+  destination: string;
+};
+
 export type ClawPackage = {
   kind: "skill" | "plugin";
   source: "clawhub";
@@ -143,8 +210,7 @@ export type ClawCronJob = {
   };
 };
 
-export type ClawManifest = {
-  schemaVersion: typeof CLAW_SCHEMA_VERSION;
+type ClawManifestBase = {
   agent: ClawAgent;
   metadata?: Record<string, string>;
   workspace: ClawWorkspace;
@@ -152,6 +218,18 @@ export type ClawManifest = {
   mcpServers: Record<string, ClawMcpServer>;
   cronJobs: ClawCronJob[];
 };
+
+export type ClawManifestV1 = ClawManifestBase & {
+  schemaVersion: typeof CLAW_SCHEMA_VERSION;
+};
+
+export type ClawManifestV2 = ClawManifestBase & {
+  schemaVersion: typeof CLAW_SETUP_SCHEMA_VERSION;
+  setup: { inputs: ClawSetupInput[] };
+  personalization: { seeds: ClawPersonalizationSeed[] };
+};
+
+export type ClawManifest = ClawManifestV1 | ClawManifestV2;
 
 export type ClawSourceIdentity = {
   kind: "package" | "development";
@@ -171,8 +249,13 @@ export type ClawWorkspaceSourceSnapshot = {
   digest: string;
 };
 
+export type ClawSetupTemplateSnapshot = ClawWorkspaceSourceSnapshot & {
+  inputIds: string[];
+};
+
 type ClawSourceSnapshot = {
   workspaceSources: ClawWorkspaceSourceSnapshot[];
+  setupTemplates: ClawSetupTemplateSnapshot[];
 };
 
 export type ClawReadResult =
@@ -196,11 +279,30 @@ export type ClawAddPlanAction = {
   action: "create" | "write" | "install" | "configure" | "schedule";
   target: string;
   source?: string;
-  sourceKind?: "clawMarkdownBody";
+  sourceKind?: "clawMarkdownBody" | "personalizationSeed";
   digest?: string;
   details?: Record<string, unknown>;
   blocked: boolean;
   reason?: string;
+};
+
+export type ClawSetupPlan = {
+  schemaDigest: string;
+  answerDigest: string;
+  valid: boolean;
+  inputs: ClawSetupInput[];
+  providedInputIds: string[];
+  defaultedInputIds: string[];
+  missingOptionalInputIds: string[];
+  seeds: Array<{
+    source: string;
+    destination: string;
+    inputIds: string[];
+    renderedByteLength?: number;
+    digest?: string;
+    blocked: boolean;
+  }>;
+  diagnostics: ClawDiagnostic[];
 };
 
 export type ClawAddCapabilityChange = {
@@ -228,7 +330,7 @@ export type ClawLocalPrerequisite =
 
 export type ClawAddPlan = {
   schemaVersion: typeof CLAW_ADD_PLAN_SCHEMA_VERSION;
-  manifestSchemaVersion: typeof CLAW_SCHEMA_VERSION;
+  manifestSchemaVersion: ClawManifest["schemaVersion"];
   stability: typeof CLAW_OUTPUT_STABILITY;
   dryRun: true;
   mutationAllowed: false;
@@ -256,6 +358,7 @@ export type ClawAddPlan = {
     ready: boolean;
     requirements: ClawLocalPrerequisite[];
   };
+  setup?: ClawSetupPlan;
   blockers: ClawDiagnostic[];
   diagnostics: ClawDiagnostic[];
 };

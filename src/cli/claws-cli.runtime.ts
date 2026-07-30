@@ -10,6 +10,7 @@ import {
   CLAW_ADD_RESULT_SCHEMA_VERSION,
   ClawAddMutationError,
 } from "../claws/add.js";
+import { ClawAnswersError, readClawAnswersDocument } from "../claws/answers.js";
 import { assertExperimentalClawsEnabled } from "../claws/experimental.js";
 import {
   CLAW_EXPORT_RESULT_SCHEMA_VERSION,
@@ -32,6 +33,7 @@ import {
   CLAW_INSPECT_RESULT_SCHEMA_VERSION,
   CLAW_ADD_PLAN_SCHEMA_VERSION,
   CLAW_OUTPUT_STABILITY,
+  CLAW_SETUP_SCHEMA_VERSION,
   type ClawAddPlan,
 } from "../claws/types.js";
 // Runtime handlers for experimental local Claws commands.
@@ -91,6 +93,10 @@ function logClawAddPlanSummary(plan: ClawAddPlan, runtime: RuntimeEnv): void {
     runtime.log(`  MCP ${action.id}: ${target}`);
   }
   runtime.log(`Cron jobs: ${plan.summary.cronJobActions}`);
+  if (plan.setup) {
+    runtime.log(`Setup inputs: ${plan.setup.inputs.length}`);
+    runtime.log(`Personalization seeds: ${plan.setup.seeds.length}`);
+  }
   if (plan.capabilityChanges.length > 0) {
     runtime.log(`Capability escalations (${plan.capabilityChanges.length}):`);
     for (const change of plan.capabilityChanges) {
@@ -241,6 +247,54 @@ export async function runClawsAddCommand(
     return;
   }
 
+  let answers: Record<string, unknown> | undefined;
+  if (opts.answers) {
+    if (result.manifest.schemaVersion !== CLAW_SETUP_SCHEMA_VERSION) {
+      const diagnostic = {
+        level: "error" as const,
+        code: "setup_answers_unsupported",
+        phase: "plan" as const,
+        path: "$.answers",
+        message: "This schema version 1 Claw does not declare setup inputs.",
+      };
+      if (opts.json) {
+        writeRuntimeJson(runtime, {
+          schemaVersion: CLAW_ADD_PLAN_SCHEMA_VERSION,
+          stability: CLAW_OUTPUT_STABILITY,
+          valid: false,
+          diagnostics: [diagnostic],
+        });
+      } else {
+        runtime.error(formatDiagnostics([diagnostic]));
+      }
+      runtime.exit(1);
+      return;
+    }
+    try {
+      answers = await readClawAnswersDocument(opts.answers);
+    } catch (error) {
+      const diagnostic = {
+        level: "error" as const,
+        code: error instanceof ClawAnswersError ? error.code : "setup_answers_read_failed",
+        phase: "parse" as const,
+        path: "$.answers",
+        message: error instanceof Error ? error.message : String(error),
+      };
+      if (opts.json) {
+        writeRuntimeJson(runtime, {
+          schemaVersion: CLAW_ADD_PLAN_SCHEMA_VERSION,
+          stability: CLAW_OUTPUT_STABILITY,
+          valid: false,
+          diagnostics: [diagnostic],
+        });
+      } else {
+        runtime.error(formatDiagnostics([diagnostic]));
+      }
+      runtime.exit(1);
+      return;
+    }
+  }
+
   const config = getRuntimeConfig();
   const listedMcpServers = await listConfiguredMcpServers();
   if (!listedMcpServers.ok) {
@@ -269,6 +323,7 @@ export async function runClawsAddCommand(
     source: result.source,
     diagnostics: result.diagnostics,
     context: basePlanContext,
+    answers,
   });
   const resumeRecord = matchingResumeRecord(plan, opts);
   if (resumeRecord && plan.blockers.length > 0) {
@@ -286,6 +341,7 @@ export async function runClawsAddCommand(
       openClawProfile: result.openClawProfile,
       source: result.source,
       diagnostics: result.diagnostics,
+      answers,
       context: {
         ...basePlanContext,
         existingAgentIds: canResumeAgent
@@ -301,7 +357,11 @@ export async function runClawsAddCommand(
     });
   }
 
-  if (plan.blockers.length > 0) {
+  const setupPreviewOnly =
+    opts.dryRun &&
+    plan.blockers.length > 0 &&
+    plan.blockers.every((blocker) => blocker.code === "setup_mutation_unavailable");
+  if (plan.blockers.length > 0 && !setupPreviewOnly) {
     if (opts.json) {
       writeRuntimeJson(runtime, plan);
     } else {
@@ -320,6 +380,9 @@ export async function runClawsAddCommand(
       logExperimentalWarning(runtime);
       runtime.log(`Claw add plan: ${plan.claw.name}@${plan.claw.version}`);
       logClawAddPlanSummary(plan, runtime);
+      if (setupPreviewOnly) {
+        runtime.log(formatDiagnostics(plan.blockers));
+      }
     }
     return;
   }

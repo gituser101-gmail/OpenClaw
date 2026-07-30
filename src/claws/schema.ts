@@ -15,9 +15,11 @@ import {
   isValidClawTimezone,
   portableClawPathKey,
 } from "./schema-portability.js";
+import { clawPersonalizationSchema, clawSetupSchema } from "./setup-schema.js";
 import {
   CLAW_BOOTSTRAP_FILE_NAMES,
   CLAW_SCHEMA_VERSION,
+  CLAW_SETUP_SCHEMA_VERSION,
   type ClawDiagnostic,
   type ClawManifest,
   type ClawOpenClawProfile,
@@ -44,6 +46,11 @@ export function clawManifestWorkspaceConflictsWithPath(
   }
   for (const file of manifest.workspace.files) {
     targets.add(portableClawPathKey(file.path));
+  }
+  if (manifest.schemaVersion === CLAW_SETUP_SCHEMA_VERSION) {
+    for (const seed of manifest.personalization.seeds) {
+      targets.add(portableClawPathKey(seed.destination));
+    }
   }
   return conflictsWithClawPath(targets, portableClawPathKey(path));
 }
@@ -205,6 +212,7 @@ const openClawProfileSchema = z
   .strict();
 
 const workspaceSourceSchema = z.object({ source: packageRelativePath }).strict();
+// Root BOOTSTRAP.md is local state, not a portable managed bootstrap key.
 const bootstrapFilesSchema = z
   .object(
     Object.fromEntries(
@@ -388,23 +396,35 @@ const cronJobSchema = z
     }
   });
 
-const manifestSchema = z
+const manifestCommonShape = {
+  agent: agentSchema,
+  metadata: z.record(nonEmptyString, z.string()).optional().default({}),
+  workspace: workspaceSchema.optional().default({ bootstrapFiles: {}, files: [] }),
+  packages: z.array(packageSchema).optional().default([]),
+  mcpServers: z
+    .record(
+      nonEmptyString.regex(/^[a-z][a-z0-9_-]{0,63}$/, "Invalid MCP server name."),
+      mcpServerSchema,
+    )
+    .optional()
+    .default({}),
+  cronJobs: z.array(cronJobSchema).optional().default([]),
+};
+
+const manifestV1Schema = z
+  .object({ schemaVersion: z.literal(CLAW_SCHEMA_VERSION), ...manifestCommonShape })
+  .strict();
+const manifestV2Schema = z
   .object({
-    schemaVersion: z.literal(CLAW_SCHEMA_VERSION),
-    agent: agentSchema,
-    metadata: z.record(nonEmptyString, z.string()).optional().default({}),
-    workspace: workspaceSchema.optional().default({ bootstrapFiles: {}, files: [] }),
-    packages: z.array(packageSchema).optional().default([]),
-    mcpServers: z
-      .record(
-        nonEmptyString.regex(/^[a-z][a-z0-9_-]{0,63}$/, "Invalid MCP server name."),
-        mcpServerSchema,
-      )
-      .optional()
-      .default({}),
-    cronJobs: z.array(cronJobSchema).optional().default([]),
+    schemaVersion: z.literal(CLAW_SETUP_SCHEMA_VERSION),
+    ...manifestCommonShape,
+    setup: clawSetupSchema.optional().default({ inputs: [] }),
+    personalization: clawPersonalizationSchema.optional().default({ seeds: [] }),
   })
-  .strict()
+  .strict();
+
+const manifestSchema = z
+  .discriminatedUnion("schemaVersion", [manifestV1Schema, manifestV2Schema])
   .superRefine((manifest, ctx) => {
     const workspaceTargets = new Set<string>();
     for (const name of CLAW_BOOTSTRAP_FILE_NAMES) {
@@ -423,6 +443,49 @@ const manifestSchema = z
       }
       workspaceTargets.add(destinationKey);
     });
+    if (manifest.schemaVersion === CLAW_SETUP_SCHEMA_VERSION) {
+      const bootstrapPathKey = portableClawPathKey("BOOTSTRAP.md");
+      manifest.workspace.files.forEach((file, index) => {
+        if (portableClawPathKey(file.path) === bootstrapPathKey) {
+          ctx.addIssue({
+            code: "custom",
+            path: ["workspace", "files", index, "path"],
+            message: "Schema version 2 Claws cannot manage root BOOTSTRAP.md.",
+          });
+        }
+      });
+
+      const inputIds = new Set<string>();
+      manifest.setup.inputs.forEach((input, index) => {
+        if (inputIds.has(input.id)) {
+          ctx.addIssue({
+            code: "custom",
+            path: ["setup", "inputs", index, "id"],
+            message: `Setup input id ${JSON.stringify(input.id)} is declared more than once.`,
+          });
+        }
+        inputIds.add(input.id);
+      });
+
+      manifest.personalization.seeds.forEach((seed, index) => {
+        const destinationKey = portableClawPathKey(seed.destination);
+        if (destinationKey === bootstrapPathKey) {
+          ctx.addIssue({
+            code: "custom",
+            path: ["personalization", "seeds", index, "destination"],
+            message: "Schema version 2 Claws cannot seed root BOOTSTRAP.md.",
+          });
+        }
+        if (conflictsWithClawPath(workspaceTargets, destinationKey)) {
+          ctx.addIssue({
+            code: "custom",
+            path: ["personalization", "seeds", index, "destination"],
+            message: `Personalization destination ${JSON.stringify(seed.destination)} conflicts with another workspace destination.`,
+          });
+        }
+        workspaceTargets.add(destinationKey);
+      });
+    }
 
     const packageKeys = new Set<string>();
     manifest.packages.forEach((pkg, index) => {

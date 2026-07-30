@@ -10,11 +10,14 @@ import { FsSafeError, root as fsSafeRoot, type Root } from "../infra/fs-safe.js"
 import { resolveUserPath } from "../utils.js";
 import { digestClawMcpServer } from "./mcp.js";
 import { clawManifestWorkspaceConflictsWithPath } from "./schema.js";
+import { clawSetupAddMutationUnavailableDiagnostic } from "./setup-mutation-guard.js";
+import { buildClawSetupPlan } from "./setup.js";
 import { MAX_MANAGED_FILE_BYTES, MAX_MANAGED_WORKSPACE_BYTES } from "./source-limits.js";
 import {
   CLAW_ADD_PLAN_SCHEMA_VERSION,
   CLAW_BOOTSTRAP_FILE_NAMES,
   CLAW_OUTPUT_STABILITY,
+  CLAW_SETUP_SCHEMA_VERSION,
   type ClawAddPlan,
   type ClawAddPlanAction,
   type ClawAddCapabilityChange,
@@ -198,6 +201,7 @@ export async function buildClawAddPlan(params: {
   source: ClawSourceIdentity;
   diagnostics?: ClawDiagnostic[];
   context?: ClawAddPlanContext;
+  answers?: unknown;
 }): Promise<ClawAddPlan> {
   const context = params.context ?? {};
   const finalId = context.agentId ?? params.manifest.agent.id;
@@ -213,6 +217,10 @@ export async function buildClawAddPlan(params: {
   const actions: ClawAddPlanAction[] = [];
   const capabilityChanges: ClawAddCapabilityChange[] = [];
   const readinessRequirements: ClawLocalPrerequisite[] = [];
+
+  if (params.manifest.schemaVersion === CLAW_SETUP_SCHEMA_VERSION) {
+    blockers.push(clawSetupAddMutationUnavailableDiagnostic());
+  }
 
   if (!AGENT_ID_PATTERN.test(finalId)) {
     blockers.push(
@@ -396,10 +404,51 @@ export async function buildClawAddPlan(params: {
     });
   }
 
-  const workspaceByteLength = pendingWorkspaceFiles.reduce(
-    (total, pending) => total + pending.byteLength,
-    0,
-  );
+  let setup: ClawAddPlan["setup"];
+  const setupActions: ClawAddPlanAction[] = [];
+  if (params.manifest.schemaVersion === CLAW_SETUP_SCHEMA_VERSION) {
+    const setupResult = await buildClawSetupPlan({
+      manifest: params.manifest,
+      packageRoot: source.packageRoot,
+      answers: params.answers,
+    });
+    setup = setupResult.plan;
+    blockers.push(...setup.diagnostics);
+    for (const seed of setup.seeds) {
+      const setupBlocked = seed.blocked || workspaceBlocked;
+      const action: ClawAddPlanAction = {
+        kind: "workspaceFile",
+        id: seed.destination,
+        action: "write",
+        target: resolve(workspace, seed.destination),
+        source: resolve(source.packageRoot, seed.source),
+        sourceKind: "personalizationSeed",
+        ...(seed.digest ? { digest: seed.digest } : {}),
+        details: {
+          expectedState: "absent",
+          ownershipAfterCreate: "user",
+          inputIds: seed.inputIds,
+          ...(seed.renderedByteLength !== undefined
+            ? { renderedByteLength: seed.renderedByteLength }
+            : {}),
+        },
+        blocked: setupBlocked,
+        ...(setupBlocked
+          ? {
+              reason: workspaceBlocked
+                ? `Workspace ${JSON.stringify(workspace)} already exists.`
+                : (setup.diagnostics[0]?.message ?? "Personalization setup is incomplete."),
+            }
+          : {}),
+      };
+      actions.push(action);
+      setupActions.push(action);
+    }
+  }
+
+  const workspaceByteLength =
+    pendingWorkspaceFiles.reduce((total, pending) => total + pending.byteLength, 0) +
+    (setup?.seeds.reduce((total, seed) => total + (seed.renderedByteLength ?? 0), 0) ?? 0);
   if (workspaceByteLength > MAX_MANAGED_WORKSPACE_BYTES) {
     const diagnostic = blocker(
       "workspace_sources_too_large",
@@ -410,6 +459,11 @@ export async function buildClawAddPlan(params: {
     for (const pending of pendingWorkspaceFiles) {
       pending.action.blocked = true;
       pending.action.reason = diagnostic.message;
+    }
+    for (const action of setupActions) {
+      action.blocked = true;
+      action.reason = diagnostic.message;
+      delete action.digest;
     }
   } else {
     for (const pending of pendingWorkspaceFiles) {
@@ -606,6 +660,7 @@ export async function buildClawAddPlan(params: {
         actions,
         capabilityChanges,
         blockers,
+        setup,
       }),
     )
     .digest("hex")}`;
@@ -642,6 +697,7 @@ export async function buildClawAddPlan(params: {
       ready: readinessRequirements.length === 0,
       requirements: readinessRequirements,
     },
+    ...(setup ? { setup } : {}),
     blockers,
     diagnostics: params.diagnostics ?? [],
   };

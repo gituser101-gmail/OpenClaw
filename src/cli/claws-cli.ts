@@ -14,6 +14,7 @@ export type ClawsAddOptions = {
   json?: boolean;
   agentId?: string;
   workspace?: string;
+  answers?: string;
 };
 
 export type ClawsStatusOptions = { json?: boolean };
@@ -64,6 +65,7 @@ export function registerClawsCli(program: Command) {
     .option("--plan-integrity <digest>", "Bind consent to an exact dry-run plan")
     .option("--agent-id <id>", "Override the requested id with an unused local agent id")
     .option("--workspace <path>", "Override the derived new workspace path")
+    .option("--answers <path>", "Read non-secret setup answers from a JSON file or - for stdin")
     .option("--json", "Print JSON", false)
     .action(async (source: string, opts: ClawsAddOptions) => {
       const { runClawsAddCommand } = await import("./claws-cli.runtime.js");

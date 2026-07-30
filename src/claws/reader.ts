@@ -8,6 +8,7 @@ import { FsSafeError, root as fsSafeRoot, type OpenResult } from "../infra/fs-sa
 import { readClawOpenClawProfile } from "./openclaw-profile.js";
 import { isCanonicalClawHubPackageName, isExactSemVer } from "./schema-portability.js";
 import { clawManifestWorkspaceConflictsWithPath, parseClawManifest } from "./schema.js";
+import { readClawSetupTemplates } from "./setup.js";
 import {
   MAX_CLAW_MANIFEST_BYTES,
   MAX_MANAGED_FILE_BYTES,
@@ -18,6 +19,7 @@ import type {
   ClawManifest,
   ClawReadResult,
   ClawSourceIdentity,
+  ClawSetupTemplateSnapshot,
   ClawWorkspaceSourceSnapshot,
 } from "./types.js";
 
@@ -96,12 +98,19 @@ async function buildDevelopmentSnapshot(params: {
   manifest: ClawManifest;
   manifestRaw: Buffer;
   openClawProfile?: { path: string; raw: Buffer };
+  setupTemplates?: Array<{
+    source: string;
+    raw: Buffer;
+    content: string;
+    snapshot: ClawSetupTemplateSnapshot;
+  }>;
 }): Promise<
   | {
       ok: true;
       integrity: string;
       byteLength: number;
       workspaceSources: ClawWorkspaceSourceSnapshot[];
+      setupTemplates: ClawSetupTemplateSnapshot[];
     }
   | { ok: false; diagnostics: ClawDiagnostic[] }
 > {
@@ -115,6 +124,9 @@ async function buildDevelopmentSnapshot(params: {
   add("manifest", params.manifestRaw);
   if (params.openClawProfile) {
     add(`profile:${params.openClawProfile.path.replaceAll("\\", "/")}`, params.openClawProfile.raw);
+  }
+  for (const template of params.setupTemplates ?? []) {
+    add(`setup:${template.source.replaceAll("\\", "/")}`, template.raw);
   }
 
   if (params.source.kind === "package") {
@@ -220,7 +232,13 @@ async function buildDevelopmentSnapshot(params: {
     await Promise.all(openedSources.map(({ opened }) => opened[Symbol.asyncDispose]()));
   }
 
-  return { ok: true, integrity: `sha256:${hash.digest("hex")}`, byteLength, workspaceSources };
+  return {
+    ok: true,
+    integrity: `sha256:${hash.digest("hex")}`,
+    byteLength,
+    workspaceSources,
+    setupTemplates: (params.setupTemplates ?? []).map((template) => template.snapshot),
+  };
 }
 
 function parsePackageJson(value: unknown): PackageJson | undefined {
@@ -566,6 +584,13 @@ export async function readClawManifestFile(path: string): Promise<ClawReadResult
   if (!profile.ok) {
     return profile;
   }
+  const setupTemplates = await readClawSetupTemplates({
+    packageRoot: sourceResult.source.packageRoot,
+    manifest: parsed.manifest,
+  });
+  if (!setupTemplates.ok) {
+    return setupTemplates;
+  }
   const snapshot = await buildDevelopmentSnapshot({
     source: sourceResult.source,
     manifest: parsed.manifest,
@@ -573,6 +598,7 @@ export async function readClawManifestFile(path: string): Promise<ClawReadResult
     ...(profile.raw && profile.path
       ? { openClawProfile: { path: profile.path, raw: profile.raw } }
       : {}),
+    setupTemplates: setupTemplates.templates,
   });
   if (!snapshot.ok) {
     return snapshot;
@@ -594,7 +620,10 @@ export async function readClawManifestFile(path: string): Promise<ClawReadResult
     ...(hasMarkdownBody ? { clawMarkdownBody: manifestResult.body } : {}),
     ...(profile.profile ? { openClawProfile: profile.profile } : {}),
     source,
-    snapshot: { workspaceSources: snapshot.workspaceSources },
+    snapshot: {
+      workspaceSources: snapshot.workspaceSources,
+      setupTemplates: snapshot.setupTemplates,
+    },
     diagnostics: parsed.diagnostics,
   };
 }

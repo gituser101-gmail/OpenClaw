@@ -223,7 +223,7 @@ jobs:
       candidate_trust: ${{ steps.validate.outputs.candidate_trust }}
     steps:
       - name: Checkout harness ref
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           ref: main
           persist-credentials: false
@@ -350,7 +350,7 @@ jobs:
           done
 
       - name: Checkout harness ref
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           persist-credentials: false
           fetch-depth: 0
@@ -620,7 +620,7 @@ jobs:
     environment: qa-live-shared
     steps:
       - name: Checkout harness ref
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           persist-credentials: false
 

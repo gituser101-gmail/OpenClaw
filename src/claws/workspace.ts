@@ -295,7 +295,9 @@ export function deleteClawWorkspaceFileRecord(
 }
 
 function workspaceFileActions(plan: ClawAddPlan): ClawAddPlanAction[] {
-  return plan.actions.filter((action) => action.kind === "workspaceFile");
+  return plan.actions.filter(
+    (action) => action.kind === "workspaceFile" && action.sourceKind !== "personalizationSeed",
+  );
 }
 
 export function readClawWorkspaceFiles(

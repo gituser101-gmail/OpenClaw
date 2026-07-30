@@ -387,6 +387,16 @@ export function releaseClawRemoveRows(
         .prepare("DELETE FROM claw_package_refs WHERE agent_id = ?")
         .run(agentId);
     }
+    if (clawStateTableExists(db, "claw_setup_state")) {
+      db /* sqlite-allow-raw: remove setup answers only after full Claw cleanup succeeds. */
+        .prepare("DELETE FROM claw_setup_state WHERE agent_id = ?")
+        .run(agentId);
+    }
+    if (clawStateTableExists(db, "claw_setup_pending")) {
+      db /* sqlite-allow-raw: clear recoverable setup intent after full Claw cleanup succeeds. */
+        .prepare("DELETE FROM claw_setup_pending WHERE agent_id = ?")
+        .run(agentId);
+    }
     if (clawStateTableExists(db, "claw_installs")) {
       db /* sqlite-allow-raw: remove the completed Claw install owner row. */
         .prepare("DELETE FROM claw_installs WHERE agent_id = ?")

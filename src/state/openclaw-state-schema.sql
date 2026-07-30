@@ -2110,6 +2110,33 @@ CREATE TABLE IF NOT EXISTS claw_installs (
   updated_at_ms INTEGER NOT NULL
 ) STRICT;
 
+CREATE TABLE IF NOT EXISTS claw_setup_state (
+  agent_id TEXT NOT NULL PRIMARY KEY,
+  record_version TEXT NOT NULL,
+  claw_name TEXT NOT NULL,
+  claw_version TEXT NOT NULL,
+  setup_schema_digest TEXT NOT NULL,
+  answer_digest TEXT NOT NULL,
+  answers_json TEXT NOT NULL,
+  seeds_json TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('pending', 'complete', 'partial')),
+  applied_at_ms INTEGER,
+  updated_at_ms INTEGER NOT NULL
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS claw_setup_pending (
+  agent_id TEXT NOT NULL PRIMARY KEY,
+  record_version TEXT NOT NULL,
+  claw_name TEXT NOT NULL,
+  claw_version TEXT NOT NULL,
+  setup_schema_digest TEXT NOT NULL,
+  answer_digest TEXT NOT NULL,
+  answers_json TEXT NOT NULL,
+  seeds_json TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('pending', 'partial')),
+  updated_at_ms INTEGER NOT NULL
+) STRICT;
+
 CREATE TABLE IF NOT EXISTS claw_workspace_files (
   agent_id TEXT NOT NULL,
   target_path TEXT NOT NULL,

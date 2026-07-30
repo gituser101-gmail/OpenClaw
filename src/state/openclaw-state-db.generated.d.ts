@@ -321,6 +321,33 @@ export interface ClawPackageRefs {
   updated_at_ms: number;
 }
 
+export interface ClawSetupPending {
+  agent_id: string;
+  answer_digest: string;
+  answers_json: string;
+  claw_name: string;
+  claw_version: string;
+  record_version: string;
+  seeds_json: string;
+  setup_schema_digest: string;
+  status: string;
+  updated_at_ms: number;
+}
+
+export interface ClawSetupState {
+  agent_id: string;
+  answer_digest: string;
+  answers_json: string;
+  applied_at_ms: number | null;
+  claw_name: string;
+  claw_version: string;
+  record_version: string;
+  seeds_json: string;
+  setup_schema_digest: string;
+  status: string;
+  updated_at_ms: number;
+}
+
 export interface ClawWorkspaceFiles {
   agent_id: string;
   content_digest: string;
@@ -1569,6 +1596,8 @@ export interface DB {
   claw_installs: ClawInstalls;
   claw_mcp_server_refs: ClawMcpServerRefs;
   claw_package_refs: ClawPackageRefs;
+  claw_setup_pending: ClawSetupPending;
+  claw_setup_state: ClawSetupState;
   claw_workspace_files: ClawWorkspaceFiles;
   clawhub_promotion_claims: ClawhubPromotionClaims;
   clawhub_promotions_feed_state: ClawhubPromotionsFeedState;

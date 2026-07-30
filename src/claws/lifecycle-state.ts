@@ -293,6 +293,26 @@ export async function buildClawRemovePlan(
           : {}),
       });
     }
+    const setupSeeds = new Map(
+      [...(record.setup?.seeds ?? []), ...(record.setupUpdate?.seeds ?? [])].map(
+        (seed) => [seed.destination, seed] as const,
+      ),
+    );
+    for (const seed of setupSeeds.values()) {
+      actions.push({
+        kind: "personalizationSeed",
+        id: seed.destination,
+        action: "retain",
+        target: `${record.install.workspace}:${seed.destination}`,
+        blocked: false,
+        reason: "Personalization seeds become user-owned immediately and are preserved on remove.",
+        details: {
+          inputIds: seed.inputIds,
+          renderedDigest: seed.renderedDigest,
+          handoffStatus: seed.status,
+        },
+      });
+    }
     actions.push(...packagePlan.actions);
     const unmatchedMcpSelectors = new Set(mcpCleanup?.selected ?? []);
     for (const server of record.mcpServers) {

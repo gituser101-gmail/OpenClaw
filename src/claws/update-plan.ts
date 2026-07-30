@@ -1,7 +1,5 @@
 // Builds read-only, agent-centric Claw update plans from grouped manifests and ownership state.
-import { createHash } from "node:crypto";
 import { lstat } from "node:fs/promises";
-import { stableStringify } from "../agents/stable-stringify.js";
 import { normalizeConfiguredMcpServers } from "../config/mcp-config-normalize.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { root as fsSafeRoot } from "../infra/fs-safe.js";
@@ -9,6 +7,7 @@ import {
   openExistingOpenClawStateDatabaseReadOnly,
   type OpenClawStateDatabaseOptions,
 } from "../state/openclaw-state-db.js";
+import { clawProfileExtensionPackages } from "./application-plan.js";
 import { readClawStatus } from "./lifecycle-state.js";
 import { buildClawAddPlan } from "./lifecycle.js";
 import { digestClawMcpServer, readClawMcpServerRefsByName } from "./mcp.js";
@@ -17,10 +16,12 @@ import { digestClawPackageRef } from "./package-update-provenance.js";
 import { readClawPackageRefs } from "./provenance.js";
 import {
   CLAW_OUTPUT_STABILITY,
+  CLAW_OPENCLAW_PROFILE_EXTENSIONS_SCHEMA_VERSION,
   type ClawDiagnostic,
   type ClawManifest,
   type ClawOpenClawProfile,
   type ClawPackage,
+  type ClawPackagePreflightResult,
   type ClawSourceIdentity,
 } from "./types.js";
 import {
@@ -31,30 +32,24 @@ import {
   type ClawUpdateCapabilityChange,
 } from "./update-capability-changes.js";
 import { makeEmptyClawUpdatePlan } from "./update-plan-empty.js";
+import { buildClawUpdateSetupPlan } from "./update-plan-setup.js";
 import { summarizeClawUpdatePlan } from "./update-plan-summary.js";
 import {
   CLAW_UPDATE_PLAN_SCHEMA_VERSION,
   type ClawUpdateAction,
   type ClawUpdatePlan,
 } from "./update-plan-types.js";
+import {
+  clawUpdateDiagnostic as diagnostic,
+  digestClawUpdateValue as digest,
+  isManualClawUpdateState as manualState,
+} from "./update-plan-values.js";
 
 export {
   CLAW_UPDATE_PLAN_SCHEMA_VERSION,
   type ClawUpdateAction,
   type ClawUpdatePlan,
 } from "./update-plan-types.js";
-
-function digest(value: unknown): string {
-  return `sha256:${createHash("sha256").update(stableStringify(value)).digest("hex")}`;
-}
-
-function diagnostic(code: string, path: string, message: string): ClawDiagnostic {
-  return { level: "error", code, phase: "plan", path, message };
-}
-
-function manualState(state: string): boolean {
-  return state === "modified" || state === "unsafe" || state === "pending" || state === "failed";
-}
 
 export async function buildClawUpdatePlan(params: {
   agentId: string;
@@ -68,17 +63,9 @@ export async function buildClawUpdatePlan(params: {
   packagePreflight?: (
     pkg: ClawPackage,
     workspaceDir: string,
-  ) => Promise<{
-    ok: boolean;
-    action?: "install" | "reuse";
-    code?: string;
-    message?: string;
-    installedVersion?: string;
-    integrity?: string;
-    installId?: string;
-    warning?: string;
-  }>;
+  ) => Promise<ClawPackagePreflightResult>;
   diagnostics?: ClawDiagnostic[];
+  answers?: unknown;
 }): Promise<ClawUpdatePlan> {
   const ownsDatabase = !params.stateOptions?.database;
   const database =
@@ -190,19 +177,7 @@ export async function buildClawUpdatePlan(params: {
     }
 
     const packageKey = (value: { kind: string; ref: string }) => `${value.kind}:${value.ref}`;
-    const packagePreflights = new Map<
-      string,
-      {
-        ok: boolean;
-        action?: "install" | "reuse";
-        code?: string;
-        message?: string;
-        installedVersion?: string;
-        integrity?: string;
-        installId?: string;
-        warning?: string;
-      }
-    >();
+    const packagePreflights = new Map<string, ClawPackagePreflightResult>();
     const targetPlan = await buildClawAddPlan({
       manifest: params.targetManifest,
       clawMarkdownBody: params.targetClawMarkdownBody,
@@ -212,6 +187,7 @@ export async function buildClawUpdatePlan(params: {
       context: {
         agentId,
         workspace: record.install.workspace,
+        resumableWorkspace: record.install.workspace,
         packagePreflight: async (pkg) => {
           const result = params.packagePreflight
             ? await params.packagePreflight(pkg, record.install.workspace)
@@ -229,6 +205,7 @@ export async function buildClawUpdatePlan(params: {
       (entry) =>
         entry.code !== "workspace_collision" &&
         entry.code !== "agent_id_collision" &&
+        !entry.code.startsWith("setup_") &&
         !entry.path.startsWith("$.packages"),
     );
     const actions: ClawUpdateAction[] = [];
@@ -271,7 +248,10 @@ export async function buildClawUpdatePlan(params: {
 
     const targetFiles = new Map(
       targetPlan.actions
-        .filter((action) => action.kind === "workspaceFile")
+        .filter(
+          (action) =>
+            action.kind === "workspaceFile" && action.sourceKind !== "personalizationSeed",
+        )
         .map((action) => [action.id, action] as const),
     );
     const currentFiles = new Map(record.workspaceFiles.map((file) => [file.path, file] as const));
@@ -380,11 +360,17 @@ export async function buildClawUpdatePlan(params: {
       });
     }
 
+    const setup = await buildClawUpdateSetupPlan(record, params);
+    actions.push(...setup.actions);
+    blockers.push(...setup.blockers);
+
     const allPackages = readClawPackageRefs(readOnlyStateOptions);
     const currentPackages = new Map(record.packages.map((pkg) => [packageKey(pkg), pkg] as const));
-    const targetPackages = new Map(
-      params.targetManifest.packages.map((pkg) => [packageKey(pkg), pkg] as const),
-    );
+    const targetPackageList = [
+      ...params.targetManifest.packages,
+      ...clawProfileExtensionPackages(params.targetOpenClawProfile),
+    ];
+    const targetPackages = new Map(targetPackageList.map((pkg) => [packageKey(pkg), pkg] as const));
     for (const [key, target] of targetPackages) {
       const current = currentPackages.get(key);
       const preflight = packagePreflights.get(key);
@@ -473,14 +459,26 @@ export async function buildClawUpdatePlan(params: {
         capabilityChanges.push(capabilityChange);
       }
       if (failedPackageMutationPreflight) {
-        const index = params.targetManifest.packages.findIndex((pkg) => packageKey(pkg) === key);
-        blockers.push(
-          diagnostic(
-            preflight?.code ?? "package_install_unavailable",
-            `$.packages[${index}]`,
-            preflight?.message ?? "Package preflight failed.",
-          ),
+        const packageIndex = params.targetManifest.packages.findIndex(
+          (pkg) => packageKey(pkg) === key,
         );
+        const extensionIndex =
+          params.targetOpenClawProfile?.schemaVersion ===
+          CLAW_OPENCLAW_PROFILE_EXTENSIONS_SCHEMA_VERSION
+            ? params.targetOpenClawProfile.extensions.findIndex(
+                (extension) => packageKey(extension) === key,
+              )
+            : -1;
+        const path =
+          packageIndex >= 0
+            ? `$.packages[${packageIndex}]`
+            : extensionIndex >= 0
+              ? `$.metadata.openclaw.config.extensions[${extensionIndex}]`
+              : "$.packages";
+        const code = preflight?.code ?? "package_install_unavailable";
+        if (!blockers.some((entry) => entry.code === code && entry.path === path)) {
+          blockers.push(diagnostic(code, path, preflight?.message ?? "Package preflight failed."));
+        }
       }
     }
     for (const [key, current] of currentPackages) {
@@ -692,6 +690,7 @@ export async function buildClawUpdatePlan(params: {
         version: params.targetSource.version,
         integrity: params.targetSource.integrity,
       },
+      setup: setup.plan,
       summary: summarizeClawUpdatePlan(actions, capabilityChanges),
       actions,
       capabilityChanges,

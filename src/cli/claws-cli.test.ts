@@ -348,6 +348,7 @@ describe("claws cli", () => {
       "inspect",
       "add",
       "status",
+      "configure",
       "update",
       "remove",
       "export",

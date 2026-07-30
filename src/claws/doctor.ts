@@ -15,6 +15,7 @@ import {
 } from "../state/openclaw-state-db.js";
 import { isExperimentalClawsEnabled } from "./experimental.js";
 import { readClawStatus, type ClawStatusRecord } from "./lifecycle-state.js";
+import { CLAW_SETUP_SCHEMA_VERSION } from "./types.js";
 
 const CLAW_STATE_CHECK_ID = "core/doctor/claws-state";
 
@@ -108,6 +109,40 @@ function collectInstallFindings(
         target: agentId,
         requirement: "Claw installs should complete or retain explicit partial ownership state",
         fixHint: "Inspect `openclaw claws status` before retrying or removing this Claw.",
+      }),
+    );
+  }
+  if (record.install.manifestSchemaVersion === CLAW_SETUP_SCHEMA_VERSION && !record.setup) {
+    findings.push(
+      finding({
+        message: `Claw agent ${JSON.stringify(agentId)} is missing its personalization state.`,
+        path: `claws.${agentId}.setup`,
+        target: agentId,
+        requirement: "Schema version 2 Claws should retain current non-secret setup state",
+        fixHint: "Inspect the partial add before retrying or removing this Claw.",
+      }),
+    );
+  } else if (record.setup?.status !== undefined && record.setup.status !== "complete") {
+    findings.push(
+      finding({
+        message: `Claw agent ${JSON.stringify(agentId)} has incomplete personalization state (${record.setup.status}).`,
+        path: `claws.${agentId}.setup`,
+        target: agentId,
+        requirement:
+          "Personalization seed handoff should complete before the Claw install completes",
+        fixHint: "Inspect `openclaw claws status` before retrying or removing this Claw.",
+      }),
+    );
+  }
+  if (record.setupUpdate) {
+    findings.push(
+      finding({
+        message: `Claw agent ${JSON.stringify(agentId)} has an unfinished personalization update (${record.setupUpdate.status}).`,
+        path: `claws.${agentId}.setupUpdate`,
+        target: agentId,
+        requirement: "Personalization updates should publish or retain explicit recovery state",
+        fixHint:
+          "Retry the exact Claw update or remove the partial Claw after reviewing retained seed files.",
       }),
     );
   }

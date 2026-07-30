@@ -29,7 +29,13 @@ import {
   readClawPackageRefs,
   type PersistedClawInstall,
 } from "./provenance.js";
-import { CLAW_OUTPUT_STABILITY } from "./types.js";
+import {
+  readClawSetupPending,
+  readClawSetupState,
+  type PersistedClawSetupPending,
+  type PersistedClawSetupState,
+} from "./setup-state.js";
+import { CLAW_OUTPUT_STABILITY, CLAW_SETUP_SCHEMA_VERSION } from "./types.js";
 import { readClawWorkspaceFiles } from "./workspace.js";
 
 const CLAW_STATUS_SCHEMA_VERSION = "openclaw.clawStatus.v1" as const;
@@ -46,6 +52,8 @@ export type ClawStatusRecord = {
   packages: ClawPackageInspection[];
   mcpServers: ClawMcpServerStatus[];
   cronJobs: PersistedClawCronRef[];
+  setup?: PersistedClawSetupState;
+  setupUpdate?: PersistedClawSetupPending;
 };
 
 type ClawStatusResult = {
@@ -67,6 +75,8 @@ type ClawStatusResult = {
     unresolvedMcpServerRefs: number;
     cronRefs: number;
     unresolvedCronRefs: number;
+    personalizationSeeds: number;
+    incompleteSetup: number;
   };
 };
 
@@ -148,6 +158,8 @@ export async function readClawStatus(
     const workspaceFiles = installAgentIds.has(install.agentId)
       ? readClawWorkspaceFiles(install.agentId, options)
       : allWorkspaceFiles.filter((file) => file.agentId === install.agentId);
+    const setup = readClawSetupState(install.agentId, options);
+    const setupUpdate = readClawSetupPending(install.agentId, options);
     records.push({
       install,
       ...(installAgentIds.has(install.agentId) ? {} : { orphaned: true }),
@@ -167,6 +179,8 @@ export async function readClawStatus(
         : reconcileClawMcpServerRefs(install.agentId, configuredMcpServers, options)
       ).map((ref) => inspectMcpServer(ref, configuredMcpServers)),
       cronJobs: readClawCronRefs(install.agentId, options),
+      ...(setup ? { setup } : {}),
+      ...(setupUpdate ? { setupUpdate } : {}),
     });
   }
   return {
@@ -176,7 +190,12 @@ export async function readClawStatus(
     records,
     summary: {
       claws: records.length,
-      partial: records.filter((record) => record.install.status !== "complete").length,
+      partial: records.filter(
+        (record) =>
+          record.install.status !== "complete" ||
+          (record.setup !== undefined && record.setup.status !== "complete") ||
+          record.setupUpdate !== undefined,
+      ).length,
       missingAgents: records.filter((record) => record.agentState === "missing").length,
       driftedFiles: records
         .flatMap((record) => record.workspaceFiles)
@@ -202,6 +221,19 @@ export async function readClawStatus(
       unresolvedCronRefs: records
         .flatMap((record) => record.cronJobs)
         .filter((cron) => cron.status !== "complete" || !cron.schedulerJobId).length,
+      personalizationSeeds: records.flatMap((record) => {
+        const destinations = new Set([
+          ...(record.setup?.seeds.map((seed) => seed.destination) ?? []),
+          ...(record.setupUpdate?.seeds.map((seed) => seed.destination) ?? []),
+        ]);
+        return [...destinations];
+      }).length,
+      incompleteSetup: records.filter(
+        (record) =>
+          (record.install.manifestSchemaVersion === CLAW_SETUP_SCHEMA_VERSION && !record.setup) ||
+          (record.setup !== undefined && record.setup.status !== "complete") ||
+          record.setupUpdate !== undefined,
+      ).length,
     },
   };
 }

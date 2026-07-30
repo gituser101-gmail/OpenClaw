@@ -11,7 +11,10 @@ import {
   resolveAgentSkillsFilter,
 } from "../../agents/agent-scope.js";
 import type { ModelCatalogSnapshot } from "../../agents/model-catalog.types.js";
-import { resolveModelRefFromString } from "../../agents/model-selection.js";
+import {
+  buildModelAliasIndex,
+  resolveModelRefFromString,
+} from "../../agents/model-selection.js";
 import { publishedModelCatalogOwnerMatchesAgent } from "../../agents/prepared-model-catalog-owner.js";
 import { resolveAgentTimeoutMs } from "../../agents/timeout.js";
 import { DEFAULT_AGENT_WORKSPACE_DIR, ensureAgentWorkspace } from "../../agents/workspace.js";
@@ -44,7 +47,10 @@ import type { ReplyPayload } from "../reply-payload.js";
 import type { RuntimeMsgContext as MsgContext } from "../templating.js";
 import { normalizeThinkLevel, normalizeVerboseLevel } from "../thinking.js";
 import { SILENT_REPLY_TOKEN } from "../tokens.js";
-import { resolveDefaultModel } from "./directive-handling.defaults.js";
+import {
+  resolveDefaultModel,
+  resolveSubagentSessionDefaultModel,
+} from "./directive-handling.defaults.js";
 import { clearInlineDirectives } from "./get-reply-directives-utils.js";
 import { resolveReplyDirectives } from "./get-reply-directives.js";
 import {
@@ -329,7 +335,7 @@ export async function getReplyFromConfig(
     normalizeThinkLevel(agentEntry?.thinkingDefault) ??
     normalizeThinkLevel(agentCfg?.thinkingDefault);
   const sessionCfg = cfg.session;
-  const { defaultProvider, defaultModel, aliasIndex } = resolverTiming.measureSync(
+  let { defaultProvider, defaultModel, aliasIndex } = resolverTiming.measureSync(
     "reply.resolve_default_model",
     () =>
       resolveDefaultModel({
@@ -576,6 +582,27 @@ export async function getReplyFromConfig(
     provider = defaultProvider;
     model = defaultModel;
     hasResolvedHeartbeatModelOverride = false;
+  }
+  if (!sessionModelSelectionLocked && !hasResolvedHeartbeatModelOverride) {
+    const subagentDefault = resolveSubagentSessionDefaultModel({
+      cfg,
+      agentId,
+      sessionEntry,
+      defaultProvider,
+    });
+    if (subagentDefault) {
+      defaultProvider = subagentDefault.provider;
+      defaultModel = subagentDefault.model;
+      provider = subagentDefault.provider;
+      model = subagentDefault.model;
+      // Later bare overrides use the selected provider without cold-loading plugin normalization.
+      aliasIndex = buildModelAliasIndex({
+        cfg,
+        defaultProvider,
+        agentId,
+        allowPluginNormalization: false,
+      });
+    }
   }
   // Utility-model narration is turn-local decoration. Initialize the durable
   // session first, then keep it completely outside model-locked native runs.

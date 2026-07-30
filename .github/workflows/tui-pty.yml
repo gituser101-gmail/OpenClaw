@@ -32,7 +32,7 @@ jobs:
       OPENCLAW_TUI_PTY_INCLUDE_LOCAL: "1"
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Setup Node environment
         uses: ./.github/actions/setup-node-env

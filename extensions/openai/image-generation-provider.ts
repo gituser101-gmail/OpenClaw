@@ -482,6 +482,13 @@ type OpenAICodexImageGenerationEvent = {
       result?: string;
       revised_prompt?: string;
     }>;
+    error?: {
+      code?: string;
+      message?: string;
+    };
+    incomplete_details?: {
+      reason?: string;
+    };
     usage?: unknown;
     tool_usage?: unknown;
   };
@@ -619,13 +626,25 @@ function extractCodexImageGenerationResult(params: {
     (event) => event.type === "response.failed" || event.type === "error",
   );
   if (failure) {
+    const responseError = failure.response?.error;
+    const error = responseError ?? failure.error;
     const message =
-      failure.error?.message ??
+      (responseError?.code && responseError.message
+        ? `${responseError.code}: ${responseError.message}`
+        : error?.message) ??
       failure.message ??
-      (failure.error?.code ? `OpenAI Codex image generation failed (${failure.error.code})` : "");
+      (error?.code ? `OpenAI Codex image generation failed (${error.code})` : "");
     throw new Error(message || "OpenAI Codex image generation failed");
   }
+  const incompleteResponse = events.find((event) => event.type === "response.incomplete");
+  if (incompleteResponse) {
+    const reason = incompleteResponse.response?.incomplete_details?.reason ?? "unknown";
+    throw new Error(`OpenAI Codex image generation incomplete: ${reason}`);
+  }
   const completedResponse = events.find((event) => event.type === "response.completed");
+  if (!completedResponse?.response) {
+    throw new Error("OpenAI Codex image generation stream ended before a completed response");
+  }
   const outputItemImages = events
     .filter(
       (event) =>
@@ -645,6 +664,9 @@ function extractCodexImageGenerationResult(params: {
     .map((entry, index) => toCodexImage(entry, index, params.outputFormat))
     .filter((image): image is NonNullable<typeof image> => image !== null);
   const images = outputItemImages.length > 0 ? outputItemImages : completedOutputImages;
+  if (images.length === 0) {
+    throw new Error("OpenAI Codex image generation response missing image data");
+  }
 
   return {
     images,

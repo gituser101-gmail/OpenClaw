@@ -159,6 +159,14 @@ function mockCodexRawStream(body: string) {
   }));
 }
 
+function mockCodexImageEvents(
+  events: readonly Record<string, unknown>[],
+  options: { sendDone?: boolean } = {},
+) {
+  const body = events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join("");
+  mockCodexRawStream(`${body}${options.sendDone ? "data: [DONE]\n\n" : ""}`);
+}
+
 function mockCodexAuthOnly() {
   resolveApiKeyForProviderMock.mockImplementation(async (params?: { provider?: string }) => {
     if (params?.provider === "openai") {
@@ -1660,6 +1668,110 @@ describe("openai image generation provider", () => {
 
   it.each([
     {
+      name: "an empty response stream",
+      events: [],
+    },
+    {
+      name: "a created-only response",
+      events: [{ type: "response.created", response: { id: "resp_image_created" } }],
+    },
+    {
+      name: "an image output item without a completed response",
+      events: [
+        {
+          type: "response.output_item.done",
+          item: {
+            type: "image_generation_call",
+            result: Buffer.from("partial-image").toString("base64"),
+          },
+        },
+      ],
+    },
+    {
+      name: "an SSE DONE marker without a completed response",
+      events: [{ type: "response.created", response: { id: "resp_image_done" } }],
+      sendDone: true,
+    },
+  ])("rejects $name", async ({ events, sendDone }) => {
+    mockCodexAuthOnly();
+    mockCodexImageEvents(events, { sendDone });
+
+    const provider = buildOpenAIImageGenerationProvider();
+    await expect(
+      provider.generateImage({
+        provider: "openai",
+        model: "gpt-image-2",
+        prompt: "Draw an image over a truncated Responses stream",
+        cfg: {},
+      }),
+    ).rejects.toThrow("OpenAI Codex image generation stream ended before a completed response");
+  });
+
+  it("preserves the provider reason for an incomplete Codex image response", async () => {
+    mockCodexAuthOnly();
+    mockCodexImageEvents([
+      {
+        type: "response.incomplete",
+        response: {
+          id: "resp_image_incomplete",
+          incomplete_details: { reason: "max_output_tokens" },
+        },
+      },
+    ]);
+
+    const provider = buildOpenAIImageGenerationProvider();
+    await expect(
+      provider.generateImage({
+        provider: "openai",
+        model: "gpt-image-2",
+        prompt: "Draw an image over an incomplete Responses stream",
+        cfg: {},
+      }),
+    ).rejects.toThrow("OpenAI Codex image generation incomplete: max_output_tokens");
+  });
+
+  it("preserves a nested Codex image response failure", async () => {
+    mockCodexAuthOnly();
+    mockCodexImageEvents([
+      {
+        type: "response.failed",
+        response: {
+          id: "resp_image_failed",
+          error: { code: "server_error", message: "image generation backend unavailable" },
+        },
+      },
+    ]);
+
+    const provider = buildOpenAIImageGenerationProvider();
+    await expect(
+      provider.generateImage({
+        provider: "openai",
+        model: "gpt-image-2",
+        prompt: "Draw an image over a failed Responses stream",
+        cfg: {},
+      }),
+    ).rejects.toThrow("server_error: image generation backend unavailable");
+  });
+
+  it("rejects completed Codex image responses without image output", async () => {
+    mockCodexAuthOnly();
+    mockCodexImageEvents([
+      { type: "response.completed", response: { id: "resp_image_empty", output: [] } },
+    ]);
+
+    const provider = buildOpenAIImageGenerationProvider();
+    await expect(
+      provider.generateImage({
+        provider: "openai",
+        model: "gpt-image-2",
+        prompt: "Draw an image from an empty completed Responses stream",
+        cfg: {},
+      }),
+    ).rejects.toThrow("OpenAI Codex image generation response missing image data");
+  });
+
+  it.each([
+    {
       name: "invalid alphabet from output item",
       event: {
         type: "response.output_item.done",
@@ -1698,7 +1810,11 @@ describe("openai image generation provider", () => {
     },
   ])("rejects malformed Codex image base64 from $name events", async ({ event }) => {
     mockCodexAuthOnly();
-    mockCodexRawStream(`data: ${JSON.stringify(event)}\n\n`);
+    mockCodexImageEvents(
+      event.type === "response.completed"
+        ? [event]
+        : [event, { type: "response.completed", response: { output: [] } }],
+    );
 
     const provider = buildOpenAIImageGenerationProvider();
     await expect(
@@ -1713,12 +1829,13 @@ describe("openai image generation provider", () => {
 
   it("accepts Codex-compatible surrounding Unicode whitespace", async () => {
     mockCodexAuthOnly();
-    mockCodexRawStream(
-      `data: ${JSON.stringify({
+    mockCodexImageEvents([
+      {
         type: "response.output_item.done",
         item: { type: "image_generation_call", result: "\u0085aGVsbG8=\u0085" },
-      })}\n\n`,
-    );
+      },
+      { type: "response.completed", response: { output: [] } },
+    ]);
 
     const provider = buildOpenAIImageGenerationProvider();
     const result = await provider.generateImage({

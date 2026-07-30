@@ -9,18 +9,23 @@ import {
   openExistingOpenClawStateDatabaseReadOnly,
   type OpenClawStateDatabaseOptions,
 } from "../state/openclaw-state-db.js";
+import { clawProfileExtensionPackages } from "./application-plan.js";
 import { readClawStatus } from "./lifecycle-state.js";
 import { buildClawAddPlan } from "./lifecycle.js";
 import { digestClawMcpServer, readClawMcpServerRefsByName } from "./mcp.js";
 import type { PackageRemovalDeps } from "./package-remove.js";
 import { digestClawPackageRef } from "./package-update-provenance.js";
 import { readClawPackageRefs } from "./provenance.js";
+import { clawSetupUpdateMutationUnavailableDiagnostic } from "./setup-mutation-guard.js";
 import {
   CLAW_OUTPUT_STABILITY,
+  CLAW_OPENCLAW_PROFILE_EXTENSIONS_SCHEMA_VERSION,
+  CLAW_SETUP_SCHEMA_VERSION,
   type ClawDiagnostic,
   type ClawManifest,
   type ClawOpenClawProfile,
   type ClawPackage,
+  type ClawPackagePreflightResult,
   type ClawSourceIdentity,
 } from "./types.js";
 import {
@@ -68,16 +73,7 @@ export async function buildClawUpdatePlan(params: {
   packagePreflight?: (
     pkg: ClawPackage,
     workspaceDir: string,
-  ) => Promise<{
-    ok: boolean;
-    action?: "install" | "reuse";
-    code?: string;
-    message?: string;
-    installedVersion?: string;
-    integrity?: string;
-    installId?: string;
-    warning?: string;
-  }>;
+  ) => Promise<ClawPackagePreflightResult>;
   diagnostics?: ClawDiagnostic[];
 }): Promise<ClawUpdatePlan> {
   const ownsDatabase = !params.stateOptions?.database;
@@ -190,19 +186,7 @@ export async function buildClawUpdatePlan(params: {
     }
 
     const packageKey = (value: { kind: string; ref: string }) => `${value.kind}:${value.ref}`;
-    const packagePreflights = new Map<
-      string,
-      {
-        ok: boolean;
-        action?: "install" | "reuse";
-        code?: string;
-        message?: string;
-        installedVersion?: string;
-        integrity?: string;
-        installId?: string;
-        warning?: string;
-      }
-    >();
+    const packagePreflights = new Map<string, ClawPackagePreflightResult>();
     const targetPlan = await buildClawAddPlan({
       manifest: params.targetManifest,
       clawMarkdownBody: params.targetClawMarkdownBody,
@@ -225,12 +209,17 @@ export async function buildClawUpdatePlan(params: {
         },
       },
     });
+    const setupPreviewOnly = params.targetManifest.schemaVersion === CLAW_SETUP_SCHEMA_VERSION;
     const blockers = targetPlan.blockers.filter(
       (entry) =>
         entry.code !== "workspace_collision" &&
         entry.code !== "agent_id_collision" &&
+        !(setupPreviewOnly && entry.code === "setup_mutation_unavailable") &&
         !entry.path.startsWith("$.packages"),
     );
+    if (setupPreviewOnly) {
+      blockers.push(clawSetupUpdateMutationUnavailableDiagnostic());
+    }
     const actions: ClawUpdateAction[] = [];
     const capabilityChanges: ClawUpdateCapabilityChange[] = [];
 
@@ -271,7 +260,10 @@ export async function buildClawUpdatePlan(params: {
 
     const targetFiles = new Map(
       targetPlan.actions
-        .filter((action) => action.kind === "workspaceFile")
+        .filter(
+          (action) =>
+            action.kind === "workspaceFile" && action.sourceKind !== "personalizationSeed",
+        )
         .map((action) => [action.id, action] as const),
     );
     const currentFiles = new Map(record.workspaceFiles.map((file) => [file.path, file] as const));
@@ -382,9 +374,11 @@ export async function buildClawUpdatePlan(params: {
 
     const allPackages = readClawPackageRefs(readOnlyStateOptions);
     const currentPackages = new Map(record.packages.map((pkg) => [packageKey(pkg), pkg] as const));
-    const targetPackages = new Map(
-      params.targetManifest.packages.map((pkg) => [packageKey(pkg), pkg] as const),
-    );
+    const targetPackageList = [
+      ...params.targetManifest.packages,
+      ...clawProfileExtensionPackages(params.targetOpenClawProfile),
+    ];
+    const targetPackages = new Map(targetPackageList.map((pkg) => [packageKey(pkg), pkg] as const));
     for (const [key, target] of targetPackages) {
       const current = currentPackages.get(key);
       const preflight = packagePreflights.get(key);
@@ -473,14 +467,26 @@ export async function buildClawUpdatePlan(params: {
         capabilityChanges.push(capabilityChange);
       }
       if (failedPackageMutationPreflight) {
-        const index = params.targetManifest.packages.findIndex((pkg) => packageKey(pkg) === key);
-        blockers.push(
-          diagnostic(
-            preflight?.code ?? "package_install_unavailable",
-            `$.packages[${index}]`,
-            preflight?.message ?? "Package preflight failed.",
-          ),
+        const packageIndex = params.targetManifest.packages.findIndex(
+          (pkg) => packageKey(pkg) === key,
         );
+        const extensionIndex =
+          params.targetOpenClawProfile?.schemaVersion ===
+          CLAW_OPENCLAW_PROFILE_EXTENSIONS_SCHEMA_VERSION
+            ? params.targetOpenClawProfile.extensions.findIndex(
+                (extension) => packageKey(extension) === key,
+              )
+            : -1;
+        const path =
+          packageIndex >= 0
+            ? `$.packages[${packageIndex}]`
+            : extensionIndex >= 0
+              ? `$.metadata.openclaw.config.extensions[${extensionIndex}]`
+              : "$.packages";
+        const code = preflight?.code ?? "package_install_unavailable";
+        if (!blockers.some((entry) => entry.code === code && entry.path === path)) {
+          blockers.push(diagnostic(code, path, preflight?.message ?? "Package preflight failed."));
+        }
       }
     }
     for (const [key, current] of currentPackages) {

@@ -33,7 +33,8 @@ import {
   type PersistedClawInstall,
   type PersistedClawPackageRef,
 } from "./provenance.js";
-import { CLAW_OUTPUT_STABILITY, type ClawAddPlan } from "./types.js";
+import { CLAW_SETUP_ADD_MUTATION_UNAVAILABLE_MESSAGE } from "./setup-mutation-guard.js";
+import { CLAW_OUTPUT_STABILITY, CLAW_SETUP_SCHEMA_VERSION, type ClawAddPlan } from "./types.js";
 import {
   ClawWorkspaceWriteError,
   createClawWorkspaceFiles,
@@ -205,6 +206,12 @@ export async function applyClawAddPlan(
     throw new ClawAddMutationError(
       "plan_integrity_mismatch",
       "Consent does not match the current Claw add plan; run add --dry-run again.",
+    );
+  }
+  if (plan.manifestSchemaVersion === CLAW_SETUP_SCHEMA_VERSION) {
+    throw new ClawAddMutationError(
+      "setup_mutation_unavailable",
+      CLAW_SETUP_ADD_MUTATION_UNAVAILABLE_MESSAGE,
     );
   }
 

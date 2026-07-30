@@ -130,11 +130,13 @@ describe("preflightClawPackage plugin setup requirements", () => {
       },
     ],
   };
+  const artifactInspection = { format: "openclaw" as const, mapped: ["plugin"], unavailable: [] };
   const preflightPlugin = vi.fn().mockResolvedValue({ ok: true, action: "install" });
   const probePluginSetup = vi.fn().mockResolvedValue({
     ok: true,
     pluginId: "evidence",
     setup,
+    artifactInspection,
     clawhub: { integrity },
   });
 
@@ -178,6 +180,7 @@ describe("preflightClawPackage plugin setup requirements", () => {
           { id: "second", envVars: ["SECOND_API_KEY"] },
         ],
       },
+      artifactInspection,
       clawhub: { integrity },
     });
 
@@ -196,6 +199,7 @@ describe("preflightClawPackage plugin setup requirements", () => {
       setup: {
         providers: [{ id: "oauth-only", authMethods: ["oauth"] }],
       },
+      artifactInspection,
       clawhub: { integrity },
     });
 
@@ -229,6 +233,7 @@ describe("preflightClawPackage plugin setup requirements", () => {
           },
         ],
       },
+      artifactInspection,
       clawhub: { integrity },
     });
 

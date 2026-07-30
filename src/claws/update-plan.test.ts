@@ -189,6 +189,79 @@ describe("buildClawUpdatePlan", () => {
     );
   });
 
+  it("reports one update-specific blocker for a setup schema target", async () => {
+    const current = await fixture();
+    await writeFile(join(current.root, "USER.md.tmpl"), "Seed once\n", "utf8");
+    const parsed = parseClawManifest({
+      ...current.manifest,
+      schemaVersion: 2,
+      packages: current.manifest.packages.filter((pkg) => pkg.kind === "skill"),
+      setup: { inputs: [] },
+      personalization: {
+        seeds: [{ source: "USER.md.tmpl", destination: "USER.md" }],
+      },
+    });
+    if (!parsed.ok) {
+      throw new Error(JSON.stringify(parsed.diagnostics));
+    }
+
+    const plan = await buildClawUpdatePlan({
+      agentId: "worker",
+      targetManifest: parsed.manifest,
+      targetSource: targetSource(current.root, "2.0.0", "sha256:target"),
+      config: current.config,
+      sourceMcpServers: current.config.mcp?.servers ?? {},
+      stateOptions: { env: current.env },
+      packagePreflight,
+    });
+
+    const setupBlockers = plan.blockers.filter(
+      (entry) => entry.code === "setup_mutation_unavailable",
+    );
+    expect(setupBlockers).toHaveLength(1);
+    expect(setupBlockers[0]?.message).toContain("Claw updates are preview-only");
+    expect(plan.actions).not.toContainEqual(
+      expect.objectContaining({ kind: "workspaceFile", id: "USER.md" }),
+    );
+  });
+
+  it("uses the profile extension path when update preflight fails", async () => {
+    const current = await fixture();
+    const plan = await buildClawUpdatePlan({
+      agentId: "worker",
+      targetManifest: current.manifest,
+      targetOpenClawProfile: {
+        schemaVersion: 2,
+        agent: {},
+        extensions: [
+          {
+            id: "reviewer",
+            format: "claude",
+            source: "clawhub",
+            ref: "reviewer",
+            version: "1.0.0",
+          },
+        ],
+      },
+      targetSource: current.source,
+      config: current.config,
+      sourceMcpServers: current.config.mcp?.servers ?? {},
+      stateOptions: { env: current.env },
+      packagePreflight: async (pkg) =>
+        pkg.ref === "reviewer"
+          ? { ok: false, code: "extension_unavailable", message: "Extension is unavailable." }
+          : packagePreflight(pkg),
+    });
+
+    expect(plan.blockers).toContainEqual(
+      expect.objectContaining({
+        code: "extension_unavailable",
+        path: "$.metadata.openclaw.config.extensions[0]",
+      }),
+    );
+    expect(plan.blockers.every((entry) => !entry.path.includes("[-1]"))).toBe(true);
+  });
+
   it("plans restoration when the owned agent entry is missing", async () => {
     const current = await fixture();
     current.config.agents = { ...current.config.agents, entries: {} };

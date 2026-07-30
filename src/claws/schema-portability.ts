@@ -94,6 +94,14 @@ export function isValidClawTimezone(value: string): boolean {
   }
 }
 
+export function isValidClawLanguageTag(value: string): boolean {
+  try {
+    return new Intl.Locale(value).toString().length > 0;
+  } catch {
+    return false;
+  }
+}
+
 function packageManagerArtifacts(command: string, args: string[]): string[] | undefined {
   const executable = command
     .split(/[\\/]/)

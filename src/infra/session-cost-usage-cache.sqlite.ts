@@ -250,10 +250,35 @@ function isProcessRunning(pid: number): boolean {
   }
 }
 
+// Nonces minted by this process for locks it currently holds. Only an entry here
+// proves a lock on our own PID is ours; a timestamp cannot, because a supervisor
+// can restart a crashed gateway into the same PID within milliseconds.
+const ownedRefreshLockNonces = new Set<string>();
+
+// A live PID is not proof of ownership. Supervised gateways restart into the same
+// low PID (PID 1/9 under a container init), so a lock leaked by a previous
+// incarnation keeps matching `process.kill(pid, 0)` and would pin refreshes off
+// forever. Our own nonce settles that case; every other live PID stays held.
+// `startedAt` cannot retire a foreign PID -- it is wall-clock, so a forward NTP
+// step makes a lock a live owner still holds look arbitrarily old, and reclaiming
+// it would run two refreshes at once. Fail closed and accept that a lock stranded
+// on a recycled foreign PID waits for the next restart.
+function isRefreshLockOwnerAlive(lock: SessionCostUsageRefreshLock): boolean {
+  if (!isProcessRunning(lock.pid)) {
+    return false;
+  }
+  if (lock.pid !== process.pid) {
+    return true;
+  }
+  // Our own PID: only a nonce we minted proves we are the owner. An earlier
+  // incarnation that happened to hold this PID cannot have produced one.
+  return ownedRefreshLockNonces.has(lock.ownerNonce);
+}
+
 export function isSessionCostUsageRefreshRunning(agentId?: string, databasePath?: string): boolean {
   const raw = readCacheValue(agentId, LEGACY_CACHE_SCOPE, REFRESH_LOCK_KEY, databasePath);
   const lock = parseRefreshLock(raw);
-  if (lock && isProcessRunning(lock.pid)) {
+  if (lock && isRefreshLockOwnerAlive(lock)) {
     return true;
   }
   if (raw !== null) {
@@ -276,7 +301,7 @@ export function acquireSessionCostUsageRefreshLock(
   const previousLock = parseRefreshLock(previousRaw);
   // Process liveness is resolved before BEGIN. The transaction only compares
   // the authoritative row and commits the prepared replacement synchronously.
-  const previousOwnerIsRunning = previousLock ? isProcessRunning(previousLock.pid) : false;
+  const previousOwnerIsRunning = previousLock ? isRefreshLockOwnerAlive(previousLock) : false;
   const lock: SessionCostUsageRefreshLock = {
     pid: process.pid,
     startedAt: Date.now(),
@@ -328,10 +353,14 @@ export function acquireSessionCostUsageRefreshLock(
     },
     { operationLabel: "session-cost-usage.refresh-lock.acquire" },
   );
+  if (acquired) {
+    ownedRefreshLockNonces.add(lock.ownerNonce);
+  }
   return {
     acquired,
     release: () => {
       if (acquired) {
+        ownedRefreshLockNonces.delete(lock.ownerNonce);
         deleteCacheValueIfUnchanged({
           agentId,
           databasePath,

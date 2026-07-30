@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { performance } from "node:perf_hooks";
 import { afterEach, describe, expect, it } from "vitest";
 import { cleanupTempDirs, makeTempDir } from "../../test/helpers/temp-dir.js";
 import {
@@ -13,6 +14,7 @@ import {
 } from "../state/openclaw-state-db.js";
 import { withEnv } from "../test-utils/env.js";
 import {
+  acquireSessionCostUsageRefreshLock,
   deleteSessionCostUsageRollupsExcept,
   isSessionCostUsageRefreshRunning,
   readSessionCostUsageRollupRows,
@@ -20,6 +22,25 @@ import {
 } from "./session-cost-usage-cache.sqlite.js";
 
 const tempDirs: string[] = [];
+
+const REFRESH_LOCK_SCOPE = "session-cost-usage";
+const REFRESH_LOCK_KEY = "refresh-lock";
+
+function writeRefreshLockRow(
+  agentId: string,
+  lock: { pid: number; startedAt: number; ownerNonce: string },
+): void {
+  const database = openOpenClawAgentDatabase({ agentId });
+  database.db
+    .prepare(
+      `INSERT INTO cache_entries (scope, key, value_json, blob, expires_at, updated_at)
+       VALUES (?, ?, ?, NULL, NULL, ?)
+       ON CONFLICT(scope, key) DO UPDATE SET value_json = excluded.value_json,
+                                             updated_at = excluded.updated_at`,
+    )
+    .run(REFRESH_LOCK_SCOPE, REFRESH_LOCK_KEY, JSON.stringify(lock), Math.round(lock.startedAt));
+  closeOpenClawAgentDatabasesForTest();
+}
 
 function countRegisteredAgentDatabases(): number {
   const row = openOpenClawStateDatabase()
@@ -78,6 +99,92 @@ describe("session cost usage SQLite cache", () => {
         }),
       ).toBe(true);
       expect(countRegisteredAgentDatabases()).toBe(1);
+    });
+  });
+
+  it("reclaims a refresh lock left by an earlier incarnation that reused this PID", () => {
+    const stateDir = makeTempDir(tempDirs, "openclaw-usage-cache-orphan-lock-");
+
+    withEnv({ OPENCLAW_STATE_DIR: stateDir }, () => {
+      const agentId = "worker-1";
+      const databasePath = resolveOpenClawAgentSqlitePath({ agentId });
+      // A supervised gateway restarts into the same PID, so the leaked row from the
+      // previous incarnation still points at a live PID -- ours. Liveness cannot
+      // retire it; only the missing owner nonce proves this process never minted it.
+      writeRefreshLockRow(agentId, {
+        pid: process.pid,
+        startedAt: Math.round(performance.timeOrigin) - 60_000,
+        ownerNonce: "previous-incarnation-nonce",
+      });
+
+      expect(isSessionCostUsageRefreshRunning(agentId, databasePath)).toBe(false);
+
+      const lock = acquireSessionCostUsageRefreshLock(agentId, databasePath);
+      expect(lock.acquired).toBe(true);
+      lock.release();
+    });
+  });
+
+  it("reclaims a reused-PID lock even when the restart followed the crash immediately", () => {
+    const stateDir = makeTempDir(tempDirs, "openclaw-usage-cache-fast-restart-");
+
+    withEnv({ OPENCLAW_STATE_DIR: stateDir }, () => {
+      const agentId = "worker-1";
+      const databasePath = resolveOpenClawAgentSqlitePath({ agentId });
+      // Supervisors restart a crashed gateway in milliseconds, so the leaked row
+      // can predate this process by less than any clock-skew tolerance. Ownership
+      // must not be decided by comparing timestamps that close together.
+      writeRefreshLockRow(agentId, {
+        pid: process.pid,
+        startedAt: Math.round(performance.timeOrigin) - 100,
+        ownerNonce: "previous-incarnation-nonce",
+      });
+
+      expect(isSessionCostUsageRefreshRunning(agentId, databasePath)).toBe(false);
+
+      const lock = acquireSessionCostUsageRefreshLock(agentId, databasePath);
+      expect(lock.acquired).toBe(true);
+      lock.release();
+    });
+  });
+
+  it("keeps a live foreign PID's refresh lock however old its timestamp looks", () => {
+    const stateDir = makeTempDir(tempDirs, "openclaw-usage-cache-foreign-lock-");
+
+    withEnv({ OPENCLAW_STATE_DIR: stateDir }, () => {
+      const agentId = "worker-1";
+      const databasePath = resolveOpenClawAgentSqlitePath({ agentId });
+      // Our parent is live and is not us, so this stands in for a lock another
+      // gateway still holds. `startedAt` of 0 is what a forward wall-clock step
+      // does to a fresh lock; retiring on that would run two refreshes at once.
+      writeRefreshLockRow(agentId, {
+        pid: process.ppid,
+        startedAt: 0,
+        ownerNonce: "foreign-owner-nonce",
+      });
+
+      expect(isSessionCostUsageRefreshRunning(agentId, databasePath)).toBe(true);
+      expect(acquireSessionCostUsageRefreshLock(agentId, databasePath).acquired).toBe(false);
+    });
+  });
+
+  it("keeps a refresh lock this process actually holds", () => {
+    const stateDir = makeTempDir(tempDirs, "openclaw-usage-cache-live-lock-");
+
+    withEnv({ OPENCLAW_STATE_DIR: stateDir }, () => {
+      const agentId = "worker-1";
+      const databasePath = resolveOpenClawAgentSqlitePath({ agentId });
+
+      const lock = acquireSessionCostUsageRefreshLock(agentId, databasePath);
+      expect(lock.acquired).toBe(true);
+      expect(isSessionCostUsageRefreshRunning(agentId, databasePath)).toBe(true);
+      expect(acquireSessionCostUsageRefreshLock(agentId, databasePath).acquired).toBe(false);
+
+      lock.release();
+      expect(isSessionCostUsageRefreshRunning(agentId, databasePath)).toBe(false);
+      const reacquired = acquireSessionCostUsageRefreshLock(agentId, databasePath);
+      expect(reacquired.acquired).toBe(true);
+      reacquired.release();
     });
   });
 

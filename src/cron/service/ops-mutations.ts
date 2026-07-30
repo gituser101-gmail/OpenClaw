@@ -4,6 +4,7 @@ import {
   AgentDeletionAuthorityRollbackError,
   AgentDeletionCommitUncertainError,
 } from "../../agents/agent-lifecycle-registry.js";
+import { parseAgentSessionKey } from "../../routing/session-key.js";
 import {
   isCronJobActive,
   noteActiveCronJobRemoval,
@@ -28,7 +29,11 @@ import {
 } from "./jobs.js";
 import { locked } from "./locked.js";
 import { normalizeOptionalAgentId } from "./normalize.js";
-import { resolveCurrentDefaultAgentId, resolveEffectiveJobAgentId } from "./ops-shared.js";
+import {
+  resolveCurrentDefaultAgentId,
+  resolveEffectiveJobAgentId,
+  tryResolveEffectiveJobAgentId,
+} from "./ops-shared.js";
 import type {
   CronAddOptions,
   CronServiceState,
@@ -180,6 +185,25 @@ function declarativeFields(job: CronJob, includeEnabled: boolean) {
   };
 }
 
+function resolveScopedOwnerForMutation(
+  job: { agentId?: string | null; sessionKey?: string | null },
+  explicitOwnerSupplied: boolean,
+): string | undefined {
+  const scopedAgentId = normalizeOptionalAgentId(parseAgentSessionKey(job.sessionKey)?.agentId);
+  const configuredAgentId = normalizeOptionalAgentId(job.agentId);
+  if (
+    explicitOwnerSupplied &&
+    scopedAgentId &&
+    configuredAgentId &&
+    scopedAgentId !== configuredAgentId
+  ) {
+    throw new Error(
+      `cron job agentId ${configuredAgentId} does not match sessionKey owner ${scopedAgentId}`,
+    );
+  }
+  return scopedAgentId;
+}
+
 /** Adds or converges a declaration-keyed cron job inside one store lock and write transaction. */
 export async function add(state: CronServiceState, input: CronJobCreate, opts?: CronAddOptions) {
   return await locked(state, async () => {
@@ -191,7 +215,14 @@ export async function add(state: CronServiceState, input: CronJobCreate, opts?: 
       throw new Error("heartbeat payloads are system-owned; jobs cannot be created with them");
     }
     await ensureLoaded(state, { skipRecompute: true });
-    const agentId = resolveEffectiveJobAgentId(input, resolveCurrentDefaultAgentId(state));
+    const scopedAgentId = resolveScopedOwnerForMutation(
+      input,
+      normalizeOptionalAgentId(input.agentId) !== undefined,
+    );
+    const agentId = resolveEffectiveJobAgentId(
+      { ...input, ...(scopedAgentId ? { agentId: input.agentId ?? scopedAgentId } : {}) },
+      resolveCurrentDefaultAgentId(state),
+    );
     if (state.deps.isAgentAvailable?.(agentId) === false) {
       throw new Error(`cron job agent is unavailable: ${agentId}`);
     }
@@ -202,7 +233,11 @@ export async function add(state: CronServiceState, input: CronJobCreate, opts?: 
     if (normalizedId) {
       normalizeCronTaskRunJobId(normalizedId);
     }
-    const normalizedInput = normalizedId ? { ...input, id: normalizedId } : input;
+    const normalizedInput = {
+      ...input,
+      ...(normalizedId ? { id: normalizedId } : {}),
+      agentId,
+    };
     const declarationKey = normalizeOptionalString(input.declarationKey);
     const matches = declarationKey
       ? (state.store?.jobs.filter(
@@ -225,7 +260,6 @@ export async function add(state: CronServiceState, input: CronJobCreate, opts?: 
       const now = state.deps.nowMs();
       const nextJob = structuredClone(existing);
       applyDeclarativeJobSpec(nextJob, normalizedInput, {
-        defaultAgentId: state.deps.defaultAgentId,
         enabledExplicit: opts?.enabledExplicit === true,
         nowMs: now,
         cronConfig: state.deps.cronConfig,
@@ -337,15 +371,24 @@ export async function updateLoadedJob(params: {
   await precondition?.(structuredClone(job), now);
   const nextJob = structuredClone(job);
   applyJobPatch(nextJob, patch, {
-    defaultAgentId: state.deps.defaultAgentId,
     scheduleValidationNowMs: now,
     cronConfig: state.deps.cronConfig,
     scheduledToolPolicy: opts?.scheduledToolPolicy,
   });
-  if (patch.agentId !== undefined) {
+  if ("agentId" in patch || "sessionKey" in patch) {
+    const scopedAgentId = resolveScopedOwnerForMutation(nextJob, "agentId" in patch);
+    if (scopedAgentId) {
+      // A scoped session-key retarget is itself an ownership retarget. Persist
+      // the same owner in agentId so timer and session-store routing agree,
+      // including when an agentId-only patch attempts to clear the owner.
+      nextJob.agentId = scopedAgentId;
+    }
     const agentId = resolveEffectiveJobAgentId(nextJob, resolveCurrentDefaultAgentId(state));
     if (state.deps.isAgentAvailable?.(agentId) === false) {
       throw new Error(`cron job agent is unavailable: ${agentId}`);
+    }
+    if (!scopedAgentId) {
+      nextJob.agentId = agentId;
     }
   }
   finalizeUpdatedJob({
@@ -453,16 +496,15 @@ export async function removeAgentJobsTransactional<T>(
     if (!id || !state.store) {
       return await commit();
     }
-    const defaultAgentId = resolveCurrentDefaultAgentId(state);
     const removedJobs = state.store.jobs.filter(
-      (job) => resolveEffectiveJobAgentId(job, defaultAgentId) === id,
+      (job) => tryResolveEffectiveJobAgentId(job, resolveCurrentDefaultAgentId(state)) === id,
     );
     if (removedJobs.length === 0) {
       return await commit();
     }
     const snapshot = snapshotStoreForRollback(state);
     state.store.jobs = state.store.jobs.filter(
-      (job) => resolveEffectiveJobAgentId(job, defaultAgentId) !== id,
+      (job) => tryResolveEffectiveJobAgentId(job, resolveCurrentDefaultAgentId(state)) !== id,
     );
     recomputeNextRunsForMaintenance(state);
     await persistOrRestore(state, snapshot);
@@ -480,6 +522,7 @@ export async function removeAgentJobsTransactional<T>(
       }
       state.store = snapshot.store;
       state.durableNextRunAtMsByJobId = snapshot.durableNextRunAtMsByJobId;
+      state.durableRuntimeStateByJobId = snapshot.durableRuntimeStateByJobId;
       try {
         if (!(await persist(state))) {
           throw new Error("cron: rollback store write did not complete", { cause: error });

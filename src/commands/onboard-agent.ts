@@ -1,23 +1,19 @@
 // First-run main-agent creation through the canonical agent service.
 import { createAgent } from "../agents/agent-create.js";
-import {
-  listAgentEntries,
-  resolveDefaultAgentId,
-  toAgentEntriesRecord,
-} from "../agents/agent-scope-config.js";
+import { listAgentEntries, toAgentEntriesRecord } from "../agents/agent-scope-config.js";
 import { readConfigFileSnapshot } from "../config/config.js";
 import { createMergePatch } from "../config/merge-patch.js";
 import { applyMergePatch } from "../config/merge-patch.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import type { RuntimeEnv } from "../runtime.js";
+import { defaultRuntime } from "../runtime.js";
+import { resolveCliAgentId, type CliAgentSelectionDeps } from "./agent-selection.js";
 
 function isInjectedMainRoster(config: OpenClawConfig): boolean {
   const roster = listAgentEntries(config);
   const entry = roster[0];
   return (
-    roster.length === 1 &&
-    entry?.id === "main" &&
-    entry?.default === true &&
-    Object.keys(entry).every((key) => key === "id" || key === "default")
+    roster.length === 1 && entry?.id === "main" && Object.keys(entry).every((key) => key === "id")
   );
 }
 
@@ -31,21 +27,28 @@ function mergeOnboardingCandidate(params: {
   // patch onto snapshot.parsed, preserving include ownership and env refs.
   const merged = applyMergePatch(params.currentRuntime, proposalPatch) as OpenClawConfig;
   const { list: _legacyList, ...agents } = merged.agents ?? {};
+  const entries = toAgentEntriesRecord(listAgentEntries(params.currentRuntime));
   return {
     ...merged,
     agents: {
       ...agents,
-      entries: toAgentEntriesRecord(listAgentEntries(params.currentRuntime)),
+      ...(Object.keys(entries).length > 1 ? { ownership: "explicit" as const } : {}),
+      entries,
     },
   };
 }
 
-export async function ensureOnboardingAgent(params: {
+export type EnsureOnboardingAgentParams = {
   config: OpenClawConfig;
   workspace: string;
   preserveCandidateRoster?: boolean;
   baseConfig?: OpenClawConfig;
-}): Promise<{
+  agentId?: string;
+  runtime?: RuntimeEnv;
+  selectionDeps?: CliAgentSelectionDeps;
+};
+
+export async function ensureOnboardingAgent(params: EnsureOnboardingAgentParams): Promise<{
   config: OpenClawConfig;
   agentId: string;
   bootstrapPending: boolean;
@@ -62,9 +65,22 @@ export async function ensureOnboardingAgent(params: {
     candidateRoster.length > 0 &&
     (params.preserveCandidateRoster || !isInjectedMainRoster(params.config))
   ) {
+    const config =
+      candidateRoster.length > 1
+        ? {
+            ...params.config,
+            agents: { ...params.config.agents, ownership: "explicit" as const },
+          }
+        : params.config;
     return {
-      config: params.config,
-      agentId: resolveDefaultAgentId(params.config),
+      config,
+      agentId: await resolveCliAgentId({
+        cfg: config,
+        runtime: params.runtime ?? defaultRuntime,
+        agentInput: params.agentId,
+        surface: "onboarding",
+        deps: params.selectionDeps,
+      }),
       bootstrapPending: false,
     };
   }
@@ -75,13 +91,20 @@ export async function ensureOnboardingAgent(params: {
   const effective = before.config;
   const candidateBase = params.baseConfig ?? effective;
   if (before.exists && listAgentEntries(effective).length > 0) {
+    const config = mergeOnboardingCandidate({
+      base: candidateBase,
+      candidate: params.config,
+      currentRuntime: effective,
+    });
     return {
-      config: mergeOnboardingCandidate({
-        base: candidateBase,
-        candidate: params.config,
-        currentRuntime: effective,
+      config,
+      agentId: await resolveCliAgentId({
+        cfg: config,
+        runtime: params.runtime ?? defaultRuntime,
+        agentInput: params.agentId,
+        surface: "onboarding",
+        deps: params.selectionDeps,
       }),
-      agentId: resolveDefaultAgentId(effective),
       bootstrapPending: false,
     };
   }
@@ -89,9 +112,9 @@ export async function ensureOnboardingAgent(params: {
     entry: {
       id: "main",
       name: "main",
-      default: true,
       workspace: params.workspace,
     },
+    bootstrapMain: true,
     skipBootstrap: params.config.agents?.defaults?.skipBootstrap,
     skipOptionalBootstrapFiles: params.config.agents?.defaults?.skipOptionalBootstrapFiles,
   });

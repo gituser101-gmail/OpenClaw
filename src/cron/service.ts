@@ -1,4 +1,6 @@
+import type { OpenClawConfig } from "../config/types.openclaw.js";
 /** Stateful CronService facade around the locked service operation helpers. */
+import { registerLiveCronService } from "./live-service-registry.js";
 import type {
   CronServiceContract,
   CronServiceRunOptions,
@@ -16,6 +18,7 @@ import {
   type CronUpdateOptions,
   type CronWakeMode,
   createCronServiceState,
+  resolveCronServiceDefaultAgentId,
 } from "./service/state.js";
 import type { CronJob, CronJobCreate, CronJobPatch } from "./types.js";
 
@@ -28,6 +31,7 @@ export class CronService implements CronServiceContract {
   private startInProgress = 0;
   private startState: { generation: number; promise: Promise<void> } | null = null;
   private lifecycleGeneration = 0;
+  private liveServiceRegistration: ReturnType<typeof registerLiveCronService> | null = null;
 
   constructor(deps: CronServiceDeps) {
     this.state = createCronServiceState(deps);
@@ -64,7 +68,20 @@ export class CronService implements CronServiceContract {
   private async startOnce(generation: number) {
     this.startInProgress += 1;
     this.state.schedulerStarted = false;
+    let registration = this.liveServiceRegistration;
     try {
+      if (!registration) {
+        registration = registerLiveCronService(this.state.deps.storePath, this);
+        this.liveServiceRegistration = registration;
+        await registration.ready;
+        if (generation !== this.lifecycleGeneration) {
+          if (this.liveServiceRegistration === registration) {
+            registration.unregister();
+            this.liveServiceRegistration = null;
+          }
+          return;
+        }
+      }
       await lifecycleOps.start(this.state);
       if (generation !== this.lifecycleGeneration) {
         lifecycleOps.stop(this.state);
@@ -73,12 +90,42 @@ export class CronService implements CronServiceContract {
       this.state.schedulerStarted = !this.state.stopped;
     } finally {
       this.startInProgress -= 1;
+      if (
+        !this.state.schedulerStarted &&
+        registration &&
+        this.liveServiceRegistration === registration
+      ) {
+        registration.unregister();
+        this.liveServiceRegistration = null;
+      }
     }
   }
 
   stop() {
     this.lifecycleGeneration += 1;
     lifecycleOps.stop(this.state);
+    this.liveServiceRegistration?.unregister();
+    this.liveServiceRegistration = null;
+  }
+
+  async beginLegacyDefaultAgentOwnerHandoff(legacyDefaultAgentId: string) {
+    return await lifecycleOps.beginLegacyDefaultAgentOwnerHandoff(this.state, legacyDefaultAgentId);
+  }
+
+  async refreshLegacyDefaultAgentOwnerHandoff(options?: { persistSchedulingState?: boolean }) {
+    await lifecycleOps.refreshLegacyDefaultAgentOwnerHandoff(this.state, options);
+  }
+
+  async reloadForConfigAdoption(incomingConfig: OpenClawConfig) {
+    await lifecycleOps.reloadForConfigAdoption(this.state, incomingConfig);
+  }
+
+  completeConfigAdoption(incomingConfig: OpenClawConfig) {
+    lifecycleOps.completeConfigAdoption(this.state, incomingConfig);
+  }
+
+  async rejectConfigAdoption() {
+    await lifecycleOps.rejectConfigAdoption(this.state);
   }
 
   pauseScheduling() {
@@ -225,7 +272,7 @@ export class CronService implements CronServiceContract {
   }
 
   getDefaultAgentId(): string | undefined {
-    return this.state.deps.defaultAgentId;
+    return resolveCronServiceDefaultAgentId(this.state.deps);
   }
 
   wake(opts: { mode: CronWakeMode; text: string; sessionKey?: string; agentId?: string }) {

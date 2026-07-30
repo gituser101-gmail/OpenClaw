@@ -9,8 +9,9 @@ import "./test-helpers.mocks.js";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, vi } from "vitest";
 import { WebSocket } from "ws";
 import { PROTOCOL_VERSION } from "../../packages/gateway-protocol/src/index.js";
+import { listAgentIds } from "../agents/agent-scope-config.js";
 import { parseConfigJson5, resetConfigRuntimeState } from "../config/config.js";
-import { resolveMainSessionKeyFromConfig, type SessionEntry } from "../config/sessions.js";
+import type { SessionEntry } from "../config/sessions.js";
 import {
   applySessionEntryLifecycleMutation,
   listSessionEntries,
@@ -110,19 +111,16 @@ let activeSuiteHookScopeCount = 0;
 const DEFAULT_GATEWAY_TEST_BIND = "loopback" as const;
 
 function resolveGatewayTestMainSessionKeys(): string[] {
-  const resolved = resolveMainSessionKeyFromConfig();
-  const keys = new Set<string>();
-  if (resolved) {
-    keys.add(resolved);
-  }
-  if (resolved !== "global") {
-    const parsed = parseAgentSessionKey(resolved);
-    const agentId = parsed?.agentId ?? DEFAULT_AGENT_ID;
-    keys.add(`agent:${agentId}:main`);
-    const configuredMainKey = normalizeMainKey(
-      (testState.sessionConfig as { mainKey?: unknown } | undefined)?.mainKey as string | undefined,
-    );
-    keys.add(`agent:${agentId}:${configuredMainKey}`);
+  const configuredAgentIds = listAgentIds({ agents: testState.agentsConfig });
+  const agentIds = configuredAgentIds.length > 0 ? configuredAgentIds : [DEFAULT_AGENT_ID];
+  const configuredMainKey = normalizeMainKey(
+    (testState.sessionConfig as { mainKey?: unknown } | undefined)?.mainKey as string | undefined,
+  );
+  const keys = new Set<string>(["global"]);
+  for (const agentId of agentIds) {
+    const normalizedAgentId = normalizeAgentId(agentId);
+    keys.add(`agent:${normalizedAgentId}:main`);
+    keys.add(`agent:${normalizedAgentId}:${configuredMainKey}`);
   }
   return [...keys];
 }
@@ -1321,4 +1319,5 @@ export async function waitForSystemEvent(timeoutMs = 2000) {
   }
   throw new Error("timeout waiting for system event");
 }
+
 /* oxlint-disable max-lines -- TODO: split this grandfathered oversized file. */

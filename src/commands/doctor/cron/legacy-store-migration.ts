@@ -628,8 +628,11 @@ export async function loadLegacyCronStoreForMigration(
 
     return {
       store,
+      storeEpoch: 0,
+      runtimeRevision: 0,
       configJobs,
       configJobIndexes,
+      legacyImportedJobIndexes: store.jobs.map((_job, index) => index),
       configJobRuntimeEntries,
       invalidConfigRows,
       migrationSource: createLegacyCronMigrationSource({
@@ -644,8 +647,11 @@ export async function loadLegacyCronStoreForMigration(
     if ((err as { code?: unknown })?.code === "ENOENT") {
       return {
         store: { version: 1, jobs: [] },
+        storeEpoch: 0,
+        runtimeRevision: 0,
         configJobs: [],
         configJobIndexes: [],
+        legacyImportedJobIndexes: [],
         configJobRuntimeEntries: [],
         invalidConfigRows: [],
       };

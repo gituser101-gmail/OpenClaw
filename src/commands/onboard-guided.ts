@@ -1,7 +1,9 @@
+import { listAgentEntries } from "../agents/agent-scope.js";
 import { formatCliCommand } from "../cli/command-format.js";
 import { formatConfigIssueLines } from "../config/issue-format.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { withConsoleSubsystemsSuppressed } from "../logging/console.js";
+import { normalizeAgentId } from "../routing/session-key.js";
 import type { RuntimeEnv } from "../runtime.js";
 // Guided onboarding: detect AI access, live-test it, then persist only a working route.
 import type {
@@ -13,6 +15,7 @@ import { resolveUserPath, shortenHomePath } from "../utils.js";
 import { t } from "../wizard/i18n/index.js";
 import type { WizardPrompter } from "../wizard/prompts.js";
 import { requireRiskAcknowledgement } from "../wizard/setup.shared.js";
+import { resolveOnboardingAgentTarget } from "./onboard-agent-target.js";
 import type {
   probeBrowserHatchGateway,
   runBrowserHatchHandoff,
@@ -425,7 +428,7 @@ async function runGuidedOnboardingFlow(
     canConfirmMove: !alreadyConfigured,
   });
   const { allowWorkspaceChange, conflict: workspaceConflict } = workspaceSelection;
-  const appliedWorkspace = workspaceSelection.workspaceDir;
+  let appliedWorkspace = workspaceSelection.workspaceDir;
   if (alreadyConfigured) {
     await prompter.note(t("wizard.guided.alreadySetUp"), t("wizard.guided.welcomeTitle"));
     if (workspaceConflict) {
@@ -442,14 +445,30 @@ async function runGuidedOnboardingFlow(
     const { ensureOnboardingAgent } = await import("./onboard-agent.js");
     // Only fresh-file creation is a side effect here. Pre-roster authored persistence
     // remains doctor-owned; the injected main roster is intentionally not flattened.
-    await ensureOnboardingAgent({ config: existingConfig, workspace, baseConfig: existingConfig });
+    const onboardingAgent = await ensureOnboardingAgent({
+      config: existingConfig,
+      workspace,
+      baseConfig: existingConfig,
+      agentId: opts.agent,
+      runtime,
+    });
+    const selectedAgentExists = listAgentEntries(onboardingAgent.config).some(
+      (entry) => normalizeAgentId(entry.id) === onboardingAgent.agentId,
+    );
+    if (!opts.workspace?.trim() && selectedAgentExists) {
+      appliedWorkspace = resolveOnboardingAgentTarget(
+        onboardingAgent.config,
+        onboardingAgent.agentId,
+      ).workspaceDir;
+    }
     const applySetup =
       deps.applySetup ?? (await import("../system-agent/setup-apply.js")).applySystemAgentSetup;
     const applyProgress = prompter.progress(t("wizard.guided.settingUp"));
     try {
       const applied = await withConsoleSubsystemsSuppressed(() =>
         applySetup({
-          workspace,
+          workspace: appliedWorkspace,
+          targetAgentId: onboardingAgent.agentId,
           ...(allowWorkspaceChange ? { allowWorkspaceChange: true } : {}),
           surface: "cli",
           runtime,
@@ -472,7 +491,7 @@ async function runGuidedOnboardingFlow(
         }),
         t("wizard.guided.aiAccessTitle"),
       );
-      return { workspace, next: "chat" };
+      return { workspace: appliedWorkspace, next: "chat" };
     }
   }
   if (wantsDiscovery) {
@@ -483,7 +502,7 @@ async function runGuidedOnboardingFlow(
       config: persistedConfig,
       prompter,
       runtime,
-      workspaceDir: workspace,
+      workspaceDir: appliedWorkspace,
       modelRouteVerified: true,
     });
     const recommendedConfig = recommendationOutcome.config;

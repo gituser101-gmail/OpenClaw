@@ -21,8 +21,7 @@ import {
   listAgentIds,
   resolveAgentDir,
   resolveAgentWorkspaceDir,
-  resolveDefaultAgentDir,
-  resolveDefaultAgentId,
+  tryResolveSoleAgentId,
 } from "./agent-scope.js";
 import {
   buildInlineProviderModels,
@@ -33,6 +32,7 @@ import {
   loadBundledProviderStaticCatalogContextModels,
 } from "./embedded-agent-runner/model.static-catalog.js";
 import { staticModelIdMatches } from "./embedded-agent-runner/model.static-id.js";
+import { resolveLegacyInheritedAuthDir } from "./legacy-inherited-auth-dir.js";
 import { buildPreparedModelCatalogSnapshot, type ModelCatalogEntry } from "./model-catalog.js";
 import type { ModelCatalogSnapshot } from "./model-catalog.types.js";
 import { ensureOpenClawModelsJson } from "./models-config.js";
@@ -241,7 +241,7 @@ export function normalizePreparedModelRuntimeInput(
     ...rest
   } = input;
   const inheritedAuthDir = normalizeOptionalDir(
-    input.inheritedAuthDir ?? resolveDefaultAgentDir(input.config, input.env),
+    input.inheritedAuthDir ?? resolveLegacyInheritedAuthDir(input.config, input.env),
   );
   const workspaceDir = normalizeOptionalDir(input.workspaceDir);
   const env = input.env ? Object.freeze({ ...input.env }) : undefined;
@@ -444,13 +444,14 @@ export function listConfiguredOwnerInputs(
   config: OpenClawConfig,
   defaultWorkspaceDir?: string,
 ): PreparedModelRuntimeInput[] {
-  const inheritedAuthDir = resolveDefaultAgentDir(config);
-  const defaultAgentId = resolveDefaultAgentId(config);
+  const soleAgentId = tryResolveSoleAgentId(config);
+  const inheritedAuthDir = resolveLegacyInheritedAuthDir(config);
   return listAgentIds(config).map((agentId) => {
-    const preserveWorkspaceDirOnRefresh = agentId === defaultAgentId && defaultWorkspaceDir;
+    const agentDir = resolveAgentDir(config, agentId);
+    const preserveWorkspaceDirOnRefresh = agentId === soleAgentId && defaultWorkspaceDir;
     const input: PreparedModelRuntimeInput = {
       agentId,
-      agentDir: resolveAgentDir(config, agentId),
+      agentDir,
       config,
       inheritedAuthDir,
       workspaceDir: preserveWorkspaceDirOnRefresh

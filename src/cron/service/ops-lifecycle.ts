@@ -1,7 +1,23 @@
+import path from "node:path";
+import { listAgentIds } from "../../agents/agent-scope-config.js";
+import { tryGetLegacyDefaultAgentId } from "../../config/legacy.default-agent-owner.js";
+import type { OpenClawConfig } from "../../config/types.openclaw.js";
+import { normalizeAgentId } from "../../routing/session-key.js";
+import {
+  completeLegacyDefaultCronOwnerHandoff,
+  readRetainedLegacyDefaultCronOwnerForStore,
+  retainLegacyDefaultCronOwnerHandoffForStore,
+} from "../legacy-default-agent-owner-handoff.js";
+import { materializeLegacyDefaultCronJobOwners } from "../legacy-default-agent-owner-migration.js";
+import { resolveCronJobsStorePathFromConfig } from "../store.js";
+import { materializeCronJobsStoreOwners } from "../store/owner-migration.js";
+import type { CronJob } from "../types.js";
 import { failureNotificationDeliveryFromJobState } from "./failure-alerts.js";
 import { nextWakeAtMs, recomputeNextRunsForMaintenance } from "./jobs.js";
-import { locked } from "./locked.js";
+import { acquireCronOperationLock, locked } from "./locked.js";
 import { emitCronRunFinished } from "./ops-run-preparation.js";
+import { resolveCurrentDefaultAgentId } from "./ops-shared.js";
+import { prepareReloadedCronJobsForScheduling } from "./reload-scheduling.js";
 import { cancelCronRunAdmissionWaiters } from "./run-admission.js";
 import {
   type InterruptedStartupRun,
@@ -13,6 +29,188 @@ import type { CronServiceState } from "./state.js";
 import { ensureLoaded, persist } from "./store.js";
 import { tryFindCronTaskRunIdForRecovery, tryFindFinalizedCronTaskRun } from "./task-runs.js";
 import { armTimer, runMissedJobs, stopTimer } from "./timer.js";
+
+async function materializeLoadedLegacyDefaultAgentOwners(
+  state: CronServiceState,
+  legacyDefaultAgentId: string,
+) {
+  const jobs = state.store?.jobs ?? [];
+  return await materializeLegacyDefaultCronJobOwners({
+    storePath: state.deps.storePath,
+    legacyDefaultAgentId,
+    records: jobs as unknown as Array<Record<string, unknown>>,
+    persistRecords: async (records) => {
+      let candidateRecords = records;
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        const expectedStoreEpoch = state.storeEpoch;
+        const persisted = await materializeCronJobsStoreOwners({
+          storePath: state.deps.storePath,
+          legacyDefaultAgentId,
+          records: candidateRecords as unknown as CronJob[],
+          legacyImportedJobIds: state.legacyImportedJobIds,
+          expectedStoreEpoch,
+          env: state.deps.env,
+        });
+        if (persisted.matched) {
+          for (const record of candidateRecords) {
+            if (typeof record.id === "string") {
+              state.legacyImportedJobIds.delete(record.id);
+            }
+          }
+          return persisted.rewritten;
+        }
+        if (attempt === 1) {
+          throw new Error("cron store changed during legacy owner migration twice; retry startup");
+        }
+        await ensureLoaded(state, { forceReload: true, skipRecompute: true });
+        candidateRecords = (state.store?.jobs ?? []) as unknown as Array<Record<string, unknown>>;
+      }
+      return 0;
+    },
+  });
+}
+
+/** Locks mutations after materializing the loaded store until the topology commit settles. */
+export async function beginLegacyDefaultAgentOwnerHandoff(
+  state: CronServiceState,
+  legacyDefaultAgentId: string,
+) {
+  const release = await acquireCronOperationLock(state);
+  try {
+    await ensureLoaded(state, { skipRecompute: true });
+    const migration = await materializeLoadedLegacyDefaultAgentOwners(state, legacyDefaultAgentId);
+    await refreshLegacyDefaultAgentOwnerHandoff(state);
+    return { migration, release };
+  } catch (error) {
+    release();
+    throw error;
+  }
+}
+
+/** Reloads one sealed service and schedules only jobs newly imported during the handoff. */
+export async function refreshLegacyDefaultAgentOwnerHandoff(
+  state: CronServiceState,
+  options?: {
+    persistSchedulingState?: boolean;
+  },
+) {
+  await ensureLoaded(state, { forceReload: true, skipRecompute: true });
+  const scheduledNewJob = prepareReloadedCronJobsForScheduling(state);
+  if (scheduledNewJob && options?.persistSchedulingState !== false) {
+    await persist(state, { stateOnly: true });
+  }
+  armTimer(state);
+}
+
+/** Replaces stale in-memory rows before a Gateway publishes new agent resolution. */
+export async function reloadForConfigAdoption(
+  state: CronServiceState,
+  incomingConfig: OpenClawConfig,
+) {
+  const release = await acquireCronOperationLock(state);
+  try {
+    state.pendingConfigAdoption = {
+      legacyDefaultAgentId: state.deps.legacyDefaultAgentId,
+    };
+    await ensureLoaded(state, { skipRecompute: true });
+    const incomingStorePath = resolveCronJobsStorePathFromConfig(incomingConfig, state.deps.env);
+    const currentRetainedOwner = readRetainedLegacyDefaultCronOwnerForStore(
+      state.deps.storePath,
+      state.deps.env,
+    );
+    const incomingRetainedOwner =
+      path.resolve(incomingStorePath) === path.resolve(state.deps.storePath)
+        ? currentRetainedOwner
+        : readRetainedLegacyDefaultCronOwnerForStore(incomingStorePath, state.deps.env);
+    const runtimeLegacyOwner =
+      state.deps.legacyDefaultAgentId ?? resolveCurrentDefaultAgentId(state);
+    const currentStoreOwner = currentRetainedOwner ?? runtimeLegacyOwner;
+    const incomingStoreOwner = incomingRetainedOwner ?? runtimeLegacyOwner;
+    const incomingAgentIds = new Set(listAgentIds(incomingConfig).map(normalizeAgentId));
+    if (currentStoreOwner && incomingAgentIds.has(normalizeAgentId(currentStoreOwner))) {
+      if (!currentRetainedOwner) {
+        retainLegacyDefaultCronOwnerHandoffForStore(
+          state.deps.storePath,
+          currentStoreOwner,
+          state.deps.env,
+        );
+      }
+      const migration = await materializeLoadedLegacyDefaultAgentOwners(state, currentStoreOwner);
+      if (migration.warnings.length > 0) {
+        throw new Error(migration.warnings.join("\n"));
+      }
+      if (
+        !currentRetainedOwner ||
+        normalizeAgentId(currentRetainedOwner) === normalizeAgentId(currentStoreOwner)
+      ) {
+        completeLegacyDefaultCronOwnerHandoff(
+          state.deps.storePath,
+          currentStoreOwner,
+          state.deps.env,
+        );
+      }
+    }
+    if (
+      path.resolve(incomingStorePath) !== path.resolve(state.deps.storePath) &&
+      incomingStoreOwner &&
+      incomingAgentIds.has(normalizeAgentId(incomingStoreOwner))
+    ) {
+      if (!incomingRetainedOwner) {
+        retainLegacyDefaultCronOwnerHandoffForStore(
+          incomingStorePath,
+          incomingStoreOwner,
+          state.deps.env,
+        );
+      }
+      const { materializeLegacyDefaultCronJobOwners: repairLegacyDefaultCronJobOwners } =
+        await import("../../commands/doctor/cron/legacy-repair.js");
+      const incomingMigration = await repairLegacyDefaultCronJobOwners({
+        cfg: incomingConfig,
+        storePath: incomingStorePath,
+        legacyDefaultAgentId: incomingStoreOwner,
+        env: state.deps.env,
+      });
+      if (incomingMigration.warnings.length > 0) {
+        throw new Error(incomingMigration.warnings.join("\n"));
+      }
+      if (
+        !incomingRetainedOwner ||
+        normalizeAgentId(incomingRetainedOwner) === normalizeAgentId(incomingStoreOwner)
+      ) {
+        completeLegacyDefaultCronOwnerHandoff(
+          incomingStorePath,
+          incomingStoreOwner,
+          state.deps.env,
+        );
+      }
+    }
+    await refreshLegacyDefaultAgentOwnerHandoff(state);
+  } finally {
+    release();
+  }
+}
+
+/** Publishes the retained owner from the config only after the caller adopts it. */
+export function completeConfigAdoption(state: CronServiceState, incomingConfig: OpenClawConfig) {
+  state.deps.legacyDefaultAgentId = tryGetLegacyDefaultAgentId(incomingConfig);
+  state.pendingConfigAdoption = undefined;
+}
+
+/** Restores the durable scheduler snapshot after a config candidate is rejected. */
+export async function rejectConfigAdoption(state: CronServiceState) {
+  const pending = state.pendingConfigAdoption;
+  if (!pending) {
+    return;
+  }
+  const release = await acquireCronOperationLock(state);
+  try {
+    state.deps.legacyDefaultAgentId = pending.legacyDefaultAgentId;
+    await refreshLegacyDefaultAgentOwnerHandoff(state);
+    state.pendingConfigAdoption = undefined;
+  } finally {
+    release();
+  }
+}
 
 /** Starts the cron service, recovers interrupted runs, catches up missed jobs, and arms the timer. */
 export async function start(state: CronServiceState) {
@@ -28,6 +226,39 @@ export async function start(state: CronServiceState) {
   let repairedAnyStartupRun = false;
   await locked(state, async () => {
     await ensureLoaded(state, { skipRecompute: true });
+    const retainedStoreOwner = readRetainedLegacyDefaultCronOwnerForStore(
+      state.deps.storePath,
+      state.deps.env,
+    );
+    const legacyDefaultAgentId = retainedStoreOwner ?? state.deps.legacyDefaultAgentId;
+    // A removed/renamed owner is not a valid historical replacement: leave rows
+    // ownerless and keep the receipt pending until a later roster can adopt it safely.
+    const legacyOwnerEligible =
+      legacyDefaultAgentId !== undefined &&
+      state.deps.isAgentAvailable?.(normalizeAgentId(legacyDefaultAgentId)) !== false;
+    if (legacyDefaultAgentId && legacyOwnerEligible) {
+      const migration = await materializeLoadedLegacyDefaultAgentOwners(
+        state,
+        legacyDefaultAgentId,
+      );
+      if (migration.warnings.length > 0) {
+        throw new Error(migration.warnings.join("\n"));
+      }
+      for (const change of migration.changes) {
+        state.deps.log.info({ storePath: state.deps.storePath }, `cron: ${change}`);
+      }
+      await ensureLoaded(state, { forceReload: true, skipRecompute: true });
+      if (
+        retainedStoreOwner &&
+        normalizeAgentId(retainedStoreOwner) === normalizeAgentId(legacyDefaultAgentId)
+      ) {
+        completeLegacyDefaultCronOwnerHandoff(
+          state.deps.storePath,
+          retainedStoreOwner,
+          state.deps.env,
+        );
+      }
+    }
     if (state.stopped) {
       return;
     }

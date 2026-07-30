@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { defaultRuntime } from "../runtime.js";
 
 const mocks = vi.hoisted(() => ({
   createAgent: vi.fn(),
@@ -25,19 +26,19 @@ describe("onboarding main-agent creation", () => {
       .mockResolvedValueOnce({
         exists: false,
         valid: true,
-        sourceConfig: { agents: { list: [{ id: "main", default: true }] }, gateway: {} },
-        config: { agents: { list: [{ id: "main", default: true }] }, gateway: {} },
+        sourceConfig: { agents: { entries: { main: {} } }, gateway: {} },
+        config: { agents: { entries: { main: {} } }, gateway: {} },
       })
       .mockResolvedValueOnce({
         exists: true,
         valid: true,
         hash: "hash-after-create",
         sourceConfig: {
-          agents: { list: [{ id: "main", default: true }] },
+          agents: { entries: { main: {} } },
           gateway: { controlUi: { enabled: true } },
         },
         config: {
-          agents: { list: [{ id: "main", default: true }] },
+          agents: { entries: { main: {} } },
           gateway: { controlUi: { enabled: true } },
         },
       });
@@ -54,7 +55,7 @@ describe("onboarding main-agent creation", () => {
 
     expect(mocks.createAgent).toHaveBeenCalledWith(
       expect.objectContaining({
-        entry: expect.objectContaining({ id: "main", default: true }),
+        entry: expect.objectContaining({ id: "main" }),
       }),
     );
     expect(result).toMatchObject({
@@ -62,7 +63,7 @@ describe("onboarding main-agent creation", () => {
       config: {
         agents: {
           defaults: { model: "openai/gpt-5.5" },
-          entries: { main: { default: true } },
+          entries: { main: {} },
         },
         gateway: { mode: "local", controlUi: { enabled: true } },
       },
@@ -105,5 +106,60 @@ describe("onboarding main-agent creation", () => {
 
     expect(result.configHash).toBeUndefined();
     expect(mocks.createAgent).not.toHaveBeenCalled();
+  });
+
+  it("accepts an explicit agent for a preserved multi-agent roster", async () => {
+    const result = await ensureOnboardingAgent({
+      config: { agents: { entries: { ops: {}, research: {} } } },
+      workspace: "/tmp/work",
+      preserveCandidateRoster: true,
+      agentId: "research",
+      runtime: defaultRuntime,
+      selectionDeps: { interactive: false },
+    });
+
+    expect(result.agentId).toBe("research");
+    expect(result.config.agents?.ownership).toBe("explicit");
+  });
+
+  it("prompts for a preserved multi-agent roster in interactive mode", async () => {
+    const selectAgent = vi.fn(async () => "research");
+    const result = await ensureOnboardingAgent({
+      config: {
+        agents: {
+          entries: { ops: { name: "Operations" }, research: { name: "Research" } },
+        },
+      },
+      workspace: "/tmp/work",
+      preserveCandidateRoster: true,
+      runtime: defaultRuntime,
+      selectionDeps: { interactive: true, selectAgent },
+    });
+
+    expect(result.agentId).toBe("research");
+    expect(selectAgent).toHaveBeenCalledWith({
+      message: "Select an agent for onboarding",
+      options: [
+        { value: "ops", label: "Operations (ops)" },
+        { value: "research", label: "Research (research)" },
+      ],
+    });
+  });
+
+  it("fails non-interactive multi-agent onboarding with an actionable typed error", async () => {
+    await expect(
+      ensureOnboardingAgent({
+        config: { agents: { entries: { ops: {}, research: {} } } },
+        workspace: "/tmp/work",
+        preserveCandidateRoster: true,
+        runtime: defaultRuntime,
+        selectionDeps: { interactive: false },
+      }),
+    ).rejects.toMatchObject({
+      name: "AgentSelectionRequiredError",
+      code: "AGENT_SELECTION_REQUIRED",
+      surface: "onboarding",
+      hint: expect.stringContaining("--agent <id>"),
+    });
   });
 });

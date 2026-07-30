@@ -5,6 +5,8 @@ import { getInvalidPersistedCronJobReason } from "../persisted-shape.js";
 import { cronSchedulingInputsEqual } from "../schedule-identity.js";
 import { isInvalidCronSessionTargetIdError } from "../session-target.js";
 import {
+  CronRuntimeRevisionMismatchError,
+  CronStoreEpochMismatchError,
   loadCronJobsStoreWithConfigJobs,
   saveCronQuarantineFile,
   saveCronJobsStore,
@@ -12,6 +14,7 @@ import {
 } from "../store.js";
 import type { CronJob, CronStoreFile } from "../types.js";
 import { recomputeNextRuns } from "./jobs.js";
+import { prepareReloadedCronJobsForScheduling } from "./reload-scheduling.js";
 import { emit, type CronServiceState } from "./state.js";
 
 type PersistOptions = {
@@ -21,8 +24,15 @@ type PersistOptions = {
 
 export type CronRollbackSnapshot = {
   store: CronStoreFile | null;
+  storeEpoch: number;
+  runtimeRevision: number;
   durableNextRunAtMsByJobId: Map<string, number | undefined>;
+  durableRuntimeStateByJobId: Map<string, CronJob["state"]>;
 };
+
+function snapshotRuntimeStateByJobId(jobs: CronJob[]): Map<string, CronJob["state"]> {
+  return new Map(jobs.map((job) => [job.id, structuredClone(job.state ?? {})]));
+}
 
 function durableNextRunsFromJobs(jobs: readonly CronJob[]) {
   return new Map(jobs.map((job) => [job.id, job.state.nextRunAtMs] as const));
@@ -164,12 +174,14 @@ export async function ensureLoaded(
   for (const job of state.store?.jobs ?? []) {
     previousJobsById.set(job.id, job);
   }
-  const loaded = await loadCronJobsStoreWithConfigJobs(state.deps.storePath);
+  const loaded = await loadCronJobsStoreWithConfigJobs(state.deps.storePath, state.deps.env);
   // Persisted cron rows are validated lazily, so treat them as raw records at the
   // store boundary and only trust the CronJob shape after validation below.
   const loadedJobs = (loaded.store.jobs ?? []) as unknown as Record<string, unknown>[];
   const jobs: CronJob[] = [];
+  const legacyImportedJobIds = new Set<string>();
   const durableNextRunAtMsByJobId = new Map<string, number | undefined>();
+  const durableRuntimeStateByJobId = new Map<string, CronJob["state"]>();
   const quarantinedConfigJobs: QuarantinedCronConfigJob[] = [...loaded.invalidConfigRows];
   for (const [index, raw] of loadedJobs.entries()) {
     const rawConfigJob = loaded.configJobs[index] ?? structuredClone(raw);
@@ -219,16 +231,24 @@ export async function ensureLoaded(
     // Validated above, so the raw record is now a trusted CronJob.
     const hydrated = hydratedRaw as unknown as CronJob;
     jobs.push(hydrated);
+    if (loaded.legacyImportedJobIndexes.includes(index)) {
+      legacyImportedJobIds.add(hydrated.id);
+    }
     // Capture the value SQLite actually held before schedule-identity repair
     // mutates the runtime view. A later save can then publish that transition.
     durableNextRunAtMsByJobId.set(hydrated.id, hydrated.state.nextRunAtMs);
+    durableRuntimeStateByJobId.set(hydrated.id, structuredClone(hydrated.state ?? {}));
     invalidateStaleNextRunOnScheduleChange({ previousJobsById, hydrated });
   }
   state.store = {
     version: 1,
     jobs,
   };
+  state.storeEpoch = loaded.storeEpoch;
+  state.runtimeRevision = loaded.runtimeRevision;
+  state.legacyImportedJobIds = legacyImportedJobIds;
   state.durableNextRunAtMsByJobId = durableNextRunAtMsByJobId;
+  state.durableRuntimeStateByJobId = durableRuntimeStateByJobId;
   state.storeLoadedAtMs = state.deps.nowMs();
 
   if (quarantinedConfigJobs.length > 0) {
@@ -292,10 +312,74 @@ export async function persist(state: CronServiceState, opts?: PersistOptions) {
     flushedPendingQuarantine = true;
   }
   const stateOnly = !flushedPendingQuarantine && opts?.stateOnly === true;
-  await saveCronJobsStore(state.deps.storePath, store, stateOnly ? { stateOnly: true } : undefined);
+  let persistedStore = store;
+  try {
+    const committed = await saveCronJobsStore(
+      state.deps.storePath,
+      store,
+      stateOnly
+        ? {
+            stateOnly: true,
+            expectedStoreEpoch: state.storeEpoch,
+            expectedRuntimeRevision: state.runtimeRevision,
+            expectedRuntimeStateByJobId: state.durableRuntimeStateByJobId,
+            env: state.deps.env,
+          }
+        : {
+            expectedStoreEpoch: state.storeEpoch,
+            expectedRuntimeRevision: state.runtimeRevision,
+            expectedRuntimeStateByJobId: state.durableRuntimeStateByJobId,
+            env: state.deps.env,
+          },
+    );
+    if (committed) {
+      state.storeEpoch = committed.storeEpoch;
+      state.runtimeRevision = committed.runtimeRevision;
+      if (committed.runtimeMerged) {
+        state.store = committed.store;
+        persistedStore = committed.store;
+      }
+      state.durableRuntimeStateByJobId = snapshotRuntimeStateByJobId(committed.store.jobs);
+    }
+  } catch (error) {
+    if (
+      error instanceof CronStoreEpochMismatchError ||
+      error instanceof CronRuntimeRevisionMismatchError
+    ) {
+      // Another process changed ownership/topology. Refuse this stale snapshot
+      // and publish the durable replacement to the scheduler before returning.
+      try {
+        await ensureLoaded(state, { forceReload: true, skipRecompute: true });
+        prepareReloadedCronJobsForScheduling(state);
+        // Keep this rare recovery edge lazy: timer-scheduler imports this store,
+        // so an eager import here would create a module-initialization cycle.
+        const { armTimerAfterStoreReload } = await import("./timer-arm.runtime.js");
+        armTimerAfterStoreReload(state);
+      } catch (reloadError) {
+        // Preserve the mismatch classification so persistOrRestore cannot put
+        // the stale snapshot back. The next operation must load from SQLite.
+        state.store = null;
+        if (error instanceof CronStoreEpochMismatchError) {
+          state.storeEpoch = error.actualEpoch;
+        } else {
+          state.runtimeRevision = error.actualRevision;
+        }
+        state.durableNextRunAtMsByJobId = new Map();
+        state.durableRuntimeStateByJobId = new Map();
+        state.deps.log.warn(
+          {
+            storePath: state.deps.storePath,
+            error: reloadError instanceof Error ? reloadError.message : String(reloadError),
+          },
+          "cron: stale store write refused, but reloading the newer epoch failed",
+        );
+      }
+    }
+    throw error;
+  }
   publishDurableNextRunChanges({
     state,
-    storeJobs: store.jobs,
+    storeJobs: persistedStore.jobs,
     stateOnly,
     suppressScheduledJobId: opts?.suppressScheduledJobId,
   });
@@ -306,7 +390,15 @@ export async function persist(state: CronServiceState, opts?: PersistOptions) {
 export function snapshotStoreForRollback(state: CronServiceState): CronRollbackSnapshot {
   return {
     store: state.store ? structuredClone(state.store) : null,
+    storeEpoch: state.storeEpoch,
+    runtimeRevision: state.runtimeRevision,
     durableNextRunAtMsByJobId: new Map(state.durableNextRunAtMsByJobId),
+    durableRuntimeStateByJobId: new Map(
+      [...state.durableRuntimeStateByJobId].map(([jobId, runtimeState]) => [
+        jobId,
+        structuredClone(runtimeState),
+      ]),
+    ),
   };
 }
 
@@ -331,8 +423,16 @@ export async function persistOrRestore(
       throw new Error("cron: durable store write did not complete");
     }
   } catch (err) {
-    state.store = snapshot.store;
-    state.durableNextRunAtMsByJobId = snapshot.durableNextRunAtMsByJobId;
+    if (
+      !(err instanceof CronStoreEpochMismatchError) &&
+      !(err instanceof CronRuntimeRevisionMismatchError)
+    ) {
+      state.store = snapshot.store;
+      state.storeEpoch = snapshot.storeEpoch;
+      state.runtimeRevision = snapshot.runtimeRevision;
+      state.durableNextRunAtMsByJobId = snapshot.durableNextRunAtMsByJobId;
+      state.durableRuntimeStateByJobId = snapshot.durableRuntimeStateByJobId;
+    }
     throw err;
   }
   for (const notify of opts.postPersistAutoDisableNotifications ?? []) {

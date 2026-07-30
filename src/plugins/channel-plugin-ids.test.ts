@@ -517,7 +517,7 @@ describe("resolveGatewayStartupPluginIds", () => {
       .mockImplementation((config: OpenClawConfig) => {
         return listPotentialConfiguredChannelIds(config).map((channelId: string) => ({
           channelId,
-          source: "config",
+          source: "env",
         }));
       });
     useManifestRegistryFixture();
@@ -1819,7 +1819,7 @@ describe("resolveGatewayStartupPluginIds", () => {
       env: createPluginPlanningTestEnv({
         DEMO_CHANNEL_ANYTHING: "1",
       }),
-      expected: ["demo-channel", "browser", "memory-core"],
+      expected: ["browser", "memory-core"],
     });
     expect(
       resolveConfiguredDeferredChannelPluginIdsForFixture({
@@ -2392,13 +2392,16 @@ describe("resolveGatewayStartupPluginIds", () => {
     });
   });
 
-  it("does not treat persisted auth alone as gateway startup intent", () => {
-    listPotentialConfiguredChannelIds.mockImplementation(
+  it("does not reactivate a removed channel from persisted auth alone", () => {
+    listPotentialConfiguredChannelPresenceSignals.mockImplementation(
       (
-        configForTest: OpenClawConfig,
+        _configForTest: OpenClawConfig,
         _env: NodeJS.ProcessEnv,
         options?: { includePersistedAuthState?: boolean },
-      ) => (options?.includePersistedAuthState === false ? [] : ["demo-channel"]),
+      ) =>
+        options?.includePersistedAuthState === false
+          ? []
+          : [{ channelId: "demo-channel", source: "persisted-auth" }],
     );
 
     expectStartupPluginIds({
@@ -2410,14 +2413,17 @@ describe("resolveGatewayStartupPluginIds", () => {
     });
   });
 
-  it("does not treat persisted auth alone as deferred channel startup intent", () => {
+  it("does not defer-start a trusted owner from persisted auth alone", () => {
     useManifestRegistryFixture(createManifestRegistryFixtureWithWorkspaceDemoChannel());
-    listPotentialConfiguredChannelIds.mockImplementation(
+    listPotentialConfiguredChannelPresenceSignals.mockImplementation(
       (
-        configForTest: OpenClawConfig,
+        _configForTest: OpenClawConfig,
         _env: NodeJS.ProcessEnv,
         options?: { includePersistedAuthState?: boolean },
-      ) => (options?.includePersistedAuthState === false ? [] : ["demo-channel"]),
+      ) =>
+        options?.includePersistedAuthState === false
+          ? []
+          : [{ channelId: "demo-channel", source: "persisted-auth" }],
     );
 
     expect(

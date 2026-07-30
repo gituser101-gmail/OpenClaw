@@ -1,7 +1,7 @@
 // Resolves channel presence policy advertised by plugin metadata.
 import { normalizeOptionalLowercaseString } from "@openclaw/normalization-core/string-coerce";
 import { sortUniqueStrings } from "@openclaw/normalization-core/string-normalization";
-import { resolveAgentWorkspaceDir, resolveDefaultAgentId } from "../agents/agent-scope.js";
+import { tryResolveConfiguredAgentWorkspaceDir } from "../agents/agent-scope-config.js";
 import {
   hasMeaningfulChannelConfig,
   listExplicitlyDisabledChannelIdsForConfig,
@@ -360,8 +360,7 @@ export function resolveConfiguredChannelPresencePolicy(params: {
 }): ConfiguredChannelPresencePolicyEntry[] {
   const env = params.env ?? process.env;
   const workspaceDir =
-    params.workspaceDir ??
-    resolveAgentWorkspaceDir(params.config, resolveDefaultAgentId(params.config));
+    params.workspaceDir ?? tryResolveConfiguredAgentWorkspaceDir(params.config, env);
   const records =
     params.manifestRecords ??
     loadInstalledChannelManifestRecords({
@@ -445,6 +444,50 @@ export function resolveConfiguredChannelPresencePolicy(params: {
     });
   }
   return entries;
+}
+
+function listChannelIdsForGatewayPolicy(
+  params: Omit<
+    Parameters<typeof resolveConfiguredChannelPresencePolicy>[0],
+    "includePersistedAuthState"
+  >,
+  includePersistedAuthState: boolean,
+): string[] {
+  return resolveConfiguredChannelPresencePolicy({
+    ...params,
+    includePersistedAuthState,
+  })
+    .filter(
+      (entry) =>
+        entry.effective ||
+        // Ambient credentials are the activation signal that promotes a bundled
+        // disabled-by-default owner; keep startup and ownership migration aligned.
+        (entry.blockedReasons.length > 0 &&
+          entry.blockedReasons.every((reason) => reason === "bundled-disabled-by-default")),
+    )
+    .map((entry) => entry.channelId);
+}
+
+/** Lists channels the Gateway activation policy considers effective. */
+export function listGatewayActivatedChannelIds(
+  params: Omit<
+    Parameters<typeof resolveConfiguredChannelPresencePolicy>[0],
+    "includePersistedAuthState"
+  >,
+): string[] {
+  // Credentials left on disk are migration evidence, not current consent to
+  // reconnect a channel after its config or enablement signal was removed.
+  return listChannelIdsForGatewayPolicy(params, false);
+}
+
+/** Lists current and persisted channel ownership that an upgrade must preserve. */
+export function listChannelIdsForOwnershipMigration(
+  params: Omit<
+    Parameters<typeof resolveConfiguredChannelPresencePolicy>[0],
+    "includePersistedAuthState"
+  >,
+): string[] {
+  return listChannelIdsForGatewayPolicy(params, true);
 }
 
 /** Lists channels that suppression removes because their only presence is ambient env. */

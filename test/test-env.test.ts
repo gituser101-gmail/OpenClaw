@@ -3,6 +3,13 @@ import fs from "node:fs";
 import path from "node:path";
 import { importFreshModule } from "openclaw/plugin-sdk/test-fixtures";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  inspectPersistedAuthProfileStateRaw,
+  inspectPersistedAuthProfileStoreRaw,
+  runAuthProfileWriteTransaction,
+  writePersistedAuthProfileStateRaw,
+  writePersistedAuthProfileStoreRaw,
+} from "../src/agents/auth-profiles/sqlite.js";
 import { deleteTestEnvValue, setTestEnvValue } from "../src/test-utils/env.js";
 import { cleanupTempDirs, makeTempDir } from "./helpers/temp-dir.js";
 import { installTestEnv } from "./test-env.js";
@@ -121,9 +128,33 @@ describe("installTestEnv", () => {
       path.join(openClawHome, ".openclaw", "external-plugins", "glueclaw", "openclaw.plugin.json"),
       '{"id":"glueclaw"}\n',
     );
-    writeFile(
-      path.join(openClawHome, ".openclaw", "agents", "main", "agent", "auth-profiles.json"),
-      JSON.stringify({ version: 1, profiles: { default: { provider: "openai" } } }, null, 2),
+    const realStateDir = path.join(openClawHome, ".openclaw");
+    const realAgentDir = path.join(realStateDir, "agents", "main", "agent");
+    const liveAuthStore = {
+      version: 1,
+      profiles: {
+        "openai:api-key": {
+          type: "api_key",
+          provider: "openai",
+          keyRef: {
+            source: "env",
+            provider: "default",
+            id: "OPENCLAW_LIVE_OPENAI_KEY",
+          },
+        },
+      },
+    };
+    const liveAuthState = {
+      version: 1,
+      order: { openai: ["openai:api-key"] },
+    };
+    runAuthProfileWriteTransaction(
+      realAgentDir,
+      (database) => {
+        writePersistedAuthProfileStoreRaw(liveAuthStore, realAgentDir, database);
+        writePersistedAuthProfileStateRaw(liveAuthState, realAgentDir, database);
+      },
+      { stateDir: realStateDir },
     );
     writeFile(path.join(realHome, ".claude", ".credentials.json"), '{"accessToken":"token"}\n');
     writeFile(path.join(realHome, ".claude", "projects", "old-session.jsonl"), "session\n");
@@ -232,11 +263,16 @@ describe("installTestEnv", () => {
         ),
       ),
     ).toBe(true);
-    expect(
-      fs.existsSync(
-        path.join(testEnv.tempHome, ".openclaw", "agents", "main", "agent", "auth-profiles.json"),
-      ),
-    ).toBe(true);
+    const stagedAgentDir = path.join(testEnv.tempHome, ".openclaw", "agents", "main", "agent");
+    expect(inspectPersistedAuthProfileStoreRaw(stagedAgentDir)).toEqual({
+      status: "readable",
+      raw: liveAuthStore,
+    });
+    expect(inspectPersistedAuthProfileStateRaw(stagedAgentDir)).toEqual({
+      status: "readable",
+      raw: liveAuthState,
+    });
+    expect(fs.existsSync(path.join(stagedAgentDir, "auth-profiles.json"))).toBe(false);
     expect(fs.existsSync(path.join(testEnv.tempHome, ".claude", ".credentials.json"))).toBe(true);
     expect(fs.existsSync(path.join(testEnv.tempHome, ".claude", "projects"))).toBe(false);
     expect(fs.existsSync(path.join(testEnv.tempHome, ".claude", "settings.local.json"))).toBe(
@@ -322,6 +358,49 @@ describe("installTestEnv", () => {
     expect(
       fs.existsSync(path.join(testEnv.tempHome, ".openclaw", "credentials", "token.txt")),
     ).toBe(false);
+  });
+
+  it("does not load SQLite auth state for hermetic test workers", async () => {
+    const sqliteModuleId = "../src/agents/auth-profiles/sqlite.js";
+    const sqliteSourceModuleId = "../src/agents/auth-profiles/sqlite.ts";
+    const attemptedStaticSqliteLoads = vi.fn();
+    const attemptedRequiredSqliteLoads = vi.fn();
+    vi.doMock(sqliteModuleId, () => {
+      attemptedStaticSqliteLoads();
+      throw new Error("hermetic test setup must not import SQLite auth state");
+    });
+    vi.doMock("node:module", async (importOriginal) => {
+      const actual = await importOriginal<typeof import("node:module")>();
+      return {
+        ...actual,
+        createRequire: (source: string | URL) => {
+          const realRequire = actual.createRequire(source);
+          const guardedRequire = (moduleId: string) => {
+            if (moduleId === sqliteModuleId || moduleId === sqliteSourceModuleId) {
+              attemptedRequiredSqliteLoads();
+              throw new Error("hermetic test setup must not require SQLite auth state");
+            }
+            return realRequire(moduleId);
+          };
+          return Object.assign(guardedRequire, realRequire);
+        },
+      };
+    });
+
+    try {
+      const { installTestEnv: installFreshTestEnv } = await importFreshModule<
+        typeof import("./test-env.js")
+      >(import.meta.url, "./test-env.js?scope=hermetic-without-sqlite");
+      const testEnv = installFreshTestEnv({ mode: "hermetic" });
+      cleanupFns.push(testEnv.cleanup);
+
+      expect(process.env.HOME).toBe(testEnv.tempHome);
+      expect(attemptedStaticSqliteLoads).not.toHaveBeenCalled();
+      expect(attemptedRequiredSqliteLoads).not.toHaveBeenCalled();
+    } finally {
+      vi.doUnmock("node:module");
+      vi.doUnmock(sqliteModuleId);
+    }
   });
 
   it("clears and restores OPENCLAW_HOME for normal isolated test runs", () => {

@@ -38,7 +38,10 @@ import {
 import type { SessionEntry } from "../../config/sessions/types.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { isDiagnosticFlagEnabled } from "../../infra/diagnostic-flags.js";
-import { applyModelOverrideToSessionEntry } from "../../sessions/model-overrides.js";
+import {
+  applyModelOverrideToSessionEntry,
+  isModelSelectionLocked,
+} from "../../sessions/model-overrides.js";
 import { createLazyImportLoader } from "../../shared/lazy-promise.js";
 import { normalizeThinkLevel, type ThinkLevel } from "../thinking.shared.js";
 export {
@@ -366,7 +369,10 @@ export async function createModelSelectionState(params: {
     if (overrideTemporarilyUnavailable) {
       resetModelOverrideRef = key;
       resetModelOverrideReason = "temporarily-unavailable";
-    } else if (staleDirectStoredOverride || !overrideAllowed) {
+    } else if (
+      (staleDirectStoredOverride || !overrideAllowed) &&
+      !isModelSelectionLocked(sessionEntry)
+    ) {
       const initialSessionEntry = { ...sessionEntry };
       const nextSessionEntry = { ...sessionEntry };
       const { updated } = applyModelOverrideToSessionEntry({
@@ -466,7 +472,7 @@ export async function createModelSelectionState(params: {
       runtimeModelNormalization,
     );
     const key = modelKey(normalizedStoredOverride.provider, normalizedStoredOverride.model);
-    if (visibilityPolicy.allowsKey(key)) {
+    if (isModelSelectionLocked(sessionEntry) || visibilityPolicy.allowsKey(key)) {
       provider = normalizedStoredOverride.provider;
       model = normalizedStoredOverride.model;
       requestedRouteResolution =
@@ -474,7 +480,11 @@ export async function createModelSelectionState(params: {
     }
   }
 
-  if (!params.hasModelDirective && !hasOneTurnModelOverride) {
+  if (
+    !params.hasModelDirective &&
+    !hasOneTurnModelOverride &&
+    !isModelSelectionLocked(sessionEntry)
+  ) {
     const unresolvedSelectionKey = modelKey(provider, model);
     const allowedInitialSelection = visibilityPolicy.resolveSelection({
       provider,

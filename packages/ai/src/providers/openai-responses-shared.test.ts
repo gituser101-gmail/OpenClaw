@@ -345,6 +345,68 @@ describe("Responses reasoning effort", () => {
     expect(resolveResponsesReasoningEffort(gpt56SolModel, "minimal")).toBe("low");
   });
 
+  it("uses provider-native reasoning effort values declared by the model map", () => {
+    const providerNativeModel = {
+      ...nativeOpenAIModel,
+      id: "qwen/qwen3-32b",
+      name: "Qwen 3 32B",
+      provider: "groq",
+      baseUrl: "https://api.groq.com/openai/v1",
+      thinkingLevelMap: {
+        off: "none",
+        low: "default",
+        medium: "default",
+        high: "default",
+      },
+    } satisfies Model<"openai-responses">;
+
+    const enabled = {} as never;
+    applyCommonResponsesParams(
+      enabled,
+      providerNativeModel,
+      { messages: [] },
+      {
+        reasoningEffort: "medium",
+      },
+    );
+
+    const summaryOnly = {} as never;
+    applyCommonResponsesParams(
+      summaryOnly,
+      providerNativeModel,
+      { messages: [] },
+      {
+        reasoningSummary: "concise",
+      },
+    );
+
+    const disabled = {} as never;
+    applyCommonResponsesParams(disabled, providerNativeModel, { messages: [] });
+
+    expect(enabled).toMatchObject({ reasoning: { effort: "default" } });
+    expect(summaryOnly).toMatchObject({
+      reasoning: { effort: "default" },
+    });
+    expect(disabled).toMatchObject({ reasoning: { effort: "none" } });
+    expect(enabled).not.toHaveProperty("include");
+    expect(summaryOnly).not.toHaveProperty("include");
+    expect(disabled).not.toHaveProperty("include");
+
+    const nativeOpenAI = {} as never;
+    applyCommonResponsesParams(
+      nativeOpenAI,
+      nativeOpenAIModel,
+      { messages: [] },
+      {
+        reasoningEffort: "medium",
+      },
+    );
+    expect(nativeOpenAI).toMatchObject({
+      reasoning: { effort: "medium", summary: "auto" },
+      include: ["reasoning.encrypted_content"],
+    });
+  });
+
   it("keeps max clamped to xhigh for earlier models", () => {
     const gpt55WithXHigh = {
       ...nativeOpenAIModel,

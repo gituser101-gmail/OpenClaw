@@ -548,20 +548,20 @@ describe("sqlite WAL maintenance", () => {
     vi.spyOn(process, "platform", "get").mockReturnValue("linux");
 
     const maintenance = configureSqliteWalMaintenance(db, { checkpointIntervalMs: 100 });
-    // journal_mode=WAL, wal_autocheckpoint, journal_size_limit.
-    expect(db["exec"]).toHaveBeenCalledTimes(3);
+    // journal_mode=WAL, wal_autocheckpoint, journal_size_limit, mmap_size.
+    expect(db["exec"]).toHaveBeenCalledTimes(4);
 
     vi.advanceTimersByTime(100);
     expect(db["prepare"]).toHaveBeenCalledWith("PRAGMA wal_checkpoint(PASSIVE);");
-    expect(db["exec"]).toHaveBeenNthCalledWith(4, "PRAGMA incremental_vacuum(512);");
-    expect(db["exec"]).toHaveBeenCalledTimes(4);
+    expect(db["exec"]).toHaveBeenNthCalledWith(5, "PRAGMA incremental_vacuum(512);");
+    expect(db["exec"]).toHaveBeenCalledTimes(5);
 
     expect(maintenance.close()).toBe(true);
     expect(db["prepare"]).toHaveBeenCalledWith("PRAGMA wal_checkpoint(TRUNCATE);");
-    expect(db["exec"]).toHaveBeenCalledTimes(4);
+    expect(db["exec"]).toHaveBeenCalledTimes(5);
 
     vi.advanceTimersByTime(200);
-    expect(db["exec"]).toHaveBeenCalledTimes(4);
+    expect(db["exec"]).toHaveBeenCalledTimes(5);
   });
 
   it("clamps oversized checkpoint intervals before arming timers", () => {
@@ -590,7 +590,7 @@ describe("sqlite WAL maintenance", () => {
 
     vi.advanceTimersByTime(100);
     expect(db["prepare"]).toHaveBeenCalledWith("PRAGMA wal_checkpoint(FULL);");
-    expect(db["exec"]).toHaveBeenNthCalledWith(4, "PRAGMA incremental_vacuum(512);");
+    expect(db["exec"]).toHaveBeenNthCalledWith(5, "PRAGMA incremental_vacuum(512);");
 
     expect(maintenance.close()).toBe(true);
     expect(db["prepare"]).toHaveBeenLastCalledWith("PRAGMA wal_checkpoint(FULL);");
@@ -769,6 +769,51 @@ describe("sqlite WAL maintenance", () => {
       expect(db["exec"]).toHaveBeenNthCalledWith(1, "PRAGMA busy_timeout = 5000;");
       expect(db["prepare"]).toHaveBeenCalledWith("PRAGMA journal_mode = DELETE;");
       expect(db["exec"]).toHaveBeenNthCalledWith(2, "PRAGMA synchronous = NORMAL;");
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("enables memory-mapped reads on the local-filesystem WAL path", () => {
+    const db = createMockDb();
+    vi.spyOn(process, "platform", "get").mockReturnValue("linux");
+
+    configureSqliteWalMaintenance(db, { checkpointIntervalMs: 0 });
+
+    const sql = vi.mocked(db["exec"]).mock.calls.map(([statement]) => statement);
+    expect(sql).toContain("PRAGMA mmap_size = 67108864;");
+    // Strictly after the journal-mode sequence: reordering that is what the
+    // surrounding lock-retry logic exists to prevent.
+    expect(sql.indexOf("PRAGMA mmap_size = 67108864;")).toBeGreaterThan(
+      sql.indexOf("PRAGMA journal_mode = WAL;"),
+    );
+  });
+
+  it.each([
+    ["NFS", 0x6969],
+    ["SMB", 0x517b],
+    ["CIFS", 0xff534d42],
+    ["SMB2", 0xfe534d42],
+  ])("never memory-maps a database on a %s volume", (_label, fsType) => {
+    // mmap over a network filesystem is what produced the SIGBUS crashes in
+    // #60349: an I/O error on a mapped page raises a signal SQLite cannot
+    // catch. These volumes take the rollback branch and must never reach the
+    // mmap pragma.
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-sqlite-mmap-net-"));
+    try {
+      const db = createMockDb();
+      vi.spyOn(process, "platform", "get").mockReturnValue("linux");
+      vi.spyOn(fs, "statfsSync").mockReturnValue(statfsFixture(fsType));
+
+      configureSqliteConnectionPragmas(db, {
+        busyTimeoutMs: 5000,
+        checkpointIntervalMs: 0,
+        databasePath: path.join(tempDir, "openclaw.sqlite"),
+        synchronous: "NORMAL",
+      });
+
+      const sql = vi.mocked(db["exec"]).mock.calls.map(([statement]) => statement);
+      expect(sql.some((statement) => statement.startsWith("PRAGMA mmap_size"))).toBe(false);
     } finally {
       fs.rmSync(tempDir, { recursive: true, force: true });
     }

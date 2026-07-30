@@ -4,6 +4,7 @@ import type { SessionObserverDigest } from "../../../packages/gateway-protocol/s
 import type { NavigationRouteId } from "../app-navigation.ts";
 import { sessionHasPendingApproval } from "../app/approval-presentation.ts";
 import type { ApplicationNavigationOptions } from "../app/context.ts";
+import type { AuthenticatedUser } from "../app/user-profile.ts";
 import { t } from "../i18n/index.ts";
 import { sessionHasBoard } from "../lib/board/provider.ts";
 import { formatDurationCompact } from "../lib/format.ts";
@@ -37,6 +38,11 @@ import "./elapsed-time.ts";
 const SIDEBAR_VISIBLE_CHILD_SESSION_LIMIT = 4;
 
 export interface SessionListHost {
+  readonly sessionDataContext:
+    | {
+        gateway: { snapshot: { selfUser?: AuthenticatedUser | null } };
+      }
+    | undefined;
   readonly sidebarLiveActivity: boolean;
   readonly sidebarNarrationLines: ReadonlyMap<string, string>;
   readonly sidebarObserverDigests: ReadonlyMap<string, SessionObserverDigest>;
@@ -48,6 +54,8 @@ export interface SessionListHost {
     | "loadMoreSessionCatalog"
     | "presenceInstanceId"
     | "presencePayload"
+    | "refreshSessionCatalogs"
+    | "sessionCatalogRefreshStatus"
     | "sessionMutationError"
   >;
   readonly fullyShownChildSessionKeys: ReadonlySet<string>;
@@ -55,10 +63,10 @@ export interface SessionListHost {
   readonly collapsedSessionSections: ReadonlySet<string>;
   readonly sessionOrganizer: Pick<
     SessionOrganizerController,
-    | "draggingSessionGroup"
+    | "draggingSidebarSection"
     | "draggingSessionKey"
     | "sessionDropTarget"
-    | "sessionGroupDropTarget"
+    | "sidebarSectionDropTarget"
     | "sessionListRemovalDrop"
   >;
   readonly sidebarMenus: Pick<
@@ -101,8 +109,8 @@ export interface SessionListHost {
   sectionDragOver(event: DragEvent, sectionId: string, group?: string): void;
   sectionDragLeave(event: DragEvent, sectionId: string, group?: string): void;
   sectionDrop(event: DragEvent, sectionId: string, group?: string): void;
-  startSessionGroupDrag(group: string): void;
-  finishSessionGroupDrag(): void;
+  startSidebarSectionDrag(sectionId: string): void;
+  finishSidebarSectionDrag(): void;
   toggleSection(sectionId: string): void;
   openNewSession(): void;
   setVisibleSessionLimit(sectionId: string, limit: number): void;
@@ -263,6 +271,7 @@ export function renderRecentSession(params: {
           : nothing}
         <openclaw-viewer-facepile
           .presencePayload=${host.sessionData.presencePayload}
+          .selfUserId=${host.sessionDataContext?.gateway.snapshot.selfUser?.id}
           .selfInstanceId=${host.sessionData.presenceInstanceId}
           .sessionKey=${session.key}
           .maxVisible=${3}

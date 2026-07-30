@@ -1,7 +1,15 @@
 import type { DatabaseSync } from "node:sqlite";
-import { migrateMemoryIndexSourcesIdentity } from "../../packages/memory-host-sdk/src/host/memory-schema.js";
+import {
+  ensureMemoryChunkProvenance,
+  ensureMemoryRecallMetadataSchema,
+  hasLegacyMemoryRecallMetadataColumns,
+  migrateMemoryIndexSourcesIdentity,
+} from "../../packages/memory-host-sdk/src/host/memory-schema.js";
 import { executeSqliteQuerySync, getNodeSqliteKysely } from "../infra/kysely-sync.js";
-import { repairCanonicalSqliteIndexes } from "../infra/sqlite-index-schema.js";
+import {
+  repairCanonicalSqliteIndexes,
+  verifyAndRepairCanonicalSqliteIndexes,
+} from "../infra/sqlite-index-schema.js";
 import { assertSqliteIntegrity } from "../infra/sqlite-integrity.js";
 import { migrateSqliteSchemaToStrictInTransaction } from "../infra/sqlite-strict.js";
 import { runSqliteImmediateTransactionSync } from "../infra/sqlite-transaction.js";
@@ -87,11 +95,31 @@ function dropLegacyMemoryIndexSchema(db: DatabaseSync): void {
   `);
 }
 
+function hasLegacyMemoryChunkProvenanceTrigger(db: DatabaseSync): boolean {
+  return Boolean(
+    db
+      .prepare(
+        "SELECT 1 FROM sqlite_schema WHERE type = 'trigger' AND name = 'memory_index_chunk_provenance_after_insert'",
+      )
+      .get(),
+  );
+}
+
+function hasPendingMemoryChunkMetadataMigration(db: DatabaseSync): boolean {
+  return hasLegacyMemoryRecallMetadataColumns(db) || hasLegacyMemoryChunkProvenanceTrigger(db);
+}
+
+function migrateMemoryChunkMetadataSchema(db: DatabaseSync): void {
+  ensureMemoryRecallMetadataSchema(db);
+  ensureMemoryChunkProvenance(db);
+}
+
 function migrateOpenClawAgentSchema(db: DatabaseSync): void {
   const userVersion = readSqliteUserVersion(db);
   if (userVersion >= OPENCLAW_AGENT_SCHEMA_VERSION) {
     return;
   }
+  // Remove after 2026-10-01: drop the v1-v6 ladder once the minimum supported agent schema is 7.
   if (userVersion < 7) {
     db.exec("DROP INDEX IF EXISTS idx_agent_sessions_status;");
     migrateSessionEntryStatusProjection(db, (entryJson) => {
@@ -225,6 +253,7 @@ function migrateOpenClawAgentSchema(db: DatabaseSync): void {
 
 /** Backfill one generation token without copying or rewriting transcript rows. */
 function migrateSessionTranscriptGenerations(db: DatabaseSync, previousVersion: number): void {
+  // Remove after 2026-10-01: drop the generation backfill once the minimum supported agent schema is 13.
   if (previousVersion >= 13) {
     return;
   }
@@ -468,21 +497,20 @@ export function assertAgentDatabaseIntegrityBeforeMutation(
       toVersion: OPENCLAW_AGENT_SCHEMA_VERSION,
     });
   }
-  // Named indexes are repairable; the full schema assertion below must run
-  // after this repair while still rejecting table and constraint drift.
-  const rebuiltIndexes =
-    userVersion === OPENCLAW_AGENT_SCHEMA_VERSION
-      ? repairCanonicalSqliteIndexes(database, pathname, OPENCLAW_AGENT_SCHEMA_SQL, {
-          allowMissingColumns: true,
-          validateAfterRepair: () =>
-            assertOpenClawAgentCurrentRuntimeSchema(database, { agentId, pathname }),
-        })
-      : [];
-  if (rebuiltIndexes.length === 0) {
+  const hasPendingMemoryMigration =
+    userVersion === OPENCLAW_AGENT_SCHEMA_VERSION &&
+    hasPendingMemoryChunkMetadataMigration(database);
+  if (userVersion === OPENCLAW_AGENT_SCHEMA_VERSION && !hasPendingMemoryMigration) {
+    verifyAndRepairCanonicalSqliteIndexes(database, pathname, OPENCLAW_AGENT_SCHEMA_SQL, {
+      allowMissingColumns: true,
+      validateAfterRepair: () =>
+        assertOpenClawAgentCurrentRuntimeSchema(database, { agentId, pathname }),
+    });
+  } else {
     // Every physical open proves the full file before schema mutation or exposure.
     assertSqliteIntegrity(database, pathname);
   }
-  if (userVersion === OPENCLAW_AGENT_SCHEMA_VERSION) {
+  if (userVersion === OPENCLAW_AGENT_SCHEMA_VERSION && !hasPendingMemoryMigration) {
     assertOpenClawAgentCurrentRuntimeSchema(database, { agentId, pathname });
   }
 }
@@ -527,6 +555,10 @@ function ensureAgentSchema(
         );
       }
       if (previousVersion === targetVersion) {
+        if (hasPendingMemoryChunkMetadataMigration(db)) {
+          migrateMemoryChunkMetadataSchema(db);
+          db.exec(OPENCLAW_AGENT_SCHEMA_SQL);
+        }
         // Repeat index repair before the transactional schema assertion so a
         // concurrent opener cannot turn repairable drift into a hard refusal.
         repairCanonicalSqliteIndexes(db, pathname, OPENCLAW_AGENT_SCHEMA_SQL, {
@@ -548,12 +580,14 @@ function ensureAgentSchema(
       migrateOpenClawAgentSchema(db);
       migrateConversationDeliveryTargetColumn(db);
       backfillOpenClawAgentSchema(db, previousVersion);
+      // Remove after 2026-10-01: drop the pre-v11 conversation backfill once schema 11 is the support floor.
       if (previousVersion < 11) {
         backfillSessionConversations(db);
       }
       backfillSessionEntryProvenance(db, previousVersion);
       migrateSessionNodesAndWindows(db, previousVersion);
       db.exec(OPENCLAW_AGENT_SCHEMA_SQL);
+      migrateMemoryChunkMetadataSchema(db);
       if (previousVersion < targetVersion) {
         ensureOpenClawAgentBoardSchemaInTransaction(db);
       }

@@ -199,6 +199,8 @@ jobs:
 
       - name: Build
         if: steps.dist_build_cache.outputs.cache-hit != 'true'
+        env:
+          OPENCLAW_CONTROL_UI_RELEASE_BUILD: "1"
         run: pnpm build
 
       - name: Pack publishable core packages
@@ -244,6 +246,8 @@ jobs:
 
       - name: Build Control UI
         if: steps.dist_build_cache.outputs.cache-hit != 'true'
+        env:
+          OPENCLAW_CONTROL_UI_RELEASE_BUILD: "1"
         run: pnpm ui:build
 
       - name: Save preflight build outputs
@@ -395,7 +399,6 @@ jobs:
                 exit 1
               fi
               AI_TARBALL_PATH="${AI_TARBALLS[0]}"
-              node --import tsx scripts/prepare-openclaw-npm-shrinkwrap.ts "$AI_TARBALL_PATH"
             elif [[ "${#AI_TARBALLS[@]}" -ne 0 ]]; then
               echo "Frozen target without an @openclaw/ai dependency contains unexpected AI runtime artifacts." >&2
               exit 1

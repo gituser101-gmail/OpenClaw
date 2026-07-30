@@ -4,9 +4,14 @@ import {
   AgentDeletionAuthorityRollbackError,
   AgentDeletionCommitUncertainError,
 } from "../../agents/agent-lifecycle-registry.js";
-import { isCronJobActive } from "../active-jobs.js";
+import {
+  isCronJobActive,
+  noteActiveCronJobRemoval,
+  noteActiveCronJobScheduleMutation,
+} from "../active-jobs.js";
 import { cronSchedulingInputsEqual } from "../schedule-identity.js";
 import { deleteCronJobScratch } from "../scratch-store.js";
+import { removeStaleCronJobFamilyRows } from "../store.js";
 import { createCronStreamSourceIdentity, cronStreamScheduleKey } from "../stream-schedule.js";
 import { normalizeCronTaskRunJobId } from "../task-run-history.js";
 import type { CronJob, CronJobCreate, CronJobPatch } from "../types.js";
@@ -136,9 +141,10 @@ function finalizeUpdatedJob(params: {
 async function persistUpdatedJob(params: {
   state: CronServiceState;
   snapshot: CronRollbackSnapshot;
+  previousJob: CronJob;
   nextJob: CronJob;
 }) {
-  const { state, snapshot, nextJob } = params;
+  const { state, snapshot, previousJob, nextJob } = params;
   if (state.store) {
     const index = state.store.jobs.findIndex((entry) => entry.id === nextJob.id);
     if (index >= 0) {
@@ -147,6 +153,11 @@ async function persistUpdatedJob(params: {
   }
 
   await persistOrRestore(state, snapshot, { suppressScheduledJobId: nextJob.id });
+  if (!cronSchedulingInputsEqual(previousJob, nextJob)) {
+    // Mark only committed edits; a failed SQLite write cannot retire the run's
+    // schedule ownership, and idempotent re-saves must not create a new claim.
+    noteActiveCronJobScheduleMutation(nextJob.id);
+  }
   armTimer(state);
   emit(state, {
     jobId: nextJob.id,
@@ -237,7 +248,7 @@ export async function add(state: CronServiceState, input: CronJobCreate, opts?: 
         schedulingInputsRequested: true,
         scheduleChanged: !isDeepStrictEqual(existing.schedule, nextJob.schedule),
       });
-      await persistUpdatedJob({ state, snapshot, nextJob });
+      await persistUpdatedJob({ state, snapshot, previousJob: existing, nextJob });
       return { ...nextJob, created: false, updated: true, job: nextJob };
     }
 
@@ -282,6 +293,17 @@ export async function add(state: CronServiceState, input: CronJobCreate, opts?: 
       nextRunAtMs: job.state.nextRunAtMs,
     });
     return declarationKey ? { ...job, created: true, job } : job;
+  });
+}
+
+/** Prunes an owned job family from obsolete store partitions after active-store convergence. */
+export async function removeStaleJobFamily(
+  state: CronServiceState,
+  family: { declarationKey: string; name: string; ownerPluginTag: string },
+): Promise<number> {
+  return await locked(state, async () => {
+    await ensureLoaded(state, { skipRecompute: true });
+    return removeStaleCronJobFamilyRows(state.deps.storePath, family);
   });
 }
 
@@ -337,7 +359,7 @@ export async function updateLoadedJob(params: {
       "pacing" in patch,
     scheduleChanged: patch.schedule !== undefined,
   });
-  await persistUpdatedJob({ state, snapshot, nextJob });
+  await persistUpdatedJob({ state, snapshot, previousJob: job, nextJob });
   return nextJob;
 }
 
@@ -401,6 +423,7 @@ export async function remove(
       suppressScheduledJobId: id,
     });
     if (removed) {
+      noteActiveCronJobRemoval(id);
       try {
         deleteCronJobScratch(state.deps.storePath, id);
       } catch (error) {
@@ -450,6 +473,7 @@ export async function removeAgentJobsTransactional<T>(
       if (error instanceof AgentDeletionCommitUncertainError) {
         armTimer(state);
         for (const job of removedJobs) {
+          noteActiveCronJobRemoval(job.id);
           emit(state, { jobId: job.id, action: "removed", job });
         }
         throw error;
@@ -471,6 +495,7 @@ export async function removeAgentJobsTransactional<T>(
       throw error;
     }
     for (const job of removedJobs) {
+      noteActiveCronJobRemoval(job.id);
       try {
         deleteCronJobScratch(state.deps.storePath, job.id);
       } catch (error) {

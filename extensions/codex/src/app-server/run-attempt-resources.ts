@@ -53,7 +53,6 @@ export function prepareCodexAttemptResources(prompt: CodexAttemptPrompt) {
     developerInstructions: buildRenderedCodexDeveloperInstructions(),
     prompt: turnState.codexTurnPromptText,
     trajectoryRecorder: hostTrajectoryRecorder,
-    trajectorySessionFile: params.trajectorySessionFile,
     tools: toolBridge.availableSpecs,
     warn: (message, fields) => embeddedAgentLog.warn(message, fields),
   });
@@ -212,6 +211,14 @@ export function prepareCodexAttemptResources(prompt: CodexAttemptPrompt) {
       runId: params.runId,
       channelId: hookChannelId,
       ...(hasRequester ? { requester } : {}),
+      approvalContext: {
+        trigger: params.trigger,
+        approvalReviewerDeviceId: params.approvalReviewerDeviceId,
+        turnSourceChannel: requesterChannel,
+        turnSourceTo: params.currentMessagingTarget ?? params.currentChannelId,
+        turnSourceAccountId: params.agentAccountId,
+        turnSourceThreadId: params.currentThreadTs,
+      },
       attemptTimeoutMs: params.timeoutMs,
       startupTimeoutMs,
       turnStartTimeoutMs: params.timeoutMs,

@@ -8,19 +8,32 @@ import type { EmbeddingProviderCreateOptions } from "./embedding-providers.js";
 import { getRegisteredEmbeddingProvider } from "./embedding-providers.js";
 import { openAICompatibleEmbeddingProviderAdapter } from "./openai-compatible-embedding-provider.js";
 
+const fetchWithSsrFGuardMock = vi.hoisted(() => vi.fn());
+
+vi.mock("../infra/net/fetch-guard.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../infra/net/fetch-guard.js")>();
+  return {
+    ...actual,
+    fetchWithSsrFGuard: fetchWithSsrFGuardMock.mockImplementation((params) =>
+      actual.fetchWithSsrFGuard(params),
+    ),
+  };
+});
+
 async function createOpenAICompatibleEmbeddingProvider(options: EmbeddingProviderCreateOptions) {
   const result = await openAICompatibleEmbeddingProviderAdapter.create(options);
   if (!result.provider) {
     throw new Error("expected OpenAI-compatible embedding provider");
   }
   const cacheKeyData = result.runtime?.cacheKeyData as
-    | { baseUrl?: string; headers?: Record<string, string> }
+    | { baseUrl?: string; headers?: Record<string, string>; localServiceTarget?: unknown }
     | undefined;
   return {
     provider: result.provider,
     client: {
       baseUrl: cacheKeyData?.baseUrl,
       headers: cacheKeyData?.headers ?? {},
+      localServiceTarget: cacheKeyData?.localServiceTarget,
     },
   };
 }
@@ -382,6 +395,7 @@ describe("openai-compatible generic embedding provider", () => {
               api: "openai-completions",
               baseUrl: "http://spark.local:11434/v1",
               localService: { command: process.execPath },
+              request: { allowPrivateNetwork: true },
               models: [],
             },
           },
@@ -395,7 +409,8 @@ describe("openai-compatible generic embedding provider", () => {
     };
     options.acquireLocalService = acquireLocalService;
 
-    const { provider } = await createOpenAICompatibleEmbeddingProvider(options);
+    const { client, provider } = await createOpenAICompatibleEmbeddingProvider(options);
+    expect(client.localServiceTarget).toBeUndefined();
     await expect(provider.embed("hello")).resolves.toEqual([0.1, 0.2, 0.3]);
     expect(acquireLocalService).not.toHaveBeenCalled();
   });
@@ -921,5 +936,54 @@ describe("openai-compatible generic embedding provider", () => {
     await expect(provider.embed("hello")).rejects.toThrow(
       "openai-compatible embeddings failed: malformed JSON response",
     );
+  });
+
+  it("honors request.allowPrivateNetwork for OpenAI-compatible embedding provider ssrfPolicy", async () => {
+    const server = await startEmbeddingServer();
+    fetchWithSsrFGuardMock.mockClear();
+
+    const { provider } = await createOpenAICompatibleEmbeddingProvider(
+      createOptions({
+        config: {
+          models: {
+            providers: {
+              "openai-compatible": {
+                baseUrl: server.baseUrl,
+                request: { allowPrivateNetwork: true },
+                models: [],
+              },
+            },
+          },
+        } as EmbeddingProviderCreateOptions["config"],
+      }),
+    );
+
+    await provider.embed("hello");
+    const lastCallParams = fetchWithSsrFGuardMock.mock.calls.at(-1)?.[0];
+    expect(lastCallParams?.policy?.allowPrivateNetwork).toBe(true);
+  });
+
+  it("does not set allowPrivateNetwork when request.allowPrivateNetwork is omitted", async () => {
+    const server = await startEmbeddingServer();
+    fetchWithSsrFGuardMock.mockClear();
+
+    const { provider } = await createOpenAICompatibleEmbeddingProvider(
+      createOptions({
+        config: {
+          models: {
+            providers: {
+              "openai-compatible": {
+                baseUrl: server.baseUrl,
+                models: [],
+              },
+            },
+          },
+        } as EmbeddingProviderCreateOptions["config"],
+      }),
+    );
+
+    await provider.embed("hello");
+    const lastCallParams = fetchWithSsrFGuardMock.mock.calls.at(-1)?.[0];
+    expect(lastCallParams?.policy?.allowPrivateNetwork).toBeUndefined();
   });
 });

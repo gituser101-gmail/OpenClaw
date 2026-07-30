@@ -251,17 +251,59 @@ export async function compactEmbeddedAgentSessionDirect(
           provider === primaryProvider ||
           provider === requestedPrimaryProvider;
         const authProfileId = preservesPrimaryAuth ? params.authProfileId : undefined;
-        return await compactEmbeddedAgentSessionDirectOnce({
-          ...params,
-          provider,
-          model,
-          authProfileId,
-          authProfileIdSource: preservesPrimaryAuth ? params.authProfileIdSource : undefined,
-          // The primary attempt retains its already prepared atomic plan. An
-          // actual fallback may change route/auth class and must rebuild it.
-          runtimeAuthPlan: isPrimaryCandidate ? params.runtimeAuthPlan : undefined,
-          runtimePlan: isPrimaryCandidate ? params.runtimePlan : undefined,
-        });
+
+        // Each fallback candidate gets its own independent timeout so that
+        // time spent on earlier candidates does not erode the window
+        // available to later ones. Without this, a single outer safety
+        // timeout (e.g. 180s) that wraps all candidates causes each
+        // successive candidate to receive less wall-clock time — the last
+        // candidates in a 4-model chain observed as little as 4.9s–40s
+        // before the outer timer fired. See #115546.
+        //
+        // The per-candidate watchdog is composed with the SEPARATE caller-
+        // cancellation signal (callerAbortSignal) rather than params.abortSignal,
+        // because params.abortSignal includes the chain-wide safety timeout
+        // from compactWithSafetyTimeout — composing with it would re-introduce
+        // the shared-deadline defect.
+        //
+        // compactContextEngineWithSafetyTimeout stashes the raw caller signal
+        // on runtimeContext.callerAbortSignal; the delegate threads it through
+        // to compactEmbeddedAgentSessionDirect. When there is no caller signal
+        // (e.g. the CLI-budget compaction path), callerAbortSignal is undefined
+        // and each candidate simply gets the full 180s per-candidate window.
+        const CANDIDATE_TIMEOUT_MS = 180_000;
+        const candidateAbortCtrl = new AbortController();
+        const candidateTimer = setTimeout(
+          () =>
+            candidateAbortCtrl.abort(
+              new Error(`Compaction candidate timed out after ${CANDIDATE_TIMEOUT_MS}ms`),
+            ),
+          CANDIDATE_TIMEOUT_MS,
+        );
+        candidateTimer.unref?.();
+
+        try {
+          const callerSignal = params.callerAbortSignal;
+          const candidateAbortSignal =
+            callerSignal && !callerSignal.aborted
+              ? AbortSignal.any([candidateAbortCtrl.signal, callerSignal])
+              : candidateAbortCtrl.signal;
+
+          return await compactEmbeddedAgentSessionDirectOnce({
+            ...params,
+            abortSignal: candidateAbortSignal,
+            provider,
+            model,
+            authProfileId,
+            authProfileIdSource: preservesPrimaryAuth ? params.authProfileIdSource : undefined,
+            // The primary attempt retains its already prepared atomic plan. An
+            // actual fallback may change route/auth class and must rebuild it.
+            runtimeAuthPlan: isPrimaryCandidate ? params.runtimeAuthPlan : undefined,
+            runtimePlan: isPrimaryCandidate ? params.runtimePlan : undefined,
+          });
+        } finally {
+          clearTimeout(candidateTimer);
+        }
       },
     });
     return fallbackResult.result;

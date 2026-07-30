@@ -13,7 +13,7 @@ import { buildGenericCliContextEngineHostSupport } from "../../context-engine/ho
 import { ensureContextEnginesInitialized as ensureContextEnginesInitializedImpl } from "../../context-engine/init.js";
 import { resolveContextEngine as resolveContextEngineImpl } from "../../context-engine/registry.js";
 import { buildContextEngineRuntimeSettings } from "../../context-engine/runtime-settings.js";
-import type { ContextEngine } from "../../context-engine/types.js";
+import type { ContextEngine, ContextEngineRuntimeContext } from "../../context-engine/types.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
 import type { SkillSnapshot } from "../../skills/types.js";
 import { createPreparedEmbeddedAgentSettingsManager as createPreparedEmbeddedAgentSettingsManagerImpl } from "../agent-project-settings.js";
@@ -339,27 +339,29 @@ async function compactCliTranscript(params: {
   extraSystemPrompt?: string;
   bestEffortMaintenance?: boolean;
 }): Promise<CliTranscriptCompactionOutcome> {
-  const runtimeContext = buildCliCompactionRuntimeContext({
-    sessionKey: params.sessionKey,
-    messageChannel: params.messageChannel,
-    agentAccountId: params.agentAccountId,
-    authProfileId: params.authProfileId,
-    workspaceDir: params.workspaceDir,
-    cwd: params.cwd,
-    agentDir: params.agentDir,
-    cfg: params.cfg,
-    skillsSnapshot: params.skillsSnapshot,
-    senderIsOwner: params.senderIsOwner,
-    provider: params.provider,
-    model: params.model,
-    harnessRuntime: params.harnessRuntime,
-    modelSelectionLocked: params.modelSelectionLocked,
-    thinkLevel: params.thinkLevel,
-    extraSystemPrompt: params.extraSystemPrompt,
-    currentTokenCount: params.currentTokenCount,
-    contextTokenBudget: params.contextTokenBudget,
-    trigger: "cli_budget",
-  });
+  const runtimeContext: ContextEngineRuntimeContext = {
+    ...buildCliCompactionRuntimeContext({
+      sessionKey: params.sessionKey,
+      messageChannel: params.messageChannel,
+      agentAccountId: params.agentAccountId,
+      authProfileId: params.authProfileId,
+      workspaceDir: params.workspaceDir,
+      cwd: params.cwd,
+      agentDir: params.agentDir,
+      cfg: params.cfg,
+      skillsSnapshot: params.skillsSnapshot,
+      senderIsOwner: params.senderIsOwner,
+      provider: params.provider,
+      model: params.model,
+      harnessRuntime: params.harnessRuntime,
+      modelSelectionLocked: params.modelSelectionLocked,
+      thinkLevel: params.thinkLevel,
+      extraSystemPrompt: params.extraSystemPrompt,
+      currentTokenCount: params.currentTokenCount,
+      contextTokenBudget: params.contextTokenBudget,
+      trigger: "cli_budget",
+    }),
+  };
   const runtimeSettings = buildContextEngineRuntimeSettings({
     contextEngineHost: buildGenericCliContextEngineHostSupport({
       backendId: params.provider,

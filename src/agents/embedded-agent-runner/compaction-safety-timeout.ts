@@ -129,10 +129,18 @@ export function compactContextEngineWithSafetyTimeout(
   abortSignal?: AbortSignal,
 ): Promise<CompactResult> {
   return compactWithSafetyTimeout(
-    (compactAbortSignal) =>
-      contextEngine.compact(
-        compactAbortSignal ? { ...params, abortSignal: compactAbortSignal } : params,
-      ),
+    (compactAbortSignal) => {
+      const enhanced = compactAbortSignal ? { ...params, abortSignal: compactAbortSignal } : params;
+      // Stash the raw caller signal on runtimeContext so the delegate can
+      // thread it through to compactEmbeddedAgentSessionDirect as a separate
+      // callerAbortSignal — distinct from composedAbortSignal which includes
+      // the safety timeout. This lets each fallback candidate get a full
+      // independent timeout window while still propagating caller cancellation.
+      if (abortSignal && enhanced.runtimeContext) {
+        enhanced.runtimeContext.callerAbortSignal = abortSignal;
+      }
+      return contextEngine.compact(enhanced);
+    },
     timeoutMs,
     abortSignal ? { abortSignal } : undefined,
   );

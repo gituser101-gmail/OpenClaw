@@ -306,4 +306,45 @@ describe("compactContextEngineWithSafetyTimeout", () => {
       error,
     );
   });
+
+  it("stashes the raw caller signal on runtimeContext.callerAbortSignal", async () => {
+    // The runtime needs the raw (uncomposed) caller signal to distinguish
+    // caller cancellation from the safety timeout when implementing
+    // per-candidate timeouts in the fallback chain. See #115546.
+    const controller = new AbortController();
+    const callerSignal = controller.signal;
+    const runtimeContext: Record<string, unknown> = {};
+    let capturedRuntimeContext: Record<string, unknown> | undefined;
+
+    const compact = vi.fn<CompactFn>(async (params) => {
+      capturedRuntimeContext = params.runtimeContext as Record<string, unknown>;
+      return { ok: true, compacted: true, result: { tokensBefore: 1000, tokensAfter: 200 } };
+    });
+
+    await compactContextEngineWithSafetyTimeout(
+      { compact },
+      { ...baseParams, runtimeContext },
+      30,
+      callerSignal,
+    );
+
+    expect(capturedRuntimeContext?.callerAbortSignal).toBe(callerSignal);
+  });
+
+  it("does not set callerAbortSignal when no caller abort signal is provided", async () => {
+    // CLI-budget compaction path has no caller abort signal — callerAbortSignal
+    // must remain undefined so each fallback candidate gets a full independent
+    // 180s per-candidate window without external signal composition.
+    const runtimeContext: Record<string, unknown> = {};
+    let capturedRuntimeContext: Record<string, unknown> | undefined;
+
+    const compact = vi.fn<CompactFn>(async (params) => {
+      capturedRuntimeContext = params.runtimeContext as Record<string, unknown>;
+      return { ok: true, compacted: true, result: { tokensBefore: 1000, tokensAfter: 200 } };
+    });
+
+    await compactContextEngineWithSafetyTimeout({ compact }, { ...baseParams, runtimeContext }, 30);
+
+    expect(capturedRuntimeContext?.callerAbortSignal).toBeUndefined();
+  });
 });

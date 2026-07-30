@@ -473,3 +473,57 @@ export function parseRawSessionConversationRef(
 
   return { channel, kind, rawId, prefix };
 }
+
+export function isSharedChannelSessionKey(sessionKey: string | undefined | null): boolean {
+  const route = parseSessionDeliveryRoute(sessionKey);
+  if (route) {
+    return route.peerKind === "group" || route.peerKind === "channel";
+  }
+  // Fallback: covers legacy shapes (e.g. discord guild/channel, WhatsApp group
+  // JIDs) that parseSessionDeliveryRoute does not recognize due to its strict
+  // SESSION_DELIVERY_PEER_KINDS contract. Inlined from deriveBuiltInLegacySessionChatType
+  // to avoid a circular import with session-chat-type-shared.ts.
+  const raw = normalizeLowercaseStringOrEmpty(sessionKey);
+  if (!raw) {
+    return false;
+  }
+  const scoped = parseAgentSessionKey(raw)?.rest ?? raw;
+  if (/^group:[^:]+(?::.*)?$/u.test(scoped)) {
+    return true;
+  }
+  if (/^channel:[^:]+(?::.*)?$/u.test(scoped)) {
+    return true;
+  }
+  if (/^(?:whatsapp:)?[^:]+@g\.us$/.test(scoped)) {
+    return true;
+  }
+  if (/^discord:(?:[^:]+:)?guild-[^:]+:channel-[^:]+$/.test(scoped)) {
+    return true;
+  }
+  return false;
+}
+
+export function isPrivateMemorySessionKey(sessionKey: string | undefined | null): boolean {
+  if (!sessionKey) {
+    return true;
+  }
+  const route = parseSessionDeliveryRoute(sessionKey);
+  if (route) {
+    return route.peerKind === "direct" || route.peerKind === "dm";
+  }
+  const raw = normalizeLowercaseStringOrEmpty(sessionKey);
+  if (!raw) {
+    return true;
+  }
+  const scoped = parseAgentSessionKey(raw)?.rest ?? raw;
+  if (scoped === "main" || scoped === "chat:main") {
+    return true;
+  }
+  if (/^direct:[^:]+/u.test(scoped)) {
+    return true;
+  }
+  if (/^dm:[^:]+/u.test(scoped)) {
+    return true;
+  }
+  return false;
+}

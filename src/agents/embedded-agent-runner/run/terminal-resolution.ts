@@ -299,6 +299,9 @@ export async function resolveEmbeddedRunTerminal(input: {
         timedOut: terminalTimedOut,
         hadPotentialSideEffects: input.replayState.hadPotentialSideEffects,
         attempt,
+        assistantProfileFailureReason: input.assistantProfileFailureReason,
+        provider: input.provider,
+        modelId: input.modelId,
       });
   const incompleteTurnFallbackSafe = Boolean(
     incompleteTurnText &&

@@ -10,6 +10,7 @@ import {
 } from "../../../auto-reply/tokens.js";
 import { hasAcceptedSessionSpawn } from "../../accepted-session-spawn.js";
 import { projectAgentRunAttemptTerminal } from "../../agent-run-terminal-outcome.js";
+import type { AuthProfileFailureReason } from "../../auth-profiles.js";
 import { collectTextContentBlocks } from "../../content-blocks.js";
 import type { MessagingToolSend } from "../../embedded-agent-messaging.types.js";
 import {
@@ -223,6 +224,25 @@ export function hasAttemptTerminalState(attempt: TerminalAttemptState): boolean 
 }
 
 /**
+ * Builds a specific auth-failure message when the assistant profile failed due
+ * to an authentication error. Non-auth failures fall through to the generic
+ * incomplete-turn warning.
+ */
+function resolveAuthFailurePayloadText(params: {
+  assistantProfileFailureReason?: AuthProfileFailureReason | null;
+  provider: string;
+  modelId: string;
+}): string | undefined {
+  if (
+    params.assistantProfileFailureReason !== "auth" &&
+    params.assistantProfileFailureReason !== "auth_permanent"
+  ) {
+    return undefined;
+  }
+  return `Authentication failed for model ${params.provider}/${params.modelId}. Please check your API key or switch to a different model.`;
+}
+
+/**
  * Builds the user-visible incomplete-turn warning when a terminal attempt did
  * not produce a safe final assistant response and no committed delivery/progress
  * already completed the task.
@@ -234,6 +254,9 @@ export function resolveIncompleteTurnPayloadText(params: {
   timedOut: boolean;
   hadPotentialSideEffects?: boolean;
   attempt: IncompleteTurnAttempt;
+  assistantProfileFailureReason?: AuthProfileFailureReason | null;
+  provider?: string;
+  modelId?: string;
 }): string | null {
   // Prefer the current attempt's terminal message. The session fallback can
   // still point at the pre-tool turn after a post-tool answer completes. (#80918)
@@ -299,10 +322,30 @@ export function resolveIncompleteTurnPayloadText(params: {
     return null;
   }
 
-  return params.hadPotentialSideEffects ||
-    resolveAttemptReplayMetadata(params.attempt).hadPotentialSideEffects
+  const hasPotentialSideEffects =
+    params.hadPotentialSideEffects ||
+    resolveAttemptReplayMetadata(params.attempt).hadPotentialSideEffects;
+  const baseText = hasPotentialSideEffects
     ? "⚠️ Agent couldn't generate a response. Note: some tool actions may have already been executed — please verify before retrying."
     : "⚠️ Agent couldn't generate a response. Please try again.";
+
+  if (
+    !hasPotentialSideEffects &&
+    (params.assistantProfileFailureReason === "auth" ||
+      params.assistantProfileFailureReason === "auth_permanent") &&
+    params.provider &&
+    params.modelId
+  ) {
+    return (
+      resolveAuthFailurePayloadText({
+        assistantProfileFailureReason: params.assistantProfileFailureReason,
+        provider: params.provider,
+        modelId: params.modelId,
+      }) ?? baseText
+    );
+  }
+
+  return baseText;
 }
 
 /**
